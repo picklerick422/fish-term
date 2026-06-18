@@ -1,9 +1,8 @@
-import { WandConnectConfig } from './TerminalDriver';
+import { FishConnectConfig } from './TerminalDriver';
 
-// Builds the wand-agent WebSocket URL (spec §4.3). The server reads
-// token/cols/rows/cwd/shell from the query string; it validates token and
-// returns HTTP 401 on mismatch.
-export function buildWandUrl(config: WandConnectConfig, cols: number, rows: number): string {
+// Builds the fish-agent WebSocket URL. The server reads token/cols/rows/cwd/shell
+// from the query string and returns HTTP 401 on token mismatch.
+export function buildFishUrl(config: FishConnectConfig, cols: number, rows: number): string {
   const scheme: string = config.tls ? 'wss' : 'ws';
   const params: string[] = [];
   params.push('token=' + encodeURIComponent(config.token));

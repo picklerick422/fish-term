@@ -12,11 +12,11 @@
     "xcomponent",
     "ime"
   ],
-  "homepage": "https://github.com/wiedymi/libghostty-ohos",
-  "repository": "https://github.com/wiedymi/libghostty-ohos",
+  "homepage": "https://github.com/picklerick422/fish-term",
+  "repository": "https://github.com/picklerick422/fish-term",
   "author": {
-    "name": "wiedymi",
-    "url": "https://github.com/wiedymi"
+    "name": "picklerick422",
+    "url": "https://github.com/picklerick422"
   },
   "license": "MIT",
   "dependencies": {}

@@ -1,4 +1,4 @@
-// Transport abstraction. All drivers (wand WebSocket, local PTY, SSH) implement this.
+// Transport abstraction. All drivers (fish-term WebSocket, local PTY, SSH) implement this.
 // Dataflow (spec §3.3): controller input -> driver.write; driver output -> controller.feed.
 
 export enum DriverState {
@@ -24,8 +24,8 @@ export interface TerminalDriver {
   onStatus(cb: (s: DriverStatus) => void): void;
 }
 
-// Connection parameters for the wand-agent WebSocket transport (spec §4.3).
-export interface WandConnectConfig {
+// Connection parameters for the fish-agent WebSocket transport.
+export interface FishConnectConfig {
   host: string;
   port: number;
   token: string;

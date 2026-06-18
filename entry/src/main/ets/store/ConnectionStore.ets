@@ -4,19 +4,19 @@ import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 
-// Persists the wand-agent connection profile:
+// Persists the fish-agent connection profile:
 //   - host / port / tls / rememberToken  -> @ohos.data.preferences (plain)
 //   - token                              -> Asset Store Kit (encrypted at rest)
 // All operations degrade gracefully (log + carry on) so storage hiccups never
 // break the connect flow.
 
-const PREF_NAME: string = 'wand_conn';
+const PREF_NAME: string = 'fish_conn';
 const KEY_HOST: string = 'host';
 const KEY_PORT: string = 'port';
 const KEY_TLS: string = 'tls';
 const KEY_REMEMBER: string = 'remember_token';
 const KEY_FONT: string = 'font_size';
-const TOKEN_ALIAS: string = 'wand_agent_token';
+const TOKEN_ALIAS: string = 'fish_agent_token';
 const ASSET_NOT_FOUND: number = 24000002;
 
 export interface ConnectionProfile {
@@ -66,7 +66,7 @@ export class ConnectionStore {
       profile.tls = await pref.get(KEY_TLS, DEFAULT_PROFILE.tls) as boolean;
       profile.rememberToken = await pref.get(KEY_REMEMBER, DEFAULT_PROFILE.rememberToken) as boolean;
     } catch (e) {
-      console.error('wand load prefs failed: ' + JSON.stringify(e));
+      console.error('fish-termload prefs failed: ' + JSON.stringify(e));
     }
     if (profile.rememberToken) {
       profile.token = await this.loadToken();
@@ -84,7 +84,7 @@ export class ConnectionStore {
       await pref.put(KEY_REMEMBER, profile.rememberToken);
       await pref.flush();
     } catch (e) {
-      console.error('wand save prefs failed: ' + JSON.stringify(e));
+      console.error('fish-termsave prefs failed: ' + JSON.stringify(e));
     }
     if (profile.rememberToken && profile.token.length > 0) {
       await this.saveToken(profile.token);
@@ -99,7 +99,7 @@ export class ConnectionStore {
       const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
       return await pref.get(KEY_FONT, fallback) as number;
     } catch (e) {
-      console.error('wand load fontSize failed: ' + JSON.stringify(e));
+      console.error('fish-termload fontSize failed: ' + JSON.stringify(e));
       return fallback;
     }
   }
@@ -111,7 +111,7 @@ export class ConnectionStore {
       await pref.put(KEY_FONT, size);
       await pref.flush();
     } catch (e) {
-      console.error('wand save fontSize failed: ' + JSON.stringify(e));
+      console.error('fish-termsave fontSize failed: ' + JSON.stringify(e));
     }
   }
 
@@ -130,7 +130,7 @@ export class ConnectionStore {
     } catch (e) {
       const code: number = (e as BusinessError).code;
       if (code !== ASSET_NOT_FOUND) {
-        console.error('wand load token failed: ' + JSON.stringify(e));
+        console.error('fish-termload token failed: ' + JSON.stringify(e));
       }
     }
     return '';
@@ -145,7 +145,7 @@ export class ConnectionStore {
       attr.set(asset.Tag.ACCESSIBILITY, asset.Accessibility.DEVICE_FIRST_UNLOCKED);
       await asset.add(attr);
     } catch (e) {
-      console.error('wand save token failed: ' + JSON.stringify(e));
+      console.error('fish-termsave token failed: ' + JSON.stringify(e));
     }
   }
 
@@ -157,7 +157,7 @@ export class ConnectionStore {
     } catch (e) {
       const code: number = (e as BusinessError).code;
       if (code !== ASSET_NOT_FOUND) {
-        console.error('wand clear token failed: ' + JSON.stringify(e));
+        console.error('fish-termclear token failed: ' + JSON.stringify(e));
       }
     }
   }

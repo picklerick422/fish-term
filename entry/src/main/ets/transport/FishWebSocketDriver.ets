@@ -1,9 +1,9 @@
 import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
-import { DriverState, DriverStatus, TerminalDriver, WandConnectConfig } from './TerminalDriver';
+import { DriverState, DriverStatus, TerminalDriver, FishConnectConfig } from './TerminalDriver';
 import { Utf8Framer } from './Utf8Framer';
-import { buildWandUrl } from './WandUrl';
+import { buildFishUrl } from './FishUrl';
 import { Backoff } from './Backoff';
 
 const HEARTBEAT_MS: number = 15000;
@@ -15,8 +15,8 @@ interface ServerCtrl {
   error?: string;
 }
 
-export class WandWebSocketDriver implements TerminalDriver {
-  private readonly config: WandConnectConfig;
+export class FishWebSocketDriver implements TerminalDriver {
+  private readonly config: FishConnectConfig;
   private ws: webSocket.WebSocket | null = null;
   private readonly framer: Utf8Framer = new Utf8Framer();
   private readonly encoder: util.TextEncoder = new util.TextEncoder();
@@ -34,7 +34,7 @@ export class WandWebSocketDriver implements TerminalDriver {
   private heartbeatTimer: number = -1;
   private reconnectAttempts: number = 0;
 
-  constructor(config: WandConnectConfig) {
+  constructor(config: FishConnectConfig) {
     this.config = config;
   }
 
@@ -68,7 +68,7 @@ export class WandWebSocketDriver implements TerminalDriver {
     const buffer: ArrayBuffer = bytes.buffer.slice(
       bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     this.ws.send(buffer).catch((err: BusinessError) => {
-      console.error('wand send failed: ' + JSON.stringify(err));
+      console.error('fish-term send failed: ' + JSON.stringify(err));
     });
   }
 
@@ -89,7 +89,7 @@ export class WandWebSocketDriver implements TerminalDriver {
       const closing: webSocket.WebSocket = this.ws;
       this.ws = null;
       closing.close().catch((err: BusinessError) => {
-        console.error('wand close failed: ' + JSON.stringify(err));
+        console.error('fish-term close failed: ' + JSON.stringify(err));
       });
     }
     this.framer.reset();
@@ -99,7 +99,7 @@ export class WandWebSocketDriver implements TerminalDriver {
   private connect(): void {
     this.clearReconnect();
     this.framer.reset();
-    const url: string = buildWandUrl(this.config, this.cols, this.rows);
+    const url: string = buildFishUrl(this.config, this.cols, this.rows);
     const ws: webSocket.WebSocket = webSocket.createWebSocket();
     this.ws = ws;
     this.emit(DriverState.Connecting);
@@ -157,7 +157,7 @@ export class WandWebSocketDriver implements TerminalDriver {
     try {
       ctrl = JSON.parse(text) as ServerCtrl;
     } catch (err) {
-      console.error('wand bad ctrl frame: ' + text);
+      console.error('fish-term bad ctrl frame: ' + text);
       return;
     }
     if (ctrl.type === 'error') {
@@ -175,7 +175,7 @@ export class WandWebSocketDriver implements TerminalDriver {
       return;
     }
     this.ws.send(json).catch((err: BusinessError) => {
-      console.error('wand sendText failed: ' + JSON.stringify(err));
+      console.error('fish-term sendText failed: ' + JSON.stringify(err));
     });
   }
 
@@ -200,8 +200,6 @@ export class WandWebSocketDriver implements TerminalDriver {
       return;
     }
     if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      // Give up so a bad token / unreachable host doesn't loop forever.
-      // The user can fix the details and reconnect from the form.
       this.manualStop = true;
       this.emit(DriverState.Error, '重连失败，请检查地址和 token');
       return;
