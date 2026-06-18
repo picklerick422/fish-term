@@ -1,8 +1,8 @@
 import { common } from '@kit.AbilityKit';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
-import { WandWebSocketDriver } from '../transport/WandWebSocketDriver';
-import { DriverState, DriverStatus, WandConnectConfig } from '../transport/TerminalDriver';
+import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
+import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
 import { DEFAULT_FONT_SIZE, stepFontSize, clampFontSize } from '../theme/FontScale';
@@ -34,7 +34,7 @@ struct Index {
   // (the status-bar buttons) would let ArkUI's Tab/arrow focus navigation swallow
   // keys the TUI needs, so those controls are .focusable(false) and every tap hands
   // focus straight back to the terminal via focusTerminal().
-  private readonly surfaceId: string = 'wandSurface';
+  private readonly surfaceId: string = 'fishTermSurface';
   private controller: TerminalController = new TerminalController();
   private session: TerminalSession | null = null;
   private context: common.UIAbilityContext | null = null;
@@ -128,8 +128,8 @@ struct Index {
 
     this.stopSession();
 
-    const cfg: WandConnectConfig = { host, port, token, tls: this.tls };
-    const session: TerminalSession = new TerminalSession(this.controller, new WandWebSocketDriver(cfg));
+    const cfg: FishConnectConfig = { host, port, token, tls: this.tls };
+    const session: TerminalSession = new TerminalSession(this.controller, new FishWebSocketDriver(cfg));
     session.onStatus((s: DriverStatus): void => {
       this.statusText = stateLabel(s);
       this.driverState = s.state;
@@ -291,10 +291,10 @@ struct Index {
   private buildForm() {
     Column() {
       Column({ space: 6 }) {
-        Text('◐ wand-term')
+        Text('◐ fish-term')
           .fontSize(26)
           .fontColor(Palette.text)
-        Text('connect to wand-agent')
+        Text('connect to fish-agent')
           .fontSize(13)
           .fontColor(Palette.textDim)
       }

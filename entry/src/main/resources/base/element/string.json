@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "Example app for the libghostty-ohos HarmonyOS terminal library"
+      "value": "fish-term — HarmonyOS terminal powered by libghostty-ohos"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "Basic example host for libghostty-ohos"
+      "value": "fish-term terminal app"
     },
     {
       "name": "EntryAbility_label",
-      "value": "libghostty-ohos Example"
+      "value": "fish-term"
     }
   ]
 }

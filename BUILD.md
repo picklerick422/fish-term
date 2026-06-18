@@ -1,4 +1,4 @@
-# Building wand-term in DevEco Studio
+# Building fish-term in DevEco Studio
 
 This project is built and device-verified in DevEco Studio. The collaboration
 environment cannot compile HarmonyOS projects, so it produces source only.
@@ -15,9 +15,9 @@ environment cannot compile HarmonyOS projects, so it produces source only.
 2. **SSH native deps** — only needed for the SSH transport (P2+), and **off by
    default** so P1 builds without them. The native CMake has a `WAND_ENABLE_SSH`
    option (default `OFF`):
-   - `OFF` (P1): compiles `ssh/ssh_session_stub.cpp` instead of the real session;
+   - `OFF` (default): compiles `ssh/ssh_session_stub.cpp` instead of the real session;
      SSH calls return a "not built" error. No `third_party` needed.
-   - `ON` (P2): place sources at `entry/third_party/mbedtls` and
+   - `ON` (SSH enabled): place sources at `entry/third_party/mbedtls` and
      `entry/third_party/libssh2`, then enable it by setting in
      `entry/build-profile.json5`:
      `"externalNativeOptions": { "arguments": "-DWAND_ENABLE_SSH=ON", ... }`.
@@ -52,5 +52,5 @@ Open the project root in DevEco Studio → wait for sync → select the `entry` 
 - **P0 check:** the original `pages/Index` (local fish shell) is replaced in P1. To
   smoke-test the base before P1, check out the scaffold commit, or temporarily point
   `pages/Index` back at the local PTY example.
-- **P1 check:** start your `wand-agent` backend (must include the concurrent-write
+- **P1 check:** start your `fish-agent` backend (must include the concurrent-write
   mutex fix), then use the in-app connect form (host / port / token / TLS).
