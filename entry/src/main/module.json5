@@ -1,0 +1,57 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "default",
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    // hnpPackages (bundled fish HNP) is disabled for P1 (wand-agent WebSocket
+    // transport — no local shell). The device installer extracts every declared
+    // HNP at install time; with the HNP not yet relocated to hnp/arm64-v8a/ on
+    // hosts lacking zip/unzip, that extraction fails (install error 9568409).
+    // Re-add this block (and the hvigorfile PatchBuiltHapHnpLayout tooling) when
+    // the local fish/PTY transport phase is implemented:
+    //   "hnpPackages": [ { "package": "fish.hnp", "type": "private" } ],
+    "pages": "$profile:main_pages",
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      }
+    ],
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "orientation": "follow_desktop",
+        "supportWindowMode": [
+          "fullscreen",
+          "split",
+          "floating"
+        ],
+        "minWindowWidth": 720,
+        "minWindowHeight": 520,
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

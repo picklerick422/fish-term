@@ -1,0 +1,11 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "wand-term app module",
+  "main": "",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "libghostty_ohos": "file:../libghostty_ohos"
+  }
+}

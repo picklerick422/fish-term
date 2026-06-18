@@ -1,0 +1,41 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {
+    "resOptions": {
+      "copyCodeResource": {
+        "enable": true
+      }
+    },
+    "externalNativeOptions": {
+      "path": "./src/main/cpp/CMakeLists.txt",
+      // P1 (default): WebSocket + local PTY only, no third_party needed.
+      // P2: set "arguments": "-DWAND_ENABLE_SSH=ON" (requires third_party/{libssh2,mbedtls}).
+      "arguments": "",
+      "cppFlags": "",
+      // libghostty_vt.a prebuilt is arm64-v8a only -> build for a real arm64 device.
+      "abiFilters": [
+        "arm64-v8a"
+      ]
+    }
+  },
+  "buildOptionSet": [
+    {
+      "name": "release",
+      "arkOptions": {
+        "obfuscation": {
+          "ruleOptions": {
+            "enable": false,
+            "files": [
+              "./obfuscation-rules.txt"
+            ]
+          }
+        }
+      }
+    },
+  ],
+  "targets": [
+    {
+      "name": "default"
+    }
+  ]
+}

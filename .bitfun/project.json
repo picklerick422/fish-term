@@ -1,0 +1,179 @@
+{
+  "name": "wand-term",
+  "description": "",
+  "projectType": "hvigor",
+  "uri": {
+    "$type": 1,
+    "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term"
+  },
+  "buildTask": "",
+  "extendConfigs": {
+    "sourceSet": [],
+    "build": []
+  },
+  "subProjects": [
+    {
+      "name": "libghostty_ohos",
+      "description": "",
+      "projectType": "hvigor",
+      "uri": {
+        "$type": 1,
+        "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos"
+      },
+      "buildTask": "",
+      "extendConfigs": {
+        "sourceSet": [],
+        "build": []
+      },
+      "subProjects": [],
+      "sourceSet": {
+        "include": {
+          "sourceFiles": [],
+          "resourceFiles": []
+        },
+        "exclude": {
+          "contentFiles": []
+        }
+      },
+      "dependencyProjects": []
+    },
+    {
+      "name": "entry",
+      "description": "",
+      "projectType": "hvigor",
+      "uri": {
+        "$type": 1,
+        "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry"
+      },
+      "buildTask": "",
+      "extendConfigs": {
+        "sourceSet": [],
+        "build": []
+      },
+      "subProjects": [],
+      "sourceSet": {
+        "include": {
+          "sourceFiles": [],
+          "resourceFiles": []
+        },
+        "exclude": {
+          "contentFiles": []
+        }
+      },
+      "dependencyProjects": []
+    }
+  ],
+  "sourceSet": {
+    "include": {
+      "sourceFiles": [
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/src/main/cpp"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/src/main/ets"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/src/ohosTest/ets"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/src/main/cpp"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/src/main/ets"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/src/ohosTest/ets"
+          }
+        }
+      ],
+      "resourceFiles": []
+    },
+    "exclude": {
+      "contentFiles": [
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/oh_modules"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/.hvigor"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/build"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/.cxx"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/.test"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/oh_modules"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/libghostty_ohos/build"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/.cxx"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/.test"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/oh_modules"
+          }
+        },
+        {
+          "url": {
+            "$type": 1,
+            "data": "file:///storage/Users/currentUser/Documents/DevEcoStudioProjects/wand-term/entry/build"
+          }
+        }
+      ]
+    }
+  }
+}
