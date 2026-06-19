@@ -5,7 +5,7 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
-import { DEFAULT_FONT_SIZE, stepFontSize, clampFontSize } from '../theme/FontScale';
+import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, stepFontSize, clampFontSize } from '../theme/FontScale';
 
 function stateLabel(s: DriverStatus): string {
   switch (s.state) {
@@ -230,40 +230,46 @@ struct Index {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       // font-size pill (mouse-only, never steals keyboard focus)
-      Row({ space: 4 }) {
-        Button('A−')
+      Row({ space: 2 }) {
+        Button('A-')
           .type(ButtonType.Normal)
-          .height(26)
-          .width(34)
-          .fontSize(14)
+          .height(28)
+          .width(32)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
           .focusable(false)
-          .backgroundColor(Color.Transparent)
-          .fontColor(Palette.text)
-          .borderRadius(6)
+          .backgroundColor(Palette.surface)
+          .borderRadius(8)
+          .fontColor(this.fontSize <= MIN_FONT_SIZE ? Palette.textDim : Palette.text)
+          .enabled(this.fontSize > MIN_FONT_SIZE)
           .onClick(() => {
             this.adjustFont(-1);
           })
         Text(this.fontSize.toString())
           .fontSize(12)
+          .fontWeight(FontWeight.Medium)
           .fontColor(Palette.accent)
-          .width(24)
+          .width(26)
           .textAlign(TextAlign.Center)
         Button('A+')
           .type(ButtonType.Normal)
-          .height(26)
-          .width(34)
-          .fontSize(14)
+          .height(28)
+          .width(32)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
           .focusable(false)
-          .backgroundColor(Color.Transparent)
-          .fontColor(Palette.text)
-          .borderRadius(6)
+          .backgroundColor(Palette.surface)
+          .borderRadius(8)
+          .fontColor(this.fontSize >= MAX_FONT_SIZE ? Palette.textDim : Palette.text)
+          .enabled(this.fontSize < MAX_FONT_SIZE)
           .onClick(() => {
             this.adjustFont(1);
           })
       }
-      .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+      .padding({ left: 3, right: 3, top: 2, bottom: 2 })
       .backgroundColor(Palette.inputBg)
-      .borderRadius(8)
+      .borderRadius(16)
+      .border({ width: 1, color: Palette.border })
 
       Button('断开')
         .type(ButtonType.Normal)

@@ -38,6 +38,11 @@ public:
 
     // Scrollback
     void scrollView(int delta);
+    // Mouse-wheel scroll that is alternate-screen aware: on the primary screen it
+    // scrolls the viewport; on the alternate screen (full-screen TUIs like vim,
+    // less, claude code) it translates the wheel into cursor up/down keys so the
+    // running application scrolls its own content.
+    void wheelScroll(int lines);
     void resetViewScroll();
     int getScrollbackSize() const;
 

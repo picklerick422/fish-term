@@ -107,6 +107,11 @@ export class TerminalController {
     this.config = cloneTerminalConfig(config);
     this.applyConfig();
     this.notifyConfigChanged();
+    // A font-size change re-flows the grid into a new column/row count on the
+    // native side, so re-publish the terminal size to drive a driver.resize()
+    // (PTY/WebSocket SIGWINCH). Without this the remote shell keeps the old
+    // dimensions and the screen looks misaligned after zooming.
+    this.notifySizeChanged();
   }
 
   updateConfig(patch: TerminalConfigPatch): void {
