@@ -1026,8 +1026,10 @@ void Terminal::wheelScroll(int lines) {
     // like claude code, vim, less can scroll rather than navigating history.
     if (anyMouseTracking) {
         const int count = std::abs(lines);
-        // button 64 = wheel up, 65 = wheel down (XTerm mouse button encoding)
-        const int btn = lines > 0 ? 64 : 65;
+        // XTerm mouse button encoding: 64 = wheel up (older content),
+        // 65 = wheel down (newer content). lines > 0 means the axis event
+        // was positive which in HarmonyOS corresponds to scrolling downward.
+        const int btn = lines > 0 ? 65 : 64;
         std::string out;
         if (sgrMouse) {
             // SGR extended: \x1b[<BTN;COL;ROWM
@@ -1049,9 +1051,10 @@ void Terminal::wheelScroll(int lines) {
 
     // No mouse tracking on alt screen: fall back to cursor up/down.
     // DECCKM (mode 1) selects application vs. normal cursor key form.
+    // lines > 0 = downward axis = scroll down = cursor down key.
     const char* up = appCursorKeys ? "\x1bOA" : "\x1b[A";
     const char* down = appCursorKeys ? "\x1bOB" : "\x1b[B";
-    const char* seq = lines > 0 ? up : down;
+    const char* seq = lines > 0 ? down : up;
     const int count = std::abs(lines);
 
     std::string out;
