@@ -231,45 +231,55 @@ struct Index {
 
       // font-size pill (mouse-only, never steals keyboard focus)
       Row({ space: 2 }) {
-        Button('A-')
-          .type(ButtonType.Normal)
-          .height(28)
-          .width(32)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .focusable(false)
-          .backgroundColor(Palette.surface)
-          .borderRadius(8)
-          .fontColor(this.fontSize <= MIN_FONT_SIZE ? Palette.textDim : Palette.text)
-          .enabled(this.fontSize > MIN_FONT_SIZE)
-          .onClick(() => {
+        Row() {
+          Text('A-')
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : '#3DD6C4')
+        }
+        .width(32)
+        .height(28)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('#0D1520')
+        .borderRadius(8)
+        .focusable(false)
+        .enabled(this.fontSize > MIN_FONT_SIZE)
+        .onClick(() => {
+          if (this.fontSize > MIN_FONT_SIZE) {
             this.adjustFont(-1);
-          })
+          }
+        })
+
         Text(this.fontSize.toString())
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.accent)
+          .fontColor('#3DD6C4')
           .width(26)
           .textAlign(TextAlign.Center)
-        Button('A+')
-          .type(ButtonType.Normal)
-          .height(28)
-          .width(32)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .focusable(false)
-          .backgroundColor(Palette.surface)
-          .borderRadius(8)
-          .fontColor(this.fontSize >= MAX_FONT_SIZE ? Palette.textDim : Palette.text)
-          .enabled(this.fontSize < MAX_FONT_SIZE)
-          .onClick(() => {
+
+        Row() {
+          Text('A+')
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : '#3DD6C4')
+        }
+        .width(32)
+        .height(28)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('#0D1520')
+        .borderRadius(8)
+        .focusable(false)
+        .enabled(this.fontSize < MAX_FONT_SIZE)
+        .onClick(() => {
+          if (this.fontSize < MAX_FONT_SIZE) {
             this.adjustFont(1);
-          })
+          }
+        })
       }
       .padding({ left: 3, right: 3, top: 2, bottom: 2 })
-      .backgroundColor(Palette.inputBg)
+      .backgroundColor('#080F18')
       .borderRadius(16)
-      .border({ width: 1, color: Palette.border })
+      .border({ width: 1, color: '#1E2630' })
 
       Button('断开')
         .type(ButtonType.Normal)
