@@ -15,6 +15,9 @@
 #define LOG_TAG "Terminal"
 
 namespace {
+// DECCKM (cursor keys) is DEC private mode 1. ghostty_terminal_mode_get takes a
+// packed mode value where DEC private modes are just their numeric id.
+constexpr uint16_t kGhosttyModeDecckm = 1;
 constexpr size_t kGhosttyTextCapacity = 64;
 constexpr uint32_t kSearchMatchBackground = 0xFF2F4159;
 constexpr uint32_t kSearchMatchForeground = 0xFFFFFFFF;
@@ -977,6 +980,50 @@ void Terminal::scrollView(int delta) {
     notifyRenderNeeded();
 }
 
+void Terminal::wheelScroll(int lines) {
+    if (lines == 0) return;
+
+    bool altScreen = false;
+    bool appCursorKeys = false;
+    {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        if (!m_vt) return;
+
+        ghostty_terminal_screen_t screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        ghostty_terminal_get(m_vt, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
+        altScreen = (screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE);
+
+        if (!altScreen) {
+            // Primary screen: scroll the viewport over the scrollback buffer.
+            scrollViewportLocked(GHOSTTY_SCROLL_VIEWPORT_DELTA, lines);
+        } else {
+            // DECCKM (DEC private mode 1) selects application vs. normal cursor
+            // keys. The packed mode value is the raw number for DEC private modes.
+            ghostty_terminal_mode_get(m_vt, kGhosttyModeDecckm, &appCursorKeys);
+        }
+    }
+
+    if (!altScreen) {
+        notifyRenderNeeded();
+        return;
+    }
+
+    // Alternate screen has no scrollback, so a viewport scroll is a no-op. Emit
+    // cursor up/down keys instead (DECCKM selects normal vs. application form) so
+    // the foreground TUI scrolls its own buffer. Positive delta scrolls up/back.
+    const char* up = appCursorKeys ? "\x1bOA" : "\x1b[A";
+    const char* down = appCursorKeys ? "\x1bOB" : "\x1b[B";
+    const char* seq = lines > 0 ? up : down;
+    const int count = std::abs(lines);
+
+    std::string out;
+    out.reserve(static_cast<size_t>(count) * 3);
+    for (int i = 0; i < count; ++i) {
+        out += seq;
+    }
+    emitInput(out.data(), out.size());
+}
+
 void Terminal::resetViewScroll() {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (!m_vt) return;
@@ -1533,7 +1580,14 @@ std::string Terminal::getSelectedText() const {
             }
 
             rowHasSelection = true;
-            if (!hasText || wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD || codepoint == 0) {
+            if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
+                // Wide characters (e.g. CJK) occupy two cells: the lead cell holds
+                // the codepoint and the trailing cell is a spacer. Emitting a space
+                // for the spacer would insert a blank after every wide glyph, so we
+                // skip spacers entirely when extracting selected text.
+                continue;
+            }
+            if (!hasText || codepoint == 0) {
                 result.push_back(' ');
             } else {
                 AppendCodepointUtf8(result, codepoint);

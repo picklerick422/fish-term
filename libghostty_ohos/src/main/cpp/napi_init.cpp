@@ -1022,7 +1022,7 @@ public:
             toolType == UI_INPUT_EVENT_TOOL_TYPE_MOUSE) {
             constexpr double kWheelStepDegrees = 15.0;
             const int scrollLines = std::max(1, static_cast<int>(std::lround(std::abs(vertical) / kWheelStepDegrees)));
-            m_terminal->scrollView(vertical > 0.0 ? scrollLines : -scrollLines);
+            m_terminal->wheelScroll(vertical > 0.0 ? scrollLines : -scrollLines);
             return;
         }
 
@@ -1032,7 +1032,7 @@ public:
             return;
         }
 
-        m_terminal->scrollView(scrollLines);
+        m_terminal->wheelScroll(scrollLines);
         m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
     }
 
@@ -1683,7 +1683,7 @@ private:
             return;
         }
 
-        m_terminal->scrollView(scrollLines);
+        m_terminal->wheelScroll(scrollLines);
         m_touchScrollRemainderY -= static_cast<float>(scrollLines) * cellHeight;
     }
 
