@@ -985,6 +985,8 @@ void Terminal::wheelScroll(int lines) {
 
     bool altScreen = false;
     bool appCursorKeys = false;
+    bool anyMouseTracking = false;
+    bool sgrMouse = false;
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         if (!m_vt) return;
@@ -994,12 +996,23 @@ void Terminal::wheelScroll(int lines) {
         altScreen = (screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE);
 
         if (!altScreen) {
-            // Primary screen: scroll the viewport over the scrollback buffer.
             scrollViewportLocked(GHOSTTY_SCROLL_VIEWPORT_DELTA, lines);
         } else {
-            // DECCKM (DEC private mode 1) selects application vs. normal cursor
-            // keys. The packed mode value is the raw number for DEC private modes.
             ghostty_terminal_mode_get(m_vt, kGhosttyModeDecckm, &appCursorKeys);
+        }
+
+        // Check for X10/button/any-event mouse tracking (modes 1000/1002/1003).
+        // When an app enables mouse tracking it handles scroll itself via mouse
+        // wheel escape sequences — sending cursor keys would be interpreted by
+        // readline as history navigation instead of scroll.
+        bool m1000 = false, m1002 = false, m1003 = false;
+        ghostty_terminal_mode_get(m_vt, 1000, &m1000);
+        ghostty_terminal_mode_get(m_vt, 1002, &m1002);
+        ghostty_terminal_mode_get(m_vt, 1003, &m1003);
+        anyMouseTracking = m1000 || m1002 || m1003;
+        if (anyMouseTracking) {
+            // Mode 1006 = SGR extended mouse coordinates.
+            ghostty_terminal_mode_get(m_vt, 1006, &sgrMouse);
         }
     }
 
@@ -1008,9 +1021,34 @@ void Terminal::wheelScroll(int lines) {
         return;
     }
 
-    // Alternate screen has no scrollback, so a viewport scroll is a no-op. Emit
-    // cursor up/down keys instead (DECCKM selects normal vs. application form) so
-    // the foreground TUI scrolls its own buffer. Positive delta scrolls up/back.
+    // When mouse tracking is active the app handles wheel events via escape
+    // sequences, not cursor keys. Send proper mouse wheel sequences so apps
+    // like claude code, vim, less can scroll rather than navigating history.
+    if (anyMouseTracking) {
+        const int count = std::abs(lines);
+        // button 64 = wheel up, 65 = wheel down (XTerm mouse button encoding)
+        const int btn = lines > 0 ? 64 : 65;
+        std::string out;
+        if (sgrMouse) {
+            // SGR extended: \x1b[<BTN;COL;ROWM
+            char buf[32];
+            snprintf(buf, sizeof(buf), "\x1b[<%d;1;1M", btn);
+            for (int i = 0; i < count; ++i) out += buf;
+        } else {
+            // X10 classic: \x1b[M + (btn+32) + (col+32) + (row+32)
+            const char btnC = static_cast<char>(btn + 32);
+            const char posC = static_cast<char>(1 + 32); // col/row 1
+            for (int i = 0; i < count; ++i) {
+                out += '\x1b'; out += '['; out += 'M';
+                out += btnC; out += posC; out += posC;
+            }
+        }
+        emitInput(out.data(), out.size());
+        return;
+    }
+
+    // No mouse tracking on alt screen: fall back to cursor up/down.
+    // DECCKM (mode 1) selects application vs. normal cursor key form.
     const char* up = appCursorKeys ? "\x1bOA" : "\x1b[A";
     const char* down = appCursorKeys ? "\x1bOB" : "\x1b[B";
     const char* seq = lines > 0 ? up : down;
@@ -1018,9 +1056,7 @@ void Terminal::wheelScroll(int lines) {
 
     std::string out;
     out.reserve(static_cast<size_t>(count) * 3);
-    for (int i = 0; i < count; ++i) {
-        out += seq;
-    }
+    for (int i = 0; i < count; ++i) out += seq;
     emitInput(out.data(), out.size());
 }
 
