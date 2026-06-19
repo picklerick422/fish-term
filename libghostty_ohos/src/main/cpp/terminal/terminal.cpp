@@ -1026,11 +1026,10 @@ void Terminal::wheelScroll(int lines) {
     // like claude code, vim, less can scroll rather than navigating history.
     if (anyMouseTracking) {
         const int count = std::abs(lines);
-        // Match the primary-screen scrollback direction: a positive `lines`
-        // value drives scrollViewport(DELTA, +) which moves toward older
-        // content, so emit wheel-up (button 64) for positive lines and
-        // wheel-down (button 65) for negative.
-        const int btn = lines > 0 ? 64 : 65;
+        // Match the (working) primary-screen scrollback direction: positive
+        // `lines` scrolls toward newer/lower content, so emit wheel-down
+        // (button 65) for positive lines and wheel-up (button 64) for negative.
+        const int btn = lines > 0 ? 65 : 64;
         std::string out;
         if (sgrMouse) {
             // SGR extended: \x1b[<BTN;COL;ROWM
@@ -1052,10 +1051,10 @@ void Terminal::wheelScroll(int lines) {
 
     // No mouse tracking on alt screen: fall back to cursor up/down.
     // DECCKM (mode 1) selects application vs. normal cursor key form.
-    // Positive `lines` matches primary-screen scroll-up, so send cursor-up.
+    // Positive `lines` scrolls toward newer content, so send cursor-down.
     const char* up = appCursorKeys ? "\x1bOA" : "\x1b[A";
     const char* down = appCursorKeys ? "\x1bOB" : "\x1b[B";
-    const char* seq = lines > 0 ? up : down;
+    const char* seq = lines > 0 ? down : up;
     const int count = std::abs(lines);
 
     std::string out;

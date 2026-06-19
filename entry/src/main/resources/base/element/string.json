@@ -11,10 +11,6 @@
     {
       "name": "EntryAbility_label",
       "value": "fish-term"
-    },
-    {
-      "name": "permission_reason_pasteboard",
-      "value": "Read clipboard to paste text into the terminal"
     }
   ]
 }
