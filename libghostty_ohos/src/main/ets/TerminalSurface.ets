@@ -36,6 +36,15 @@ export struct TerminalSurface {
     this.controller.setLinkListener((url: string) => {
       this.handleLinkActivated(url);
     });
+    this.controller.setCopyRequestListener(() => {
+      const text = this.controller.getSelectedText();
+      if (text.length > 0) {
+        this.copyToClipboard(text);
+      }
+    });
+    this.controller.setPasteRequestListener(() => {
+      this.pasteFromClipboard();
+    });
     this.appliedFontSize = this.controller.getConfig().fontSize;
   }
 
@@ -43,6 +52,8 @@ export struct TerminalSurface {
     this.stopFallbackPolling();
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
+    this.controller.setCopyRequestListener(null);
+    this.controller.setPasteRequestListener(null);
   }
 
   build() {

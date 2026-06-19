@@ -742,6 +742,22 @@ public:
             NotifyImeStateLocked();
         }
 
+        // Ctrl+Shift+C = clipboard copy; Ctrl+Shift+V = clipboard paste.
+        // These must be intercepted before BuildKeySequence, which would otherwise
+        // treat Ctrl+letter as a terminal control character (ETX for Ctrl+C, etc.).
+        if (IsCtrlPressed(modifiers) && IsShiftPressed(modifiers)) {
+            if (code == LINUX_KEY_C || code == KEY_C) {
+                std::lock_guard<std::mutex> lock(m_inputMutex);
+                m_pendingCopyRequest = true;
+                return true;
+            }
+            if (code == LINUX_KEY_V || code == KEY_V) {
+                std::lock_guard<std::mutex> lock(m_inputMutex);
+                m_pendingPasteRequest = true;
+                return true;
+            }
+        }
+
         std::string sequence;
         if (!BuildKeySequence(code, modifiers, capsLock, sequence) || sequence.empty()) {
             return false;
@@ -1017,7 +1033,7 @@ public:
         }
 
         m_terminal->scrollView(scrollLines);
-        m_axisScrollRemainderY += static_cast<double>(scrollLines) * cellHeight;
+        m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
     }
 
     void SetResourceManager(napi_env env, napi_value value) {
@@ -1204,6 +1220,20 @@ public:
         std::string drained;
         drained.swap(m_pendingContextMenuRequest);
         return drained;
+    }
+
+    bool DrainPendingCopyRequest() {
+        std::lock_guard<std::mutex> lock(m_inputMutex);
+        const bool had = m_pendingCopyRequest;
+        m_pendingCopyRequest = false;
+        return had;
+    }
+
+    bool DrainPendingPasteRequest() {
+        std::lock_guard<std::mutex> lock(m_inputMutex);
+        const bool had = m_pendingPasteRequest;
+        m_pendingPasteRequest = false;
+        return had;
     }
 
     void ResizeTerminal(int cols, int rows) {
@@ -2258,6 +2288,8 @@ private:
     std::string m_pendingInput;
     std::string m_pendingLinkActivation;
     std::string m_pendingContextMenuRequest;
+    bool m_pendingCopyRequest = false;
+    bool m_pendingPasteRequest = false;
     napi_threadsafe_function m_inputTsfn = nullptr;
     InputMethod_TextEditorProxy* m_imeTextEditorProxy = nullptr;
     InputMethod_InputMethodProxy* m_imeInputMethodProxy = nullptr;
@@ -2455,6 +2487,22 @@ static napi_value DrainPendingContextMenuRequest(napi_env env, napi_callback_inf
     napi_value result;
     const std::string content = host ? host->DrainPendingContextMenuRequest() : std::string();
     napi_create_string_utf8(env, content.c_str(), content.length(), &result);
+    return result;
+}
+
+static napi_value DrainPendingCopyRequest(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    napi_value result;
+    napi_get_boolean(env, host ? host->DrainPendingCopyRequest() : false, &result);
+    return result;
+}
+
+static napi_value DrainPendingPasteRequest(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    napi_value result;
+    napi_get_boolean(env, host ? host->DrainPendingPasteRequest() : false, &result);
     return result;
 }
 
@@ -2906,6 +2954,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"setInputCallback", nullptr, SetInputCallback, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingLinkActivation", nullptr, DrainPendingLinkActivation, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingContextMenuRequest", nullptr, DrainPendingContextMenuRequest, nullptr, nullptr, nullptr, napi_default, host},
+        {"drainPendingCopyRequest", nullptr, DrainPendingCopyRequest, nullptr, nullptr, nullptr, napi_default, host},
+        {"drainPendingPasteRequest", nullptr, DrainPendingPasteRequest, nullptr, nullptr, nullptr, napi_default, host},
         {"resizeTerminal", nullptr, ResizeTerminal, nullptr, nullptr, nullptr, napi_default, host},
         {"getScreenContent", nullptr, GetScreenContent, nullptr, nullptr, nullptr, napi_default, host},
         {"getCursorPosition", nullptr, GetCursorPosition, nullptr, nullptr, nullptr, napi_default, host},

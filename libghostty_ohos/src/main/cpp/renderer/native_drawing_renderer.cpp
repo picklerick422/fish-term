@@ -557,6 +557,12 @@ void NativeDrawingRenderer::updateCellDimensions()
         return;
     }
 
+    // Glyph layouts are cached by text/color/style/span but NOT by font size or
+    // density, so a font-size or density change must invalidate the cache.
+    // Otherwise both the probe below and every subsequent glyph would return a
+    // stale layout sized for the previous font, making font-size changes a no-op.
+    destroyGlyphCache();
+
     Cell probeCell;
     probeCell.codepoint = 'M';
     const char probe[] = "M";

@@ -23,6 +23,8 @@ interface TerminalNativeBridge {
   setInputCallback: (callback: ((data: string) => void) | null) => void;
   drainPendingLinkActivation: () => string;
   drainPendingContextMenuRequest: () => string;
+  drainPendingCopyRequest: () => boolean;
+  drainPendingPasteRequest: () => boolean;
   resizeTerminal: (cols: number, rows: number) => void;
   getScreenContent: () => string;
   getCursorPosition: () => CursorPosition;
@@ -67,6 +69,8 @@ export class TerminalController {
   private contextMenuListener: TerminalContextMenuListener | null = null;
   private attachmentListener: TerminalAttachmentListener | null = null;
   private sizeListener: TerminalSizeListener | null = null;
+  private copyRequestListener: (() => void) | null = null;
+  private pasteRequestListener: (() => void) | null = null;
   private inputPollTimer: number = -1;
   private trackedWindow: window.Window | null = null;
   private windowRectListener: ((options: window.RectChangeOptions) => void) | null = null;
@@ -183,6 +187,20 @@ export class TerminalController {
       this.startInputPolling();
     } else {
       this.stopInputPolling();
+    }
+  }
+
+  setCopyRequestListener(listener: (() => void) | null): void {
+    this.copyRequestListener = listener;
+    if (listener) {
+      this.startInputPolling();
+    }
+  }
+
+  setPasteRequestListener(listener: (() => void) | null): void {
+    this.pasteRequestListener = listener;
+    if (listener) {
+      this.startInputPolling();
     }
   }
 
@@ -398,7 +416,11 @@ export class TerminalController {
   }
 
   private startInputPolling(): void {
-    if (!this.native || (!this.linkListener && !this.contextMenuListener) || this.inputPollTimer >= 0) {
+    const needsPoll = this.linkListener !== null ||
+      this.contextMenuListener !== null ||
+      this.copyRequestListener !== null ||
+      this.pasteRequestListener !== null;
+    if (!this.native || !needsPoll || this.inputPollTimer >= 0) {
       return;
     }
 
@@ -421,6 +443,14 @@ export class TerminalController {
           Number.isFinite(x) ? x : 0,
           Number.isFinite(y) ? y : 0
         );
+      }
+
+      if (this.copyRequestListener && this.native.drainPendingCopyRequest()) {
+        this.copyRequestListener();
+      }
+
+      if (this.pasteRequestListener && this.native.drainPendingPasteRequest()) {
+        this.pasteRequestListener();
       }
     }, 16) as number;
   }
