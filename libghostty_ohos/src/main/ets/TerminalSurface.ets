@@ -134,6 +134,9 @@ export struct TerminalSurface {
         if (!event || event.type !== KeyType.Down) {
           return false;
         }
+        if (!event.getModifierKeyState) {
+          return false;
+        }
         let ctrl = false;
         let shift = false;
         try {
