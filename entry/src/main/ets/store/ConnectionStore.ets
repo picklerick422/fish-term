@@ -16,6 +16,10 @@ const KEY_PORT: string = 'port';
 const KEY_TLS: string = 'tls';
 const KEY_REMEMBER: string = 'remember_token';
 const KEY_FONT: string = 'font_size';
+const KEY_THEME: string = 'theme_name';
+const KEY_CURSOR_STYLE: string = 'cursor_style';
+const KEY_CURSOR_BLINK: string = 'cursor_blink';
+const KEY_SCROLLBACK: string = 'scrollback_lines';
 const TOKEN_ALIAS: string = 'fish_agent_token';
 const ASSET_NOT_FOUND: number = 24000002;
 
@@ -33,6 +37,18 @@ export const DEFAULT_PROFILE: ConnectionProfile = {
   tls: false,
   rememberToken: false,
   token: ''
+};
+
+export interface TerminalPrefs {
+  cursorStyle: number;   // 0=block, 1=underline, 2=bar
+  cursorBlink: boolean;
+  scrollbackLines: number;
+}
+
+export const DEFAULT_TERMINAL_PREFS: TerminalPrefs = {
+  cursorStyle: 0,
+  cursorBlink: true,
+  scrollbackLines: 20000,
 };
 
 function strToBytes(s: string): Uint8Array {
@@ -112,6 +128,55 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-termsave fontSize failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadTheme(fallback: string): Promise<string> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_THEME, fallback) as string;
+    } catch (e) {
+      console.error('fish-termload theme failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveTheme(name: string): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_THEME, name);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-termsave theme failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadTerminalPrefs(fallback: TerminalPrefs): Promise<TerminalPrefs> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      const cursorStyle: number = await pref.get(KEY_CURSOR_STYLE, fallback.cursorStyle) as number;
+      const cursorBlink: boolean = await pref.get(KEY_CURSOR_BLINK, fallback.cursorBlink) as boolean;
+      const scrollbackLines: number = await pref.get(KEY_SCROLLBACK, fallback.scrollbackLines) as number;
+      return { cursorStyle, cursorBlink, scrollbackLines };
+    } catch (e) {
+      console.error('fish-termload terminalPrefs failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveTerminalPrefs(prefs: TerminalPrefs): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_CURSOR_STYLE, prefs.cursorStyle);
+      await pref.put(KEY_CURSOR_BLINK, prefs.cursorBlink);
+      await pref.put(KEY_SCROLLBACK, prefs.scrollbackLines);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-termsave terminalPrefs failed: ' + JSON.stringify(e));
     }
   }
 

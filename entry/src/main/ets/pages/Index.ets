@@ -4,9 +4,10 @@ import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
-import { ConnectionStore, ConnectionProfile } from '../store/ConnectionStore';
+import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
 import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, stepFontSize, clampFontSize } from '../theme/FontScale';
+import { SettingsPanel } from './SettingsPanel';
 
 function stateLabel(s: DriverStatus): string {
   switch (s.state) {
@@ -53,12 +54,17 @@ struct Index {
   @State private driverState: DriverState = DriverState.Idle;
   @State private formError: string = '';
   @State private focusedField: string = '';
+  @State private showSettings: boolean = false;
+  @State private themeName: string = 'Aizen_Dark';
+  @State private cursorStyle: number = 0;
+  @State private cursorBlink: boolean = true;
+  @State private scrollbackLines: number = 20000;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.store = new ConnectionStore(this.context);
     this.loadProfile();
-    this.loadFontSize();
+    this.loadSettings();
     emitter.on({ eventId: 10086 }, () => {
       this.session?.onForeground();
     });
@@ -78,15 +84,34 @@ struct Index {
     });
   }
 
-  private loadFontSize(): void {
+  private loadSettings(): void {
     const store: ConnectionStore | null = this.store;
     if (!store) {
-      this.controller.updateConfig({ fontSize: this.fontSize, scrollbackLines: 20000 });
+      this.controller.updateConfig({
+        fontSize: this.fontSize,
+        scrollbackLines: this.scrollbackLines,
+        cursorStyle: this.cursorStyle,
+        cursorBlink: this.cursorBlink
+      });
       return;
     }
     store.loadFontSize(DEFAULT_FONT_SIZE).then((fs: number): void => {
       this.fontSize = clampFontSize(fs);
-      this.controller.updateConfig({ fontSize: this.fontSize, scrollbackLines: 20000 });
+    });
+    store.loadTheme('Aizen_Dark').then((name: string): void => {
+      this.themeName = name;
+      this.controller.setTheme(name);
+    });
+    store.loadTerminalPrefs(DEFAULT_TERMINAL_PREFS).then((prefs: TerminalPrefs): void => {
+      this.cursorStyle = prefs.cursorStyle;
+      this.cursorBlink = prefs.cursorBlink;
+      this.scrollbackLines = prefs.scrollbackLines;
+      this.controller.updateConfig({
+        fontSize: this.fontSize,
+        scrollbackLines: prefs.scrollbackLines,
+        cursorStyle: prefs.cursorStyle,
+        cursorBlink: prefs.cursorBlink
+      });
     });
   }
 
@@ -203,6 +228,12 @@ struct Index {
       }
       .width('100%')
       .height('100%')
+      .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
+        detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+        dragBar: true,
+        backgroundColor: Palette.base,
+        onDisappear: () => { this.focusTerminal(); }
+      })
 
       if (!this.connected) {
         this.buildForm();
@@ -211,6 +242,21 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(Palette.base)
+  }
+
+  @Builder
+  private buildSettingsSheet() {
+    SettingsPanel({
+      controller: this.controller,
+      store: this.store,
+      fontSize: this.fontSize,
+      themeName: $$this.themeName,
+      cursorStyle: $$this.cursorStyle,
+      cursorBlink: $$this.cursorBlink,
+      scrollbackLines: $$this.scrollbackLines,
+      onFontSizeChange: (s: number) => { this.applyFontSize(s); },
+      onClose: () => { this.showSettings = false; }
+    })
   }
 
   @Builder
@@ -285,6 +331,20 @@ struct Index {
       .backgroundColor('#080F18')
       .borderRadius(16)
       .border({ width: 1, color: '#1E2630' })
+
+      // settings gear button
+      Row() {
+        Text('⚙')
+          .fontSize(16)
+          .fontColor(Palette.textDim)
+      }
+      .width(32)
+      .height(28)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor('#0D1520')
+      .borderRadius(8)
+      .focusable(false)
+      .onClick(() => { this.showSettings = true; })
 
       Button('断开')
         .type(ButtonType.Normal)
