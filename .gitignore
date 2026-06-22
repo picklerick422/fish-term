@@ -50,3 +50,4 @@ pnpm-debug.log*
 # Keep repo-owned tool configuration
 !.clangd
 !.clang-tidy
+.claude/
