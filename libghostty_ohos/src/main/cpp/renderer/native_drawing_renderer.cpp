@@ -481,6 +481,12 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 if (geometryMask[static_cast<size_t>(row * cols + nextCol)] != 0) {
                     break;
                 }
+                // Never merge wide chars into a run: each wide (CJK) glyph must be
+                // laid out independently so the typography engine positions it at
+                // exactly 2*cellWidth rather than inheriting run-level spacing.
+                if (span == 2 || nextCell.width == 2) {
+                    break;
+                }
 
                 const uint8_t nextSpan = nextCell.width == 2 ? 2 : 1;
                 CellAttributes nextAttrs = nextCell.attrs;

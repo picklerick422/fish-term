@@ -7,7 +7,6 @@ import { buildFishUrl } from './FishUrl';
 import { Backoff } from './Backoff';
 
 const HEARTBEAT_MS: number = 15000;
-const MAX_RECONNECT_ATTEMPTS: number = 6;
 
 interface ServerCtrl {
   type: string;
@@ -32,7 +31,6 @@ export class FishWebSocketDriver implements TerminalDriver {
   private manualStop: boolean = false;
   private reconnectTimer: number = -1;
   private heartbeatTimer: number = -1;
-  private reconnectAttempts: number = 0;
 
   constructor(config: FishConnectConfig) {
     this.config = config;
@@ -55,7 +53,6 @@ export class FishWebSocketDriver implements TerminalDriver {
     this.cols = Math.max(1, cols);
     this.rows = Math.max(1, rows);
     this.manualStop = false;
-    this.reconnectAttempts = 0;
     this.backoff.reset();
     this.connect();
   }
@@ -78,6 +75,16 @@ export class FishWebSocketDriver implements TerminalDriver {
     if (this.connected && this.ws) {
       this.sendText(`{"type":"resize","cols":${this.cols},"rows":${this.rows}}`);
     }
+  }
+
+  onForeground(): void {
+    if (this.manualStop || this.connected || this.reconnectTimer >= 0) {
+      return;
+    }
+    // App returned to foreground while a reconnect was pending — trigger
+    // an immediate reconnect attempt rather than waiting for the next backoff tick.
+    this.backoff.reset();
+    this.connect();
   }
 
   stop(): void {
@@ -106,7 +113,6 @@ export class FishWebSocketDriver implements TerminalDriver {
 
     ws.on('open', () => {
       this.connected = true;
-      this.reconnectAttempts = 0;
       this.backoff.reset();
       this.emit(DriverState.Connected);
       this.startHeartbeat();
@@ -199,12 +205,6 @@ export class FishWebSocketDriver implements TerminalDriver {
     if (this.manualStop || this.reconnectTimer >= 0) {
       return;
     }
-    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      this.manualStop = true;
-      this.emit(DriverState.Error, '重连失败，请检查地址和 token');
-      return;
-    }
-    this.reconnectAttempts++;
     const delay: number = this.backoff.next();
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = -1;

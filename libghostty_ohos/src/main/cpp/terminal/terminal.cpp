@@ -391,6 +391,9 @@ void Terminal::feedOutput(const char* data, size_t len) {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (m_vt && data && len > 0) {
         ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(data), len);
+        // Clear any active selection: content has changed and the selection
+        // coordinates would now point to different text (standard terminal behaviour).
+        m_selectionActive = false;
     }
     notifyRenderNeeded();
 }
@@ -1026,10 +1029,10 @@ void Terminal::wheelScroll(int lines) {
     // like claude code, vim, less can scroll rather than navigating history.
     if (anyMouseTracking) {
         const int count = std::abs(lines);
-        // On HarmonyOS vertical > 0 means wheel-up (finger moves up / wheel
-        // rolls back toward user).  Button 64 = wheel-up, 65 = wheel-down.
-        // Positive `lines` therefore maps to wheel-up (button 64).
-        const int btn = lines > 0 ? 64 : 65;
+        // On HarmonyOS vertical > 0 means the finger moves DOWN (scroll down).
+        // Positive `lines` = scroll down → wheel-down (button 65).
+        // Negative `lines` = scroll up   → wheel-up   (button 64).
+        const int btn = lines > 0 ? 65 : 64;
         std::string out;
         if (sgrMouse) {
             // SGR extended: \x1b[<BTN;COL;ROWM
