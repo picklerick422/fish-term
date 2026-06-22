@@ -41,6 +41,7 @@ interface TerminalNativeBridge {
   startSelection: (row: number, col: number) => void;
   updateSelection: (row: number, col: number) => void;
   clearSelection: () => void;
+  resetTerminal: () => void;
   getSelectedText: () => string;
   startSearch: (query: string) => void;
   searchSelection: () => void;
@@ -329,6 +330,16 @@ export class TerminalController {
       return;
     }
     this.native.clearSelection();
+  }
+
+  // Full reset of the emulator (RIS). Call when (re)connecting to a fresh
+  // server session so modes left enabled by the previous session (mouse
+  // tracking, alt screen, …) don't leak into the new shell.
+  resetTerminal(): void {
+    if (!this.native) {
+      return;
+    }
+    this.native.resetTerminal();
   }
 
   getSelectedText(): string {

@@ -1,5 +1,5 @@
 import { TerminalController, TerminalSize } from 'libghostty_ohos';
-import { DriverStatus, TerminalDriver } from '../transport/TerminalDriver';
+import { DriverState, DriverStatus, TerminalDriver } from '../transport/TerminalDriver';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 
 // Wires one driver to an externally-owned, persistent TerminalController
@@ -14,6 +14,7 @@ export class TerminalSession {
 
   private started: boolean = false;
   private stopped: boolean = false;
+  private hasConnected: boolean = false;
   private startRetryTimer: number = -1;
   private lastCols: number = 0;
   private lastRows: number = 0;
@@ -27,6 +28,17 @@ export class TerminalSession {
       }
     });
     this.driver.onStatus((s: DriverStatus): void => {
+      if (s.state === DriverState.Connected) {
+        // On a reconnect the server starts a fresh session; reset the emulator
+        // first so modes the previous session enabled (mouse tracking, alt
+        // screen, …) don't leak — otherwise the wheel gets reported as SGR
+        // mouse sequences (e.g. "65;1;1M") to the new shell. This runs before
+        // the server's replay output is fed, so the new state takes over.
+        if (this.hasConnected && !this.stopped) {
+          this.controller.resetTerminal();
+        }
+        this.hasConnected = true;
+      }
       if (this.statusCb) {
         this.statusCb(s);
       }

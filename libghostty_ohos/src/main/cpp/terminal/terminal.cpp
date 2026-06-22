@@ -1073,6 +1073,19 @@ void Terminal::resetViewScroll() {
     notifyRenderNeeded();
 }
 
+void Terminal::resetState() {
+    {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        if (!m_vt) return;
+        // Full reset (RIS): clears alt screen, mouse-tracking modes, cursor
+        // key mode, scrollback, etc. — everything a previous session may have
+        // left enabled.
+        ghostty_terminal_reset(m_vt);
+        m_selectionActive = false;
+    }
+    notifyRenderNeeded();
+}
+
 ghostty_terminal_scrollbar_t Terminal::getScrollbarLocked() const
 {
     ghostty_terminal_scrollbar_t scrollbar {};
