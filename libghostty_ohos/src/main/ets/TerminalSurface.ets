@@ -18,6 +18,9 @@ export struct TerminalSurface {
   private contextMenuSelectedText: string = '';
   private contextMenuScreenContent: string = '';
   private contextMenuCanPaste: boolean = false;
+  // Debounce so a paste triggered from the ArkUI key handler (gesture context)
+  // and the native poll fallback don't both fire for the same key press.
+  private lastPasteAt: number = 0;
 
   @State private appliedFontSize: number = DEFAULT_TERMINAL_CONFIG.fontSize;
   @State private useTextFallback: boolean = false;
@@ -120,6 +123,31 @@ export struct TerminalSurface {
           this.searchInputController.stopEditing();
         }
         this.requestTerminalFocus();
+      })
+      .onKeyEvent((event?: KeyEvent): boolean => {
+        // Handle Ctrl+Shift+V here, inside the ArkUI key-event callback, so the
+        // pasteboard read happens within the user-gesture context. Reading the
+        // system pasteboard from the native 16ms poll loses that context, which
+        // is why the first Ctrl+Shift+V used to silently fail (requiring a
+        // second key press). Returning true consumes the key so the native
+        // handler doesn't also emit a literal ^V control byte.
+        if (!event || event.type !== KeyType.Down) {
+          return false;
+        }
+        let ctrl = false;
+        let shift = false;
+        try {
+          ctrl = event.getModifierKeyState(['ctrl']);
+          shift = event.getModifierKeyState(['shift']);
+        } catch (err) {
+          return false;
+        }
+        // KeyCode 2038 = KEYCODE_V.
+        if (ctrl && shift && event.keyCode === 2038) {
+          this.pasteFromClipboard();
+          return true;
+        }
+        return false;
       })
       .focusable(true)
       .focusOnTouch(true)
@@ -407,6 +435,13 @@ export struct TerminalSurface {
   }
 
   private pasteFromClipboard(): void {
+    // Drop duplicate triggers (ArkUI key handler + native poll fallback) that
+    // fire for the same physical key press within a short window.
+    const now = Date.now();
+    if (now - this.lastPasteAt < 300) {
+      return;
+    }
+    this.lastPasteAt = now;
     const clipboard = pasteboard.getSystemPasteboard();
     // Try synchronous path first (works immediately when clipboard is already
     // accessible in the foreground).  If it returns empty — which can happen
