@@ -102,6 +102,7 @@ private:
     std::vector<std::string> captureScrollbackSnapshotLocked(size_t& viewportTopRow);
     void rebuildSearchMatchesLocked();
     void syncSearchSelectionToViewportLocked();
+    size_t getViewportTopRowLocked() const;
 
     int m_cols;
     int m_rows;

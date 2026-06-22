@@ -1026,10 +1026,10 @@ void Terminal::wheelScroll(int lines) {
     // like claude code, vim, less can scroll rather than navigating history.
     if (anyMouseTracking) {
         const int count = std::abs(lines);
-        // Match the (working) primary-screen scrollback direction: positive
-        // `lines` scrolls toward newer/lower content, so emit wheel-down
-        // (button 65) for positive lines and wheel-up (button 64) for negative.
-        const int btn = lines > 0 ? 65 : 64;
+        // On HarmonyOS vertical > 0 means wheel-up (finger moves up / wheel
+        // rolls back toward user).  Button 64 = wheel-up, 65 = wheel-down.
+        // Positive `lines` therefore maps to wheel-up (button 64).
+        const int btn = lines > 0 ? 64 : 65;
         std::string out;
         if (sgrMouse) {
             // SGR extended: \x1b[<BTN;COL;ROWM
@@ -1096,6 +1096,18 @@ void Terminal::scrollViewportLocked(ghostty_terminal_scroll_viewport_tag_t tag, 
     using ScrollViewportFn = void (*)(ghostty_terminal_t, const ghostty_terminal_scroll_viewport_t*);
     auto scrollViewport = reinterpret_cast<ScrollViewportFn>(ghostty_terminal_scroll_viewport);
     scrollViewport(m_vt, &behavior);
+}
+
+size_t Terminal::getViewportTopRowLocked() const
+{
+    if (!m_vt) return 0;
+    const ghostty_terminal_scrollbar_t scrollbar = getScrollbarLocked();
+    const size_t viewportRows = static_cast<size_t>(
+        std::max<uint64_t>(1, scrollbar.len > 0 ? scrollbar.len : static_cast<uint64_t>(m_rows)));
+    const size_t totalRows = static_cast<size_t>(
+        std::max<uint64_t>(viewportRows, scrollbar.total > 0 ? scrollbar.total : static_cast<uint64_t>(m_rows)));
+    const size_t maxOffset = totalRows > viewportRows ? totalRows - viewportRows : 0;
+    return std::min(static_cast<size_t>(scrollbar.offset), maxOffset);
 }
 
 int64_t Terminal::determineScrollStepTowardsBottomLocked()
@@ -1375,23 +1387,24 @@ bool Terminal::isSelectionAt(int row, int col) const {
         return false;
     }
 
-    const int clampedRow = ClampIndex(row, m_rows);
+    const int absRow = static_cast<int>(getViewportTopRowLocked()) + ClampIndex(row, m_rows);
     const int clampedCol = ClampIndex(col, m_cols);
     int startRow = 0;
     int startCol = 0;
     int endRow = 0;
     int endCol = 0;
     normalizeSelectionBounds(startRow, startCol, endRow, endCol);
-    return IsCellSelected(true, startRow, startCol, endRow, endCol, clampedRow, clampedCol);
+    return IsCellSelected(true, startRow, startCol, endRow, endCol, absRow, clampedCol);
 }
 
 void Terminal::startSelection(int row, int col) {
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
+        const int absRow = static_cast<int>(getViewportTopRowLocked()) + ClampIndex(row, m_rows);
         m_selectionActive = true;
-        m_selStartRow = ClampIndex(row, m_rows);
+        m_selStartRow = absRow;
         m_selStartCol = ClampIndex(col, m_cols);
-        m_selEndRow = m_selStartRow;
+        m_selEndRow = absRow;
         m_selEndCol = m_selStartCol;
     }
     notifyRenderNeeded();
@@ -1404,10 +1417,10 @@ void Terminal::updateSelection(int row, int col) {
         if (!m_selectionActive) {
             return;
         }
-        const int nextRow = ClampIndex(row, m_rows);
+        const int absRow = static_cast<int>(getViewportTopRowLocked()) + ClampIndex(row, m_rows);
         const int nextCol = ClampIndex(col, m_cols);
-        changed = nextRow != m_selEndRow || nextCol != m_selEndCol;
-        m_selEndRow = nextRow;
+        changed = absRow != m_selEndRow || nextCol != m_selEndCol;
+        m_selEndRow = absRow;
         m_selEndCol = nextCol;
     }
     if (changed) {
@@ -1485,12 +1498,13 @@ void Terminal::selectWordAt(int row, int col) {
             ++endCol;
         }
 
+        const int absRow = static_cast<int>(getViewportTopRowLocked()) + targetRow;
         changed = !m_selectionActive ||
-            m_selStartRow != targetRow || m_selEndRow != targetRow ||
+            m_selStartRow != absRow || m_selEndRow != absRow ||
             m_selStartCol != startCol || m_selEndCol != endCol;
         m_selectionActive = true;
-        m_selStartRow = targetRow;
-        m_selEndRow = targetRow;
+        m_selStartRow = absRow;
+        m_selEndRow = absRow;
         m_selStartCol = startCol;
         m_selEndCol = endCol;
     }
@@ -1547,12 +1561,13 @@ void Terminal::selectLineAt(int row) {
         }
 
         const int endCol = std::max(0, lastTextCol);
+        const int absRow = static_cast<int>(getViewportTopRowLocked()) + targetRow;
         changed = !m_selectionActive ||
-            m_selStartRow != targetRow || m_selEndRow != targetRow ||
+            m_selStartRow != absRow || m_selEndRow != absRow ||
             m_selStartCol != 0 || m_selEndCol != endCol;
         m_selectionActive = true;
-        m_selStartRow = targetRow;
-        m_selEndRow = targetRow;
+        m_selStartRow = absRow;
+        m_selEndRow = absRow;
         m_selStartCol = 0;
         m_selEndCol = endCol;
     }
@@ -1594,11 +1609,13 @@ std::string Terminal::getSelectedText() const {
     int endRow = 0;
     int endCol = 0;
     normalizeSelectionBounds(startRow, startCol, endRow, endCol);
+    const int viewportTopRowGST = static_cast<int>(getViewportTopRowLocked());
 
     std::string result;
     for (int row = 0; row < m_rows && ghostty_render_state_row_iterator_next(rowIterator); ++row) {
         ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
-        if (row < startRow || row > endRow) {
+        const int absRow = viewportTopRowGST + row;
+        if (absRow < startRow || absRow > endRow) {
             continue;
         }
 
@@ -1614,7 +1631,7 @@ std::string Terminal::getSelectedText() const {
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
 
-            if (!IsCellSelected(true, startRow, startCol, endRow, endCol, row, col)) {
+            if (!IsCellSelected(true, startRow, startCol, endRow, endCol, absRow, col)) {
                 continue;
             }
 
@@ -1633,7 +1650,7 @@ std::string Terminal::getSelectedText() const {
             }
         }
 
-        if (rowHasSelection && row < endRow) {
+        if (rowHasSelection && absRow < endRow) {
             result.push_back('\n');
         }
     }
@@ -1830,7 +1847,17 @@ void Terminal::drawFrame() {
             }
 
             if (selectionActive) {
-                if (IsCellSelected(true, selectionStartRow, selectionStartCol, selectionEndRow, selectionEndCol, row, col)) {
+                const int absRow = static_cast<int>(viewportTopRow) + row;
+                bool cellSel = IsCellSelected(true, selectionStartRow, selectionStartCol,
+                                              selectionEndRow, selectionEndCol, absRow, col);
+                // When a wide char's spacer tail is selected but the wide char itself
+                // falls outside the selection boundary, extend selection to the wide
+                // char so the renderer paints both cells with selection color.
+                if (!cellSel && dst.width == 2 && col + 1 < m_cols) {
+                    cellSel = IsCellSelected(true, selectionStartRow, selectionStartCol,
+                                             selectionEndRow, selectionEndCol, absRow, col + 1);
+                }
+                if (cellSel) {
                     dst.selected = true;
                     dst.attrs.bg = m_theme.selectionBackground;
                     dst.attrs.fg = m_theme.selectionForeground;
