@@ -459,7 +459,9 @@ bool BuildKeySequence(
             return true;
         case LINUX_KEY_TAB:
         case KEY_TAB:
-            sequence = "\t";
+            // Shift+Tab = back-tab (CSI Z). Apps like claude code use it to
+            // cycle focus backwards; without this it would send a plain tab.
+            sequence = shift ? "\x1b[Z" : "\t";
             return true;
         case LINUX_KEY_BACKSPACE:
         case KEY_DEL:
