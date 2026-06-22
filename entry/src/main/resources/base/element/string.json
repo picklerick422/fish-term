@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "fish-term"
+    },
+    {
+      "name": "reason_read_pasteboard",
+      "value": "fish-term needs to read the clipboard to support the paste function"
     }
   ]
 }
