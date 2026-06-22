@@ -399,8 +399,9 @@ export struct TerminalSurface {
   }
 
   private pasteFromClipboard(): void {
-    const clipboard = pasteboard.getSystemPasteboard();
-    clipboard.getData().then((data: pasteboard.PasteData) => {
+    try {
+      const clipboard = pasteboard.getSystemPasteboard();
+      const data = clipboard.getDataSync();
       let text = data.getPrimaryText();
       if (text.length === 0 && data.getRecordCount() > 0) {
         const primaryRecord = data.getRecord(0);
@@ -409,10 +410,9 @@ export struct TerminalSurface {
       if (text.length > 0) {
         this.controller.write(text);
       }
-      this.requestTerminalFocus();
-    }).catch((err: Error) => {
+    } catch (err) {
       console.error('Failed to paste into terminal: ' + JSON.stringify(err));
-      this.requestTerminalFocus();
-    });
+    }
+    this.requestTerminalFocus();
   }
 }
