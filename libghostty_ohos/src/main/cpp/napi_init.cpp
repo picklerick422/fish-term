@@ -1311,6 +1311,12 @@ public:
         }
     }
 
+    void ResetTerminal() {
+        if (m_terminal) {
+            m_terminal->resetState();
+        }
+    }
+
     std::string GetSelectedText() const {
         return m_terminal ? m_terminal->getSelectedText() : std::string();
     }
@@ -2664,6 +2670,15 @@ static napi_value ClearSelection(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+static napi_value ResetTerminal(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    if (host) {
+        host->ResetTerminal();
+    }
+    return nullptr;
+}
+
 static napi_value GetSelectedText(napi_env env, napi_callback_info info) {
     size_t argc = 0;
     TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
@@ -2969,6 +2984,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"startSelection", nullptr, StartSelection, nullptr, nullptr, nullptr, napi_default, host},
         {"updateSelection", nullptr, UpdateSelection, nullptr, nullptr, nullptr, napi_default, host},
         {"clearSelection", nullptr, ClearSelection, nullptr, nullptr, nullptr, napi_default, host},
+        {"resetTerminal", nullptr, ResetTerminal, nullptr, nullptr, nullptr, napi_default, host},
         {"getSelectedText", nullptr, GetSelectedText, nullptr, nullptr, nullptr, napi_default, host},
         {"startSearch", nullptr, StartSearch, nullptr, nullptr, nullptr, napi_default, host},
         {"searchSelection", nullptr, SearchSelection, nullptr, nullptr, nullptr, napi_default, host},

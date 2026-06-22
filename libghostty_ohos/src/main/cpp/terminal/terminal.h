@@ -44,6 +44,11 @@ public:
     // running application scrolls its own content.
     void wheelScroll(int lines);
     void resetViewScroll();
+    // Full RIS reset of the emulator. Used when (re)connecting to a fresh
+    // server session so stale modes (mouse tracking, alt screen, …) from the
+    // previous session don't leak — e.g. wheel events being reported as SGR
+    // mouse sequences to a plain shell prompt.
+    void resetState();
     int getScrollbackSize() const;
 
     // Selection
