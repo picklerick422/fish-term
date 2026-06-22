@@ -1,5 +1,6 @@
 import { TerminalController, TerminalSize } from 'libghostty_ohos';
 import { DriverStatus, TerminalDriver } from '../transport/TerminalDriver';
+import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 
 // Wires one driver to an externally-owned, persistent TerminalController
 // (spec §3.3 dataflow). The controller + its XComponent surface are owned by the
@@ -34,6 +35,12 @@ export class TerminalSession {
 
   onStatus(cb: (s: DriverStatus) => void): void {
     this.statusCb = cb;
+  }
+
+  onForeground(): void {
+    if (this.driver instanceof FishWebSocketDriver) {
+      (this.driver as FishWebSocketDriver).onForeground();
+    }
   }
 
   // Begin the driver. The surface is already bound (page mounts it once), so we

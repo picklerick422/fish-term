@@ -398,21 +398,41 @@ export struct TerminalSurface {
     this.requestTerminalFocus();
   }
 
+  private extractClipboardText(data: pasteboard.PasteData): string {
+    let text = data.getPrimaryText();
+    if (text.length === 0 && data.getRecordCount() > 0) {
+      text = data.getRecord(0).toPlainText();
+    }
+    return text;
+  }
+
   private pasteFromClipboard(): void {
+    const clipboard = pasteboard.getSystemPasteboard();
+    // Try synchronous path first (works immediately when clipboard is already
+    // accessible in the foreground).  If it returns empty — which can happen
+    // the very first time because HarmonyOS is showing a brief privacy
+    // indicator — fall back to the async path so the next access succeeds.
     try {
-      const clipboard = pasteboard.getSystemPasteboard();
       const data = clipboard.getDataSync();
-      let text = data.getPrimaryText();
-      if (text.length === 0 && data.getRecordCount() > 0) {
-        const primaryRecord = data.getRecord(0);
-        text = primaryRecord.toPlainText();
+      const text = this.extractClipboardText(data);
+      if (text.length > 0) {
+        this.controller.write(text);
+        this.requestTerminalFocus();
+        return;
       }
+    } catch (err) {
+      console.error('Paste sync failed, retrying async: ' + JSON.stringify(err));
+    }
+    // Async fallback: the system authorises the access while this resolves.
+    clipboard.getData().then((data: pasteboard.PasteData) => {
+      const text = this.extractClipboardText(data);
       if (text.length > 0) {
         this.controller.write(text);
       }
-    } catch (err) {
-      console.error('Failed to paste into terminal: ' + JSON.stringify(err));
-    }
-    this.requestTerminalFocus();
+      this.requestTerminalFocus();
+    }).catch((err: Error) => {
+      console.error('Paste async failed: ' + JSON.stringify(err));
+      this.requestTerminalFocus();
+    });
   }
 }

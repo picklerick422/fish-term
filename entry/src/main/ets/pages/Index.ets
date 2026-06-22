@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { emitter } from '@kit.BasicServicesKit';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
@@ -58,6 +59,9 @@ struct Index {
     this.store = new ConnectionStore(this.context);
     this.loadProfile();
     this.loadFontSize();
+    emitter.on({ eventId: 10086 }, () => {
+      this.session?.onForeground();
+    });
   }
 
   private loadProfile(): void {
@@ -87,6 +91,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    emitter.off(10086);
     this.stopSession();
   }
 
