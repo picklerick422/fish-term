@@ -402,7 +402,7 @@ struct Index {
         .margin({ left: 14, right: 10 })
 
       Scroll() {
-        Row({ space: 6 }) {
+        Row({ space: 4 }) {
           ForEach(this.tabs, (tab: TabMeta) => {
             this.buildTabChip(tab)
           }, (tab: TabMeta) => 'chip_' + tab.id.toString())
@@ -422,6 +422,7 @@ struct Index {
         }
         .height(40)
         .padding({ right: 8 })
+        .alignItems(VerticalAlign.Bottom)
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
@@ -436,14 +437,14 @@ struct Index {
       .height(28)
       .justifyContent(FlexAlign.Center)
       .borderRadius(7)
-      .backgroundColor('#0D1520')
+      .backgroundColor(Palette.surface)
       .focusable(false)
       .onClick(() => { this.showSettings = true; })
     }
     .width('100%')
     .height(40)
     .padding({ right: 130 })
-    .backgroundColor('#0A0E13')
+    .backgroundColor(Palette.base)
   }
 
   @Builder
@@ -463,17 +464,13 @@ struct Index {
         .focusable(false)
         .onClick(() => { this.closeTab(tab.id); })
     }
-    // Active tab is flush with the terminal below (same bg, no bottom border).
-    // Inactive tabs float as small rounded chips.
-    .height(tab.id === this.activeId ? 40 : 30)
+    // Active tab: same background as terminal, full height, accent top border = "fused".
+    // Inactive tabs: smaller rounded chip floating above the strip bottom.
+    .height(tab.id === this.activeId ? 38 : 28)
     .padding({ left: 12, right: 10 })
-    .borderRadius(tab.id === this.activeId
-      ? { topLeft: 8, topRight: 8, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
-      : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
-    .backgroundColor(tab.id === this.activeId ? Palette.base : Color.Transparent)
-    .border(tab.id === this.activeId
-      ? { width: { top: 1, left: 1, right: 1 }, color: Palette.border }
-      : { width: 1, color: Color.Transparent })
+    .borderRadius(tab.id === this.activeId ? 7 : 6)
+    .backgroundColor(tab.id === this.activeId ? Palette.surface : Color.Transparent)
+    .border({ width: { top: tab.id === this.activeId ? 2 : 0 }, color: Palette.accent })
     .alignItems(VerticalAlign.Center)
     .focusable(false)
     .onClick(() => { this.switchTab(tab.id); })
