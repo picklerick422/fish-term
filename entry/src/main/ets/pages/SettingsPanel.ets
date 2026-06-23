@@ -69,6 +69,11 @@ export struct SettingsPanel {
   @State private themeSearch: string = '';
   @State private themeList: string[] = [];
   @State private filteredThemes: string[] = [];
+  @State private hoverBack: boolean = false;
+  @State private hoverTabIdx: number = -1;
+  @State private hoverTheme: string = '';
+  @State private hoverFontMinus: boolean = false;
+  @State private hoverFontPlus: boolean = false;
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
@@ -134,7 +139,11 @@ export struct SettingsPanel {
         .width(40)
         .height(40)
         .justifyContent(FlexAlign.Center)
+        .borderRadius(8)
+        .backgroundColor(this.hoverBack ? '#FFFFFF0A' : Color.Transparent)
+        .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
+        .onHover((h: boolean) => { this.hoverBack = h; })
         .onClick(() => { this.onClose(); })
 
         Text('设置')
@@ -217,9 +226,12 @@ export struct SettingsPanel {
       .fontColor(this.tab === index ? Palette.base : Palette.textDim)
       .fontWeight(this.tab === index ? FontWeight.Medium : FontWeight.Normal)
       .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-      .backgroundColor(this.tab === index ? Palette.accent : Color.Transparent)
+      .backgroundColor(this.tab === index ? Palette.accent
+        : (this.hoverTabIdx === index ? '#FFFFFF0A' : Color.Transparent))
       .borderRadius(20)
+      .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
+      .onHover((h: boolean) => { this.hoverTabIdx = h ? index : -1; })
       .onClick(() => { this.tab = index; })
   }
 
@@ -339,10 +351,12 @@ export struct SettingsPanel {
         .width(36)
         .height(32)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor('#0D1520')
+        .backgroundColor(this.hoverFontMinus ? '#FFFFFF0A' : '#0D1520')
         .borderRadius(8)
+        .animation({ duration: 100, curve: Curve.EaseOut })
         .focusable(false)
         .enabled(this.fontSize > MIN_FONT_SIZE)
+        .onHover((h: boolean) => { this.hoverFontMinus = h; })
         .onClick(() => {
           if (this.fontSize > MIN_FONT_SIZE) {
             this.onFontSizeChange(this.fontSize - 2);
@@ -365,10 +379,12 @@ export struct SettingsPanel {
         .width(36)
         .height(32)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor('#0D1520')
+        .backgroundColor(this.hoverFontPlus ? '#FFFFFF0A' : '#0D1520')
         .borderRadius(8)
+        .animation({ duration: 100, curve: Curve.EaseOut })
         .focusable(false)
         .enabled(this.fontSize < MAX_FONT_SIZE)
+        .onHover((h: boolean) => { this.hoverFontPlus = h; })
         .onClick(() => {
           if (this.fontSize < MAX_FONT_SIZE) {
             this.onFontSizeChange(this.fontSize + 2);
@@ -449,7 +465,10 @@ export struct SettingsPanel {
             .width('100%')
             .height(48)
             .padding({ left: 10, right: 12 })
+            .backgroundColor(this.hoverTheme === item ? '#FFFFFF07' : Color.Transparent)
+            .animation({ duration: 100, curve: Curve.EaseOut })
             .focusable(false)
+            .onHover((h: boolean) => { this.hoverTheme = h ? item : ''; })
             .onClick(() => {
               this.themeName = item;
               this.onThemeChange(item);
