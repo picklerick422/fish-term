@@ -86,8 +86,8 @@ struct Index {
   // Hover states for guide button and guide card buttons
   @State private hoverGuide: boolean = false;
   @State private guideHover: string = '';
-  // Guide page slide direction (true = sliding forward / to next step).
-  @State private guideForward: boolean = true;
+  // Drives the native horizontal slide between guide pages.
+  private guideTabs: TabsController = new TabsController();
   // Tab drag-reorder via horizontal PanGesture (live reorder, stays on baseline).
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
@@ -692,7 +692,7 @@ struct Index {
       .justifyContent(FlexAlign.Center)
       .focusable(false)
       .onHover((h: boolean) => { this.hoverGuide = h; })
-      .onClick(() => { this.guideStep = 0; this.guideForward = true; this.showGuide = true; })
+      .onClick(() => { this.guideStep = 0; this.showGuide = true; })
 
       // Settings button — borderless, same visual weight as system controls.
       // Hover highlight lives on a smaller inner box (not the full 40×40 hit
@@ -923,8 +923,8 @@ struct Index {
     return 'guide_' + step + '.png';
   }
 
-  // Navigate the guide; sets the slide direction so the page animates in/out
-  // horizontally. Past the last step it finishes onboarding.
+  // Navigate the guide. The native Tabs slide animation handles the motion;
+  // direction is automatic (forward vs back). Past the last step it finishes.
   private goStep(dir: number): void {
     const target: number = this.guideStep + dir;
     if (target >= this.guideCount) {
@@ -934,79 +934,74 @@ struct Index {
     if (target < 0) {
       return;
     }
-    this.guideForward = dir > 0;
-    this.guideStep = target;
+    this.guideTabs.changeIndex(target);
   }
 
-  // Horizontal slide+fade for the guide pages. Direction matches intuition:
-  //   next → the whole page slides to the RIGHT (new page enters from the left)
-  //   prev → the whole page slides to the LEFT  (new page enters from the right)
-  private slideEffect(forward: boolean): TransitionEffect {
-    // forward: entering page starts on the left (-dx) and moves right to 0;
-    // the leaving page moves right and off (+dx). Reversed for prev.
-    const dx: number = forward ? -64 : 64;
-    return TransitionEffect.asymmetric(
-      TransitionEffect.translate({ x: dx }).combine(TransitionEffect.opacity(0))
-        .animation({ duration: 260, curve: Curve.EaseOut }),
-      TransitionEffect.translate({ x: -dx }).combine(TransitionEffect.opacity(0))
-        .animation({ duration: 260, curve: Curve.EaseOut })
-    );
-  }
-
-  // One guide page (image + title + description), wrapped so it can slide.
+  // One guide page (image + title + description), inside a Scroll so a tall
+  // page (e.g. the shortcuts summary) can scroll within the fixed Tabs height.
   @Builder
   private guideBody(step: number) {
-    Column() {
-      // Image placeholder — replace with real screenshots later.
-      Stack({ alignContent: Alignment.Center }) {
-        Column({ space: 6 }) {
-          Text('🖼')
-            .fontSize(34)
-            .fontColor(Palette.textDim)
-          Text('图片占位 · ' + this.guideImageName(step))
-            .fontSize(12)
-            .fontColor(Palette.textDim)
+    Scroll() {
+      Column() {
+        // Image placeholder — replace with real screenshots later.
+        Stack({ alignContent: Alignment.Center }) {
+          Column({ space: 6 }) {
+            Text('🖼')
+              .fontSize(34)
+              .fontColor(Palette.textDim)
+            Text('图片占位 · ' + this.guideImageName(step))
+              .fontSize(12)
+              .fontColor(Palette.textDim)
+          }
         }
+        .width('100%')
+        .height(180)
+        .backgroundColor(Palette.inputBg)
+        .borderRadius(12)
+        .border({ width: 1, color: Palette.border })
+        .margin({ bottom: 18 })
+
+        Text(this.guideTitle(step))
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Palette.text)
+          .width('100%')
+          .margin({ bottom: 10 })
+
+        Text(this.guideDesc(step))
+          .fontSize(14)
+          .fontColor(Palette.textDim)
+          .lineHeight(22)
+          .width('100%')
       }
       .width('100%')
-      .height(180)
-      .backgroundColor(Palette.inputBg)
-      .borderRadius(12)
-      .border({ width: 1, color: Palette.border })
-      .margin({ bottom: 18 })
-
-      Text(this.guideTitle(step))
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Palette.text)
-        .width('100%')
-        .margin({ bottom: 10 })
-
-      Text(this.guideDesc(step))
-        .fontSize(14)
-        .fontColor(Palette.textDim)
-        .lineHeight(22)
-        .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .transition(this.slideEffect(this.guideForward))
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.None)
   }
 
   @Builder
   private buildGuide() {
     Column() {
       Column() {
-        // Sliding page area: ForEach keyed by step so the old page exits and the
-        // new one enters with the horizontal slide transition.
-        Stack({ alignContent: Alignment.TopStart }) {
-          ForEach([this.guideStep], (s: number) => {
-            this.guideBody(s)
-          }, (s: number) => 'guide_' + s.toString())
+        // Sliding page area: native Tabs gives a smooth horizontal slide. Swipe
+        // between pages is also enabled. Native bar hidden; buttons/dots drive it.
+        Tabs({ controller: this.guideTabs, index: this.guideStep }) {
+          TabContent() { this.guideBody(0) }
+          TabContent() { this.guideBody(1) }
+          TabContent() { this.guideBody(2) }
+          TabContent() { this.guideBody(3) }
+          TabContent() { this.guideBody(4) }
         }
+        .barHeight(0)
+        .scrollable(true)
+        .animationDuration(300)
         .width('100%')
-        .constraintSize({ minHeight: 320 })
-        .clip(true)
+        .height(320)
+        .onChange((i: number) => { this.guideStep = i; })
 
         // Step dots
         Row({ space: 6 }) {
