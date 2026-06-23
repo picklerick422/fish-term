@@ -42,6 +42,13 @@ export struct TerminalSurface {
   @State private hoverSearchPrev: boolean = false;
   @State private hoverSearchNext: boolean = false;
   @State private hoverSearchClose: boolean = false;
+  // Transparent 1-pixel TextInput that captures IME-composed text (e.g. Chinese
+  // pinyin) and forwards finished characters to the terminal. Without this the
+  // XComponent SURFACE type does not participate in ArkUI's IME pipeline, so
+  // the system soft keyboard / input method cannot compose text.
+  private imeInputId: string = this.surfaceId + '_ime';
+  private imeInputController: TextInputController = new TextInputController();
+  @State private imeBuffer: string = '';
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -87,6 +94,13 @@ export struct TerminalSurface {
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
+      // IME capture input: a tiny transparent TextInput that lets the system
+      // input method compose text. It stays positioned in the top-left corner
+      // at 1×1 vp so it is never visually perceptible, but it is present in
+      // the layout and can accept IME focus when the user activates the input
+      // method (e.g. by switching language mode). On each confirmed composition
+      // the onChange callback writes the delta to the terminal and resets.
+      this.buildImeInput();
       if (this.searchVisible) {
         this.buildSearchOverlay();
       }
@@ -144,6 +158,9 @@ export struct TerminalSurface {
         if (this.searchVisible) {
           this.searchInputController.stopEditing();
         }
+        // Give focus to the XComponent so native key events (arrow keys, control
+        // sequences, function keys) are handled by the ghostty engine directly.
+        // IME input is captured separately by buildImeInput().
         this.requestTerminalFocus();
       })
       .focusable(true)
@@ -153,6 +170,42 @@ export struct TerminalSurface {
       .height('100%')
       .backgroundColor(this.surfaceColor)
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
+  }
+
+  // Transparent 1×1 TextInput whose sole purpose is to anchor the system IME.
+  // When the user activates their input method (e.g. presses the IME mode key),
+  // this TextInput receives the composed text via onChange. We compute the new
+  // characters appended since the last confirmed input, write them to the terminal,
+  // then clear the buffer so the next composition starts fresh.
+  @Builder
+  private buildImeInput() {
+    TextInput({ text: this.imeBuffer, controller: this.imeInputController })
+      .id(this.imeInputId)
+      .width(1)
+      .height(1)
+      .opacity(0.01)
+      .position({ x: 0, y: 0 })
+      .backgroundColor(Color.Transparent)
+      .fontColor(Color.Transparent)
+      .caretColor(Color.Transparent)
+      .borderWidth(0)
+      .padding(0)
+      .focusable(true)
+      .focusOnTouch(false)
+      .onChange((value: string) => {
+        if (value.length === 0) {
+          return;
+        }
+        // Only forward the newly appended portion since the last confirmed input.
+        const prev = this.imeBuffer;
+        const newChars = value.length > prev.length ? value.substring(prev.length) : value;
+        if (newChars.length > 0) {
+          this.controller.write(newChars);
+        }
+        // Reset the buffer after forwarding so the next composition is a clean slate.
+        this.imeBuffer = '';
+        this.imeInputController.caretPosition(0);
+      })
   }
 
   @Builder

@@ -297,6 +297,11 @@ export struct SettingsPanel {
       this.buildShortcutRow('Shift+Tab', '反向制表（back-tab）')
       this.buildShortcutRow('滚轮', '上下滚动缓冲区')
       this.buildShortcutRow('右键', '打开上下文菜单')
+      this.buildSectionHeader('应用快捷键')
+      this.buildShortcutRow('Ctrl+Shift+T', '新建标签页')
+      this.buildShortcutRow('Ctrl+Shift+W', '关闭当前标签页')
+      this.buildShortcutRow('Ctrl+Shift+F', '在终端内查找')
+      this.buildShortcutRow('Ctrl+Tab', '切换到下一个标签页')
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')

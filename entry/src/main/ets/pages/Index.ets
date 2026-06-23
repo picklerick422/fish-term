@@ -549,22 +549,14 @@ struct Index {
     // Frame color matches the strip — forms a consistent border on
     // left / right / bottom of the terminal card.
     .backgroundColor(Palette.surface)
-    // App-level keyboard shortcuts (work while the window is focused, even
-    // though the terminal XComponent owns native key focus).
-    .keyboardShortcut('f', [ModifierKey.CTRL], () => { this.requestSearch(); })
+    // App-level keyboard shortcuts. All use Ctrl+Shift to avoid conflicting
+    // with: (a) terminal escape sequences that use bare Ctrl (Ctrl+W, Ctrl+T,
+    // Ctrl+1~9 are meaningful to shells/readline); (b) IME mode-switch keys
+    // that many Chinese input methods assign to Ctrl combinations.
     .keyboardShortcut('f', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.requestSearch(); })
-    .keyboardShortcut('t', [ModifierKey.CTRL], () => { this.openTab(); })
-    .keyboardShortcut('w', [ModifierKey.CTRL], () => { this.closeTab(this.activeId); })
+    .keyboardShortcut('t', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.openTab(); })
+    .keyboardShortcut('w', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.closeTab(this.activeId); })
     .keyboardShortcut(FunctionKey.TAB, [ModifierKey.CTRL], () => { this.cycleTab(1); })
-    .keyboardShortcut('1', [ModifierKey.CTRL], () => { this.switchToIndex(0); })
-    .keyboardShortcut('2', [ModifierKey.CTRL], () => { this.switchToIndex(1); })
-    .keyboardShortcut('3', [ModifierKey.CTRL], () => { this.switchToIndex(2); })
-    .keyboardShortcut('4', [ModifierKey.CTRL], () => { this.switchToIndex(3); })
-    .keyboardShortcut('5', [ModifierKey.CTRL], () => { this.switchToIndex(4); })
-    .keyboardShortcut('6', [ModifierKey.CTRL], () => { this.switchToIndex(5); })
-    .keyboardShortcut('7', [ModifierKey.CTRL], () => { this.switchToIndex(6); })
-    .keyboardShortcut('8', [ModifierKey.CTRL], () => { this.switchToIndex(7); })
-    .keyboardShortcut('9', [ModifierKey.CTRL], () => { this.switchToIndex(8); })
   }
 
   @Builder
@@ -914,7 +906,7 @@ struct Index {
       case 3:
         return '回到 fish-term，在首页填入 host / 端口 / token，\n如需加密传输可打开 TLS(wss)，点击「连接」即可开启第一个终端标签页。';
       default:
-        return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+F：查找；Ctrl+Shift+C/V：复制/粘贴\n  · Ctrl+T 新建标签，Ctrl+W 关闭，Ctrl+1~9 / Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
+        return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+Shift+F：查找\n  · Ctrl+Shift+T 新建标签，Ctrl+Shift+W 关闭，Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
     }
   }
 
