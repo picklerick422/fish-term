@@ -566,8 +566,10 @@ public:
     ~TerminalHost() {
         StopRenderLoop();
         ClearInputCallback();
-        std::lock_guard<std::mutex> lock(m_surfaceMutex);
+        // Detach IME outside m_surfaceMutex (see OnSurfaceDestroyed) to avoid the
+        // self-deadlock when the framework calls our editor callbacks during detach.
         DetachImeLocked();
+        std::lock_guard<std::mutex> lock(m_surfaceMutex);
         CleanupSurfaceLocked();
         if (m_terminal) {
             m_terminal->stop();
@@ -704,17 +706,24 @@ public:
     void OnSurfaceDestroyed() {
         StopRenderLoop();
 
+        // Tear down IME OUTSIDE m_surfaceMutex. OH_InputMethodController_Detach /
+        // HideKeyboard can synchronously invoke our registered editor callbacks
+        // (HandleImeKeyboardStatus / FinishPreview), which themselves lock
+        // m_surfaceMutex. Doing the detach while already holding that
+        // (non-recursive) mutex self-deadlocks the main thread — the tab-close
+        // freeze. The render thread is already stopped, so the IME fields are
+        // only touched here on the main thread.
+        DetachImeLocked();
+
         std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
         m_surfaceReady = false;
         m_surfaceFrameOriginKnown = false;
         m_surfaceScreenOriginKnown = false;
         m_windowScreenOriginKnown = false;
         m_lastImeBaseKnown = false;
-        HideImeLocked();
         if (m_terminal) {
             m_terminal->setRenderer(nullptr);
         }
-        DetachImeLocked();
         CleanupSurfaceLocked();
         m_rendererReady = false;
     }
