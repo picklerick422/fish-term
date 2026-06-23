@@ -231,8 +231,10 @@ export struct SettingsPanel {
       .focusable(false)
       .onHover((h: boolean) => { this.hoverTabIdx = h ? index : -1; })
       .onClick(() => {
+        // Only drive the controller — setting this.tab here would make the
+        // Tabs `index` binding jump instantly and skip the slide animation.
+        // onChange() updates this.tab once the slide starts.
         if (index !== this.tab) {
-          this.tab = index;
           this.subTabs.changeIndex(index);
         }
       })
