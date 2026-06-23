@@ -42,13 +42,18 @@ export struct TerminalSurface {
   @State private hoverSearchPrev: boolean = false;
   @State private hoverSearchNext: boolean = false;
   @State private hoverSearchClose: boolean = false;
-  // Transparent 1-pixel TextInput that captures IME-composed text (e.g. Chinese
-  // pinyin) and forwards finished characters to the terminal. Without this the
-  // XComponent SURFACE type does not participate in ArkUI's IME pipeline, so
-  // the system soft keyboard / input method cannot compose text.
-  private imeInputId: string = this.surfaceId + '_ime';
-  private imeInputController: TextInputController = new TextInputController();
-  @State private imeBuffer: string = '';
+  // IME input bar: a toggleable text bar at the bottom of the terminal.
+  // XComponent SURFACE does not participate in ArkUI's IME pipeline, so
+  // Chinese/Japanese/Korean input requires a real TextInput to hold focus.
+  // The bar is toggled with the 中 button (bottom-left corner). User types
+  // in the bar, presses ↵ or Enter to send the composed text to the terminal,
+  // then the bar can be dismissed and focus returns to the XComponent.
+  @State private showImeBar: boolean = false;
+  @State private imeBarText: string = '';
+  @State private hoverImeToggle: boolean = false;
+  @State private hoverImeSend: boolean = false;
+  private imeBarId: string = this.surfaceId + '_imebar';
+  private imeBarController: TextInputController = new TextInputController();
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -89,18 +94,25 @@ export struct TerminalSurface {
   }
 
   build() {
-    Stack() {
+    Stack({ alignContent: Alignment.BottomStart }) {
       this.buildTerminalXComponent();
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
-      // IME capture input: a tiny transparent TextInput that lets the system
-      // input method compose text. It stays positioned in the top-left corner
-      // at 1×1 vp so it is never visually perceptible, but it is present in
-      // the layout and can accept IME focus when the user activates the input
-      // method (e.g. by switching language mode). On each confirmed composition
-      // the onChange callback writes the delta to the terminal and resets.
-      this.buildImeInput();
+      // IME bar: sticks to the bottom edge of the terminal. When visible it
+      // holds focus so the system input method can compose text (e.g. pinyin).
+      // Toggle with the 中 button in the bottom-left corner.
+      if (this.showImeBar) {
+        Column() {
+          Blank().layoutWeight(1)
+          this.buildImeBar()
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Default)
+      }
+      // 中 toggle button — always visible, bottom-left, non-intrusive
+      this.buildImeToggle()
       if (this.searchVisible) {
         this.buildSearchOverlay();
       }
@@ -160,7 +172,7 @@ export struct TerminalSurface {
         }
         // Give focus to the XComponent so native key events (arrow keys, control
         // sequences, function keys) are handled by the ghostty engine directly.
-        // IME input is captured separately by buildImeInput().
+        // IME input is captured separately by the IME bar (buildImeBar).
         this.requestTerminalFocus();
       })
       .focusable(true)
@@ -172,40 +184,82 @@ export struct TerminalSurface {
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 
-  // Transparent 1×1 TextInput whose sole purpose is to anchor the system IME.
-  // When the user activates their input method (e.g. presses the IME mode key),
-  // this TextInput receives the composed text via onChange. We compute the new
-  // characters appended since the last confirmed input, write them to the terminal,
-  // then clear the buffer so the next composition starts fresh.
+  // Small "中" toggle button in the bottom-left corner of the terminal.
+  // Tapping it opens/closes the IME input bar.
   @Builder
-  private buildImeInput() {
-    TextInput({ text: this.imeBuffer, controller: this.imeInputController })
-      .id(this.imeInputId)
-      .width(1)
-      .height(1)
-      .opacity(0.01)
-      .position({ x: 0, y: 0 })
-      .backgroundColor(Color.Transparent)
-      .fontColor(Color.Transparent)
-      .caretColor(Color.Transparent)
-      .borderWidth(0)
-      .padding(0)
-      .focusable(true)
-      .focusOnTouch(false)
-      .onChange((value: string) => {
-        if (value.length === 0) {
-          return;
-        }
-        // Only forward the newly appended portion since the last confirmed input.
-        const prev = this.imeBuffer;
-        const newChars = value.length > prev.length ? value.substring(prev.length) : value;
-        if (newChars.length > 0) {
-          this.controller.write(newChars);
-        }
-        // Reset the buffer after forwarding so the next composition is a clean slate.
-        this.imeBuffer = '';
-        this.imeInputController.caretPosition(0);
-      })
+  private buildImeToggle() {
+    Row() {
+      Text('中')
+        .fontSize(11)
+        .fontColor(this.showImeBar ? '#3DD6C4' : (this.hoverImeToggle ? '#F4F7FB' : '#8A94A6'))
+        .animation({ duration: 100, curve: Curve.EaseOut })
+    }
+    .width(26)
+    .height(22)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(5)
+    .backgroundColor(this.showImeBar ? '#1A3DD6C4' : (this.hoverImeToggle ? '#1AFFFFFF' : '#CC0E1318'))
+    .border({ width: 1, color: this.showImeBar ? '#2A3DD6C4' : '#1E2630' })
+    .margin({ left: 8, bottom: 8 })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onHover((h: boolean) => { this.hoverImeToggle = h; })
+    .onClick(() => {
+      this.showImeBar = !this.showImeBar;
+      if (this.showImeBar) {
+        // Give the TextInput focus so IME attaches immediately
+        setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 50);
+      } else {
+        this.imeBarText = '';
+        this.requestTerminalFocus();
+      }
+    })
+  }
+
+  // Floating input bar that anchors the system IME. User types / composes
+  // text here then presses ↵ (or the send button) to inject it into the
+  // terminal. The bar stays open so they can send multiple lines without
+  // having to re-open it each time.
+  @Builder
+  private buildImeBar() {
+    Row({ space: 8 }) {
+      TextInput({ text: this.imeBarText, controller: this.imeBarController })
+        .id(this.imeBarId)
+        .layoutWeight(1)
+        .height(40)
+        .fontSize(14)
+        .fontColor('#F4F7FB')
+        .placeholderColor('#8A94A6')
+        .placeholder('输入内容发送到终端…')
+        .backgroundColor('#0E1318')
+        .caretColor('#3DD6C4')
+        .borderRadius(8)
+        .borderWidth(1)
+        .borderColor('#1E2630')
+        .padding({ left: 10, right: 10 })
+        .onChange((v: string) => { this.imeBarText = v; })
+        .onSubmit(() => { this.sendImeBar(); })
+
+      // Send button (↵)
+      Row() {
+        Text('↵')
+          .fontSize(16)
+          .fontColor(this.hoverImeSend ? '#0B0D10' : '#3DD6C4')
+          .animation({ duration: 100, curve: Curve.EaseOut })
+      }
+      .width(40)
+      .height(40)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(8)
+      .backgroundColor(this.hoverImeSend ? '#3DD6C4' : '#1A3DD6C4')
+      .border({ width: 1, color: '#2A3DD6C4' })
+      .animation({ duration: 100, curve: Curve.EaseOut })
+      .onHover((h: boolean) => { this.hoverImeSend = h; })
+      .onClick(() => { this.sendImeBar(); })
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor('#E6111621')
+    .border({ width: { top: 1 }, color: '#1E2630' })
   }
 
   @Builder
@@ -498,6 +552,20 @@ export struct TerminalSurface {
       return `${this.searchSelected + 1}/${this.searchTotal}`;
     }
     return `-/${this.searchTotal}`;
+  }
+
+  // Send the IME bar's text to the terminal and clear for the next entry.
+  // Does NOT append '\r' so the user controls when to submit a shell command
+  // (they can tap the physical Enter key after closing the bar, or type '\n'
+  // directly in the bar if needed).
+  private sendImeBar(): void {
+    const text = this.imeBarText.trim();
+    if (text.length > 0) {
+      this.controller.write(text);
+    }
+    this.imeBarText = '';
+    // Keep the bar open and re-focus it so they can send more input.
+    setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 0);
   }
 
   private openSearch(initialQuery: string): void {
