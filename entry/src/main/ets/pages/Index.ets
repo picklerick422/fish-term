@@ -432,9 +432,8 @@ struct Index {
   private buildTabStrip() {
     Row() {
       Image($r('app.media.app_logo'))
-        .width(22)
-        .height(22)
-        .borderRadius(5)
+        .width(26)
+        .height(26)
         .margin({ left: 14, right: 10 })
 
       Scroll() {
@@ -534,28 +533,28 @@ struct Index {
   // stroke weight, hollow knobs, no fill, no accent color.
   @Builder
   private settingsIcon() {
-    Column({ space: 6 }) {
+    Column({ space: 5 }) {
       // top slider: knob on the right
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(16).height(1.5).borderRadius(1).backgroundColor('#B8BEC9')
-        Circle({ width: 6, height: 6 })
+        Row().width(14).height(1).borderRadius(0.5).backgroundColor('#B8BEC9')
+        Circle({ width: 4.5, height: 4.5 })
           .fill(Palette.surface)
           .stroke('#B8BEC9')
-          .strokeWidth(1.5)
-          .margin({ left: 8 })
+          .strokeWidth(1)
+          .margin({ left: 7 })
       }
-      .width(16).height(6)
+      .width(14).height(4.5)
 
       // bottom slider: knob on the left
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(16).height(1.5).borderRadius(1).backgroundColor('#B8BEC9')
-        Circle({ width: 6, height: 6 })
+        Row().width(14).height(1).borderRadius(0.5).backgroundColor('#B8BEC9')
+        Circle({ width: 4.5, height: 4.5 })
           .fill(Palette.surface)
           .stroke('#B8BEC9')
-          .strokeWidth(1.5)
-          .margin({ left: 2 })
+          .strokeWidth(1)
+          .margin({ left: 2.5 })
       }
-      .width(16).height(6)
+      .width(14).height(4.5)
     }
     .justifyContent(FlexAlign.Center)
   }
