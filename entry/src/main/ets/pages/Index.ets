@@ -86,9 +86,16 @@ struct Index {
   // Hover states for guide button and guide card buttons
   @State private hoverGuide: boolean = false;
   @State private guideHover: string = '';
-  // Tab drag-reorder via horizontal PanGesture (not OS drag — stays on baseline).
+  // Guide page slide direction (true = sliding forward / to next step).
+  @State private guideForward: boolean = true;
+  // Tab drag-reorder via horizontal PanGesture (live reorder, stays on baseline).
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
+  @State private dragSwaps: number = 0;
+  private dragUnit: number = 110;
+  private didDrag: boolean = false;
+  private lastDragEnd: number = 0;
+  private chipWidths: Map<number, number> = new Map<number, number>();
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -326,33 +333,65 @@ struct Index {
     }
   }
 
-  // Commit the horizontal pan drag: compute how many slots to move based on
-  // cumulative X offset, then splice the tab array. Each chip is ~110 vp wide
-  // on average; rounding to nearest slot gives natural snapping.
-  private reorderByDrag(fromId: number, totalOffsetX: number): void {
-    const list: TabMeta[] = this.tabs.slice();
-    let fromIdx: number = -1;
-    for (let i: number = 0; i < list.length; i++) {
-      if (list[i].id === fromId) {
-        fromIdx = i;
+  // Average measured chip width (vp) — used to decide when the dragged chip has
+  // crossed a neighbour during a live reorder. Falls back to 110 before measure.
+  private avgChipWidth(): number {
+    if (this.chipWidths.size === 0) {
+      return 110;
+    }
+    let sum: number = 0;
+    this.chipWidths.forEach((w: number) => { sum += w; });
+    return Math.max(48, sum / this.chipWidths.size);
+  }
+
+  // Move the dragged chip one slot in `dir` (±1). Returns false at the edges.
+  private moveDragged(dir: number): boolean {
+    let idx: number = -1;
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      if (this.tabs[i].id === this.dragTabId) {
+        idx = i;
         break;
       }
     }
-    if (fromIdx < 0) {
-      return;
+    const target: number = idx + dir;
+    if (idx < 0 || target < 0 || target >= this.tabs.length) {
+      return false;
     }
-    const CHIP_WIDTH: number = 110;
-    const steps: number = Math.round(totalOffsetX / CHIP_WIDTH);
-    if (steps === 0) {
-      return;
-    }
-    const toIdx: number = Math.max(0, Math.min(list.length - 1, fromIdx + steps));
-    if (toIdx === fromIdx) {
-      return;
-    }
-    const moved: TabMeta = list.splice(fromIdx, 1)[0];
-    list.splice(toIdx, 0, moved);
+    const list: TabMeta[] = this.tabs.slice();
+    const moved: TabMeta = list.splice(idx, 1)[0];
+    list.splice(target, 0, moved);
     this.tabs = list;
+    return true;
+  }
+
+  // Called continuously during a horizontal pan: as the dragged chip's residual
+  // offset crosses ~0.6 of a chip width, swap it past the neighbour so the other
+  // tabs re-flow live (with animation) under the finger.
+  private onDragUpdate(offsetX: number): void {
+    this.dragOffsetX = offsetX;
+    if (Math.abs(offsetX) > 4) {
+      this.didDrag = true;
+    }
+    let guard: number = 0;
+    while (guard < 20) {
+      guard = guard + 1;
+      const residual: number = this.dragOffsetX - this.dragSwaps * this.dragUnit;
+      if (residual > this.dragUnit * 0.6) {
+        if (this.moveDragged(1)) {
+          this.dragSwaps = this.dragSwaps + 1;
+        } else {
+          break;
+        }
+      } else if (residual < -this.dragUnit * 0.6) {
+        if (this.moveDragged(-1)) {
+          this.dragSwaps = this.dragSwaps - 1;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
   }
 
   // Force an immediate reconnect of the active tab's session.
@@ -512,6 +551,7 @@ struct Index {
     .backgroundColor(Palette.surface)
     // App-level keyboard shortcuts (work while the window is focused, even
     // though the terminal XComponent owns native key focus).
+    .keyboardShortcut('f', [ModifierKey.CTRL], () => { this.requestSearch(); })
     .keyboardShortcut('f', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.requestSearch(); })
     .keyboardShortcut('t', [ModifierKey.CTRL], () => { this.openTab(); })
     .keyboardShortcut('w', [ModifierKey.CTRL], () => { this.closeTab(this.activeId); })
@@ -635,13 +675,10 @@ struct Index {
       .layoutWeight(1)
       .align(Alignment.Start)
 
-      // Guide "?" button — same visual weight as settings button
+      // Guide help button — line-art circled "?" matching the system controls
       Row() {
         Row() {
-          Text('?')
-            .fontSize(13)
-            .fontColor(this.hoverGuide ? '#F4F7FB' : '#8A94A6')
-            .animation({ duration: 120, curve: Curve.EaseOut })
+          this.helpIcon()
         }
         .width(30)
         .height(28)
@@ -650,12 +687,12 @@ struct Index {
         .backgroundColor(this.hoverGuide ? '#1FFFFFFF' : Color.Transparent)
         .animation({ duration: 150, curve: Curve.EaseOut })
       }
-      .width(36)
+      .width(40)
       .height(40)
       .justifyContent(FlexAlign.Center)
       .focusable(false)
       .onHover((h: boolean) => { this.hoverGuide = h; })
-      .onClick(() => { this.guideStep = 0; this.showGuide = true; })
+      .onClick(() => { this.guideStep = 0; this.guideForward = true; this.showGuide = true; })
 
       // Settings button — borderless, same visual weight as system controls.
       // Hover highlight lives on a smaller inner box (not the full 40×40 hit
@@ -713,38 +750,58 @@ struct Index {
     // Inactive tab gets a subtle highlight on hover
     .backgroundColor(tab.id === this.activeId ? this.themeBg
       : (this.hoverTabId === tab.id ? '#1FFFFFFF' : Color.Transparent))
-    // During a pan the dragged chip slides horizontally via translate; it stays
-    // on the tab baseline (y never changes). Other chips stay still; the array
-    // is re-spliced only on gesture end so the animation stays smooth.
-    .translate({ x: this.dragTabId === tab.id ? this.dragOffsetX : 0, y: 0 })
+    // The dragged chip follows the finger via a residual X translate; the other
+    // chips re-flow live (with animation) as the array is spliced mid-drag. The
+    // chip never leaves the tab baseline (y is always 0).
+    .translate({ x: this.dragTabId === tab.id ? (this.dragOffsetX - this.dragSwaps * this.dragUnit) : 0, y: 0 })
     .zIndex(this.dragTabId === tab.id ? 10 : 0)
+    .scale(this.dragTabId === tab.id ? { x: 1.04, y: 1.04 } : { x: 1.0, y: 1.0 })
+    .shadow(this.dragTabId === tab.id
+      ? { radius: 12, color: '#66000000', offsetX: 0, offsetY: 2 }
+      : { radius: 0, color: '#00000000', offsetX: 0, offsetY: 0 })
     .animation(this.dragTabId === tab.id
-      ? { duration: 0 }          // no animation on the dragged chip itself
-      : { duration: 150, curve: Curve.EaseOut })
+      ? { duration: 0 }          // dragged chip tracks the finger with no lag
+      : { duration: 180, curve: Curve.Friction })
     .alignItems(VerticalAlign.Center)
     .focusable(false)
+    // Measure width so live-reorder thresholds match the real chip sizes.
+    .onAreaChange((_o: Area, n: Area) => { this.chipWidths.set(tab.id, Number(n.width)); })
     .onHover((h: boolean) => { this.hoverTabId = h ? tab.id : -1; })
     .onClick(() => {
-      // Suppress click that fires right after a drag gesture ends
-      if (Math.abs(this.dragOffsetX) < 4) {
+      // Ignore the click that fires right after a real drag; later taps work.
+      if (Date.now() - this.lastDragEnd > 250) {
         this.switchTab(tab.id);
       }
     })
-    // Horizontal PanGesture for drag-to-reorder. priorityGesture takes
-    // precedence over the parent Scroll's scroll gesture.
+    // Whole-chip horizontal PanGesture for drag-to-reorder. priorityGesture
+    // wins over the parent Scroll's horizontal scroll.
     .priorityGesture(
-      PanGesture({ direction: PanDirection.Horizontal, distance: 6 })
+      PanGesture({ direction: PanDirection.Horizontal, distance: 5 })
         .onActionStart(() => {
           this.dragTabId = tab.id;
           this.dragOffsetX = 0;
+          this.dragSwaps = 0;
+          this.didDrag = false;
+          this.dragUnit = this.avgChipWidth();
         })
         .onActionUpdate((e: GestureEvent) => {
-          this.dragOffsetX = e.offsetX;
+          this.onDragUpdate(e.offsetX);
         })
         .onActionEnd(() => {
-          this.reorderByDrag(this.dragTabId, this.dragOffsetX);
+          if (this.didDrag) {
+            this.lastDragEnd = Date.now();
+          }
           this.dragTabId = -1;
           this.dragOffsetX = 0;
+          this.dragSwaps = 0;
+        })
+        .onActionCancel(() => {
+          if (this.didDrag) {
+            this.lastDragEnd = Date.now();
+          }
+          this.dragTabId = -1;
+          this.dragOffsetX = 0;
+          this.dragSwaps = 0;
         })
     )
   }
@@ -756,6 +813,25 @@ struct Index {
       }
     }
     return { id: -1, title: '', state: DriverState.Idle, statusText: '空闲' };
+  }
+
+  // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
+  // settings icon and the system caption buttons it sits beside.
+  @Builder
+  private helpIcon() {
+    Stack({ alignContent: Alignment.Center }) {
+      Circle({ width: 15, height: 15 })
+        .fill(Color.Transparent)
+        .stroke(this.hoverGuide ? '#F4F7FB' : '#B8BEC9')
+        .strokeWidth(1)
+      Text('?')
+        .fontSize(10)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.hoverGuide ? '#F4F7FB' : '#B8BEC9')
+    }
+    .width(15)
+    .height(15)
+    .animation({ duration: 120, curve: Curve.EaseOut })
   }
 
   // Thin-line "sliders" icon, monochrome to match the system window-control
@@ -838,7 +914,7 @@ struct Index {
       case 3:
         return '回到 fish-term，在首页填入 host / 端口 / token，\n如需加密传输可打开 TLS(wss)，点击「连接」即可开启第一个终端标签页。';
       default:
-        return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+Shift+F：查找；Ctrl+Shift+C/V：复制/粘贴\n  · Ctrl+T 新建标签，Ctrl+W 关闭，Ctrl+1~9 / Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
+        return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+F：查找；Ctrl+Shift+C/V：复制/粘贴\n  · Ctrl+T 新建标签，Ctrl+W 关闭，Ctrl+1~9 / Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
     }
   }
 
@@ -847,40 +923,86 @@ struct Index {
     return 'guide_' + step + '.png';
   }
 
+  // Navigate the guide; sets the slide direction so the page animates in/out
+  // horizontally. Past the last step it finishes onboarding.
+  private goStep(dir: number): void {
+    const target: number = this.guideStep + dir;
+    if (target >= this.guideCount) {
+      this.finishGuide();
+      return;
+    }
+    if (target < 0) {
+      return;
+    }
+    this.guideForward = dir > 0;
+    this.guideStep = target;
+  }
+
+  // Horizontal slide+fade used by the guide pages and settings sub-pages.
+  private slideEffect(forward: boolean): TransitionEffect {
+    const dx: number = forward ? 48 : -48;
+    return TransitionEffect.asymmetric(
+      TransitionEffect.translate({ x: dx }).combine(TransitionEffect.opacity(0))
+        .animation({ duration: 220, curve: Curve.EaseOut }),
+      TransitionEffect.translate({ x: -dx }).combine(TransitionEffect.opacity(0))
+        .animation({ duration: 220, curve: Curve.EaseOut })
+    );
+  }
+
+  // One guide page (image + title + description), wrapped so it can slide.
+  @Builder
+  private guideBody(step: number) {
+    Column() {
+      // Image placeholder — replace with real screenshots later.
+      Stack({ alignContent: Alignment.Center }) {
+        Column({ space: 6 }) {
+          Text('🖼')
+            .fontSize(34)
+            .fontColor(Palette.textDim)
+          Text('图片占位 · ' + this.guideImageName(step))
+            .fontSize(12)
+            .fontColor(Palette.textDim)
+        }
+      }
+      .width('100%')
+      .height(180)
+      .backgroundColor(Palette.inputBg)
+      .borderRadius(12)
+      .border({ width: 1, color: Palette.border })
+      .margin({ bottom: 18 })
+
+      Text(this.guideTitle(step))
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Palette.text)
+        .width('100%')
+        .margin({ bottom: 10 })
+
+      Text(this.guideDesc(step))
+        .fontSize(14)
+        .fontColor(Palette.textDim)
+        .lineHeight(22)
+        .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .transition(this.slideEffect(this.guideForward))
+  }
+
   @Builder
   private buildGuide() {
     Column() {
       Column() {
-        // Image placeholder — replace with real screenshots later.
-        Stack({ alignContent: Alignment.Center }) {
-          Column({ space: 6 }) {
-            Text('🖼')
-              .fontSize(34)
-              .fontColor(Palette.textDim)
-            Text('图片占位 · ' + this.guideImageName(this.guideStep))
-              .fontSize(12)
-              .fontColor(Palette.textDim)
-          }
+        // Sliding page area: ForEach keyed by step so the old page exits and the
+        // new one enters with the horizontal slide transition.
+        Stack({ alignContent: Alignment.TopStart }) {
+          ForEach([this.guideStep], (s: number) => {
+            this.guideBody(s)
+          }, (s: number) => 'guide_' + s.toString())
         }
         .width('100%')
-        .height(190)
-        .backgroundColor(Palette.inputBg)
-        .borderRadius(12)
-        .border({ width: 1, color: Palette.border })
-        .margin({ bottom: 18 })
-
-        Text(this.guideTitle(this.guideStep))
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.text)
-          .width('100%')
-          .margin({ bottom: 10 })
-
-        Text(this.guideDesc(this.guideStep))
-          .fontSize(14)
-          .fontColor(Palette.textDim)
-          .lineHeight(22)
-          .width('100%')
+        .constraintSize({ minHeight: 320 })
+        .clip(true)
 
         // Step dots
         Row({ space: 6 }) {
@@ -917,7 +1039,7 @@ struct Index {
               .animation({ duration: 120, curve: Curve.EaseOut })
               .focusable(false)
               .onHover((h: boolean) => { this.guideHover = h ? 'prev' : ''; })
-              .onClick(() => { this.guideStep = this.guideStep - 1; })
+              .onClick(() => { this.goStep(-1); })
           }
 
           Text(this.guideStep >= this.guideCount - 1 ? '开始使用' : '下一步')
@@ -931,13 +1053,7 @@ struct Index {
             .animation({ duration: 120, curve: Curve.EaseOut })
             .focusable(false)
             .onHover((h: boolean) => { this.guideHover = h ? 'next' : ''; })
-            .onClick(() => {
-              if (this.guideStep >= this.guideCount - 1) {
-                this.finishGuide();
-              } else {
-                this.guideStep = this.guideStep + 1;
-              }
-            })
+            .onClick(() => { this.goStep(1); })
         }
         .width('100%')
         .margin({ top: 4 })

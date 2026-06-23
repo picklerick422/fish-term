@@ -72,6 +72,8 @@ export struct SettingsPanel {
   @State private filteredThemes: string[] = [];
   @State private hoverBack: boolean = false;
   @State private hoverTabIdx: number = -1;
+  // Sub-page slide direction (true = moving to a tab on the right).
+  @State private slideForward: boolean = true;
   @State private hoverTheme: string = '';
   @State private hoverFontMinus: boolean = false;
   @State private hoverFontPlus: boolean = false;
@@ -185,18 +187,13 @@ export struct SettingsPanel {
       .height(40)
       .padding({ left: 16, right: 16 })
 
-      // Scrollable body — the whole region responds to the wheel.
+      // Scrollable body — the whole region responds to the wheel. The active
+      // sub-page is keyed by tab so switching slides horizontally.
       Scroll() {
-        Column({ space: 16 }) {
-          if (this.tab === 0) {
-            this.buildAppearanceTab()
-          } else if (this.tab === 1) {
-            this.buildTerminalTab()
-          } else if (this.tab === 2) {
-            this.buildShortcutsTab()
-          } else {
-            this.buildAboutTab()
-          }
+        Stack({ alignContent: Alignment.TopStart }) {
+          ForEach([this.tab], (t: number) => {
+            this.buildTabBody(t)
+          }, (t: number) => 'settab_' + t.toString())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12, bottom: 32 })
@@ -233,7 +230,41 @@ export struct SettingsPanel {
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverTabIdx = h ? index : -1; })
-      .onClick(() => { this.tab = index; })
+      .onClick(() => {
+        if (index !== this.tab) {
+          this.slideForward = index > this.tab;
+          this.tab = index;
+        }
+      })
+  }
+
+  // Horizontal slide+fade for sub-page switches.
+  private slideEffect(forward: boolean): TransitionEffect {
+    const dx: number = forward ? 40 : -40;
+    return TransitionEffect.asymmetric(
+      TransitionEffect.translate({ x: dx }).combine(TransitionEffect.opacity(0))
+        .animation({ duration: 200, curve: Curve.EaseOut }),
+      TransitionEffect.translate({ x: -dx }).combine(TransitionEffect.opacity(0))
+        .animation({ duration: 200, curve: Curve.EaseOut })
+    );
+  }
+
+  // One settings sub-page, wrapped in a single Column so it can slide.
+  @Builder
+  private buildTabBody(t: number) {
+    Column({ space: 16 }) {
+      if (t === 0) {
+        this.buildAppearanceTab()
+      } else if (t === 1) {
+        this.buildTerminalTab()
+      } else if (t === 2) {
+        this.buildShortcutsTab()
+      } else {
+        this.buildAboutTab()
+      }
+    }
+    .width('100%')
+    .transition(this.slideEffect(this.slideForward))
   }
 
   // A single "key: description" shortcut row.
