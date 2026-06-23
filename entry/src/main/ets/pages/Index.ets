@@ -65,11 +65,11 @@ struct Index {
   @State private settingsInitialTab: number = 0;
   @State private showNewConnection: boolean = false;
   @State private themeName: string = 'Aizen_Dark';
-  // Actual background color of the active theme (#RRGGBB). The active tab,
-  // the content area and the terminal surface all share this color so the
-  // selected tab visually fuses with the terminal below it — even after the
-  // user picks a light theme.
+  // Real bg/fg colors of the current theme, refreshed after native bind.
+  // Used to match the active tab chip and content card precisely so they
+  // fuse visually — even when the user picks a light theme.
   @State private themeBg: string = Palette.base;
+  @State private themeFg: string = Palette.text;
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
   @State private scrollbackLines: number = 20000;
@@ -167,8 +167,9 @@ struct Index {
   private refreshThemeBg(): void {
     this.runtimes.forEach((rt: TerminalRuntime) => {
       const colors: string[] = rt.controller.getThemeColors(this.themeName);
-      if (colors && colors.length >= 1 && colors[0].length > 0) {
+      if (colors && colors.length >= 2 && colors[0].length > 0) {
         this.themeBg = colors[0];
+        this.themeFg = colors[1];
       }
     });
   }
@@ -363,13 +364,53 @@ struct Index {
       Column() {
         if (this.tabs.length > 0) {
           this.buildTabStrip();
+          // Outer wrapper: allows overflow so the corner-notch row (y: -10)
+          // can render into the strip above.
           Stack() {
-            ForEach(this.tabs, (tab: TabMeta) => {
-              this.buildSurface(tab.id);
-            }, (tab: TabMeta) => tab.id.toString())
+            // Inner card: terminal content clipped to rounded-top shape.
+            Stack() {
+              ForEach(this.tabs, (tab: TabMeta) => {
+                this.buildSurface(tab.id);
+              }, (tab: TabMeta) => tab.id.toString())
+            }
+            .width('100%')
+            .height('100%')
+            .backgroundColor(this.themeBg)
+            .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 0, bottomRight: 0 })
+            .clip(true)
+
+            // Chrome-style outer-radius "notches" placed 10 vp ABOVE this
+            // Stack (into the strip). They fill the concave gap at each top
+            // corner where the card's curve meets the strip background,
+            // creating a smooth convex transition instead of a hard angle.
+            Row() {
+              // Left notch: strip bg square + terminal bg square with
+              // topLeft radius removed → strip color shows in top-left corner
+              Stack() {
+                Row().width(10).height(10).backgroundColor(Palette.surface)
+                Row().width(10).height(10)
+                  .borderRadius({ topLeft: 10, topRight: 0, bottomLeft: 0, bottomRight: 0 })
+                  .backgroundColor(this.themeBg)
+              }.width(10).height(10)
+
+              Blank().layoutWeight(1)
+
+              // Right notch: mirror of left
+              Stack() {
+                Row().width(10).height(10).backgroundColor(Palette.surface)
+                Row().width(10).height(10)
+                  .borderRadius({ topLeft: 0, topRight: 10, bottomLeft: 0, bottomRight: 0 })
+                  .backgroundColor(this.themeBg)
+              }.width(10).height(10)
+            }
+            .width('100%')
+            .height(10)
+            .position({ x: 0, y: -10 })
           }
           .layoutWeight(1)
           .width('100%')
+          .margin({ left: 8, right: 8, bottom: 8 })
+          .clip(false)
         }
       }
       .width('100%')
@@ -390,7 +431,9 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.themeBg)
+    // Frame color matches the strip — forms a consistent border on
+    // left / right / bottom of the terminal card.
+    .backgroundColor(Palette.surface)
   }
 
   @Builder
@@ -479,12 +522,14 @@ struct Index {
         .fontColor(this.dotColor(tab.state))
       Text(tab.title)
         .fontSize(12)
-        .fontColor(tab.id === this.activeId ? Palette.text : Palette.textDim)
+        // Active tab: use the theme's actual foreground color so text stays
+        // readable on both dark and light themes (e.g. white bg needs dark fg).
+        .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       Text('✕')
         .fontSize(11)
-        .fontColor(Palette.textDim)
+        .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
         .focusable(false)
         .onClick(() => { this.closeTab(tab.id); })
     }
