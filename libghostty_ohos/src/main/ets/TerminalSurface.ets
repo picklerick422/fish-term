@@ -222,14 +222,13 @@ export struct TerminalSurface {
   @Builder
   private buildImeBar() {
     Row({ space: 8 }) {
-      TextInput({ text: this.imeBarText, controller: this.imeBarController })
+      TextInput({ text: this.imeBarText, placeholder: '输入内容发送到终端…', controller: this.imeBarController })
         .id(this.imeBarId)
         .layoutWeight(1)
         .height(40)
         .fontSize(14)
         .fontColor('#F4F7FB')
         .placeholderColor('#8A94A6')
-        .placeholder('输入内容发送到终端…')
         .backgroundColor('#0E1318')
         .caretColor('#3DD6C4')
         .borderRadius(8)
