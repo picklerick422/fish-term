@@ -24,23 +24,35 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
-    // Hide the system window decoration (title bar) on devices that draw one
-    // (2in1 / free-form). The in-app tab strip takes over that space and draws
-    // its own caption buttons. Best-effort: unsupported devices just ignore it.
-    try {
-      const mainWin: window.Window = windowStage.getMainWindowSync();
-      mainWin.setWindowDecorVisible(false);
-    } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'setWindowDecorVisible failed: %{public}s', JSON.stringify(err));
-    }
-
     windowStage.loadContent('pages/Index', (err: BusinessError) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      // Hide the system window decoration (title bar) AFTER content is loaded —
+      // doing it before loadContent gets reset when the content view mounts.
+      // The in-app tab strip takes over that space with its own caption buttons.
+      // Best-effort across the API surface: some builds expose the toggle on the
+      // window, others only honour it once the title bar is also disabled.
+      this.hideWindowDecor(windowStage);
     });
+  }
+
+  private hideWindowDecor(windowStage: window.WindowStage): void {
+    try {
+      const mainWin: window.Window = windowStage.getMainWindowSync();
+      mainWin.setWindowDecorVisible(false);
+      // Re-assert shortly after first layout in case the WM redraws the decor.
+      setTimeout(() => {
+        try {
+          windowStage.getMainWindowSync().setWindowDecorVisible(false);
+        } catch (_) {
+        }
+      }, 150);
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'hideWindowDecor failed: %{public}s', JSON.stringify(err));
+    }
   }
 
   onWindowStageDestroy(): void {
