@@ -364,53 +364,21 @@ struct Index {
       Column() {
         if (this.tabs.length > 0) {
           this.buildTabStrip();
-          // Outer wrapper: allows overflow so the corner-notch row (y: -10)
-          // can render into the strip above.
+          // Terminal content as a rounded card, inset on left/right/bottom by
+          // the frame color (Palette.surface, same as the strip) for a
+          // consistent border on all three sides. Rounded top corners only,
+          // so it reads as one continuous surface with the strip above.
           Stack() {
-            // Inner card: terminal content clipped to rounded-top shape.
-            Stack() {
-              ForEach(this.tabs, (tab: TabMeta) => {
-                this.buildSurface(tab.id);
-              }, (tab: TabMeta) => tab.id.toString())
-            }
-            .width('100%')
-            .height('100%')
-            .backgroundColor(this.themeBg)
-            .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 0, bottomRight: 0 })
-            .clip(true)
-
-            // Chrome-style outer-radius "notches" placed 10 vp ABOVE this
-            // Stack (into the strip). They fill the concave gap at each top
-            // corner where the card's curve meets the strip background,
-            // creating a smooth convex transition instead of a hard angle.
-            Row() {
-              // Left notch: strip bg square + terminal bg square with
-              // topLeft radius removed → strip color shows in top-left corner
-              Stack() {
-                Row().width(10).height(10).backgroundColor(Palette.surface)
-                Row().width(10).height(10)
-                  .borderRadius({ topLeft: 10, topRight: 0, bottomLeft: 0, bottomRight: 0 })
-                  .backgroundColor(this.themeBg)
-              }.width(10).height(10)
-
-              Blank().layoutWeight(1)
-
-              // Right notch: mirror of left
-              Stack() {
-                Row().width(10).height(10).backgroundColor(Palette.surface)
-                Row().width(10).height(10)
-                  .borderRadius({ topLeft: 0, topRight: 10, bottomLeft: 0, bottomRight: 0 })
-                  .backgroundColor(this.themeBg)
-              }.width(10).height(10)
-            }
-            .width('100%')
-            .height(10)
-            .position({ x: 0, y: -10 })
+            ForEach(this.tabs, (tab: TabMeta) => {
+              this.buildSurface(tab.id);
+            }, (tab: TabMeta) => tab.id.toString())
           }
           .layoutWeight(1)
           .width('100%')
+          .backgroundColor(this.themeBg)
+          .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 10, bottomRight: 10 })
+          .clip(true)
           .margin({ left: 8, right: 8, bottom: 8 })
-          .clip(false)
         }
       }
       .width('100%')
