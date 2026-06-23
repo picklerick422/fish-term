@@ -24,6 +24,16 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
+    // Hide the system window decoration (title bar) on devices that draw one
+    // (2in1 / free-form). The in-app tab strip takes over that space and draws
+    // its own caption buttons. Best-effort: unsupported devices just ignore it.
+    try {
+      const mainWin: window.Window = windowStage.getMainWindowSync();
+      mainWin.setWindowDecorVisible(false);
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'setWindowDecorVisible failed: %{public}s', JSON.stringify(err));
+    }
+
     windowStage.loadContent('pages/Index', (err: BusinessError) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));

@@ -1,7 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { emitter } from '@kit.BasicServicesKit';
+import { window } from '@kit.ArkUI';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
+import { TerminalRuntime } from '../session/TerminalTab';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS } from '../store/ConnectionStore';
@@ -26,23 +28,31 @@ function stateLabel(s: DriverStatus): string {
   }
 }
 
+// Reactive per-tab metadata that drives the tab strip. The heavy controller /
+// session live in TerminalRuntime, keyed by id in `runtimes`.
+interface TabMeta {
+  id: number;
+  title: string;
+  state: DriverState;
+  statusText: string;
+}
+
 @Entry
 @Component
 struct Index {
-  // Controller + XComponent surface live for the whole page lifetime (see
-  // terminalsurface-lifecycle memory). Connect/disconnect only start/stop the driver.
-  // CRITICAL (focus model): the terminal XComponent must own keyboard focus — it
-  // receives keys/scroll natively only while focused. Any other focusable control
-  // (the status-bar buttons) would let ArkUI's Tab/arrow focus navigation swallow
-  // keys the TUI needs, so those controls are .focusable(false) and every tap hands
-  // focus straight back to the terminal via focusTerminal().
-  private readonly surfaceId: string = 'fishTermSurface';
-  private controller: TerminalController = new TerminalController();
-  private session: TerminalSession | null = null;
+  // Each tab owns its own persistent TerminalController + XComponent surface
+  // (see terminalsurface-lifecycle memory). Switching tabs only toggles
+  // visibility; surfaces stay mounted so terminal state never resets.
+  // CRITICAL (focus model): the active terminal XComponent must own keyboard
+  // focus — it receives keys/scroll natively only while focused. Every other
+  // control is .focusable(false) and hands focus back via focusActiveTerminal().
+  private runtimes: Map<number, TerminalRuntime> = new Map<number, TerminalRuntime>();
+  private nextId: number = 1;
   private context: common.UIAbilityContext | null = null;
   private store: ConnectionStore | null = null;
 
-  @State private connected: boolean = false;
+  @State private tabs: TabMeta[] = [];
+  @State private activeId: number = -1;
   @State private host: string = '192.168.1.10';
   @State private port: string = '8765';
   @State private token: string = '';
@@ -50,11 +60,10 @@ struct Index {
   @State private rememberToken: boolean = false;
   @State private showToken: boolean = false;
   @State private fontSize: number = DEFAULT_FONT_SIZE;
-  @State private statusText: string = '空闲';
-  @State private driverState: DriverState = DriverState.Idle;
   @State private formError: string = '';
   @State private focusedField: string = '';
   @State private showSettings: boolean = false;
+  @State private windowMaximized: boolean = false;
   @State private themeName: string = 'Aizen_Dark';
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
@@ -66,7 +75,9 @@ struct Index {
     this.loadProfile();
     this.loadSettings();
     emitter.on({ eventId: 10086 }, () => {
-      this.session?.onForeground();
+      this.runtimes.forEach((rt: TerminalRuntime) => {
+        rt.session?.onForeground();
+      });
     });
   }
 
@@ -87,47 +98,184 @@ struct Index {
   private loadSettings(): void {
     const store: ConnectionStore | null = this.store;
     if (!store) {
-      this.controller.updateConfig({
-        fontSize: this.fontSize,
-        scrollbackLines: this.scrollbackLines,
-        cursorStyle: this.cursorStyle,
-        cursorBlink: this.cursorBlink
-      });
       return;
     }
     store.loadFontSize(DEFAULT_FONT_SIZE).then((fs: number): void => {
       this.fontSize = clampFontSize(fs);
+      this.broadcastConfig();
     });
     store.loadTheme('Aizen_Dark').then((name: string): void => {
       this.themeName = name;
-      this.controller.setTheme(name);
+      this.broadcastTheme();
     });
     store.loadTerminalPrefs(DEFAULT_TERMINAL_PREFS).then((prefs: TerminalPrefs): void => {
       this.cursorStyle = prefs.cursorStyle;
       this.cursorBlink = prefs.cursorBlink;
       this.scrollbackLines = prefs.scrollbackLines;
-      this.controller.updateConfig({
-        fontSize: this.fontSize,
-        scrollbackLines: prefs.scrollbackLines,
-        cursorStyle: prefs.cursorStyle,
-        cursorBlink: prefs.cursorBlink
-      });
+      this.broadcastConfig();
     });
   }
 
   aboutToDisappear(): void {
     emitter.off(10086);
-    this.stopSession();
+    this.runtimes.forEach((rt: TerminalRuntime) => {
+      rt.session?.stop();
+    });
+    this.runtimes.clear();
   }
 
-  // Hand keyboard focus back to the terminal so keys/scroll keep reaching it.
-  private focusTerminal(): void {
+  // ----- settings propagation ------------------------------------------------
+
+  // Apply the current terminal config + theme to one controller (used when a
+  // brand-new tab is created so it inherits the active appearance).
+  private applySettingsTo(controller: TerminalController): void {
+    controller.setTheme(this.themeName);
+    controller.updateConfig({
+      fontSize: this.fontSize,
+      scrollbackLines: this.scrollbackLines,
+      cursorStyle: this.cursorStyle,
+      cursorBlink: this.cursorBlink
+    });
+  }
+
+  private broadcastConfig(): void {
+    this.runtimes.forEach((rt: TerminalRuntime) => {
+      rt.controller.updateConfig({
+        fontSize: this.fontSize,
+        scrollbackLines: this.scrollbackLines,
+        cursorStyle: this.cursorStyle,
+        cursorBlink: this.cursorBlink
+      });
+    });
+  }
+
+  private broadcastTheme(): void {
+    this.runtimes.forEach((rt: TerminalRuntime) => {
+      rt.controller.setTheme(this.themeName);
+    });
+  }
+
+  // ----- window controls (system decor is hidden; we draw our own) -----------
+
+  private winMinimize(): void {
+    if (!this.context) {
+      return;
+    }
+    window.getLastWindow(this.context).then((w: window.Window) => {
+      w.minimize().catch(() => {});
+    }).catch(() => {});
+  }
+
+  private winToggleMax(): void {
+    if (!this.context) {
+      return;
+    }
+    window.getLastWindow(this.context).then((w: window.Window) => {
+      if (this.windowMaximized) {
+        w.recover().then(() => { this.windowMaximized = false; }).catch(() => {});
+      } else {
+        w.maximize().then(() => { this.windowMaximized = true; }).catch(() => {});
+      }
+    }).catch(() => {});
+  }
+
+  private winClose(): void {
+    this.context?.terminateSelf();
+  }
+
+  // ----- tab lifecycle -------------------------------------------------------
+
+  private activeRuntime(): TerminalRuntime | null {
+    const rt: TerminalRuntime | undefined = this.runtimes.get(this.activeId);
+    return rt ?? null;
+  }
+
+  private activeController(): TerminalController {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    return rt ? rt.controller : new TerminalController();
+  }
+
+  // Hand keyboard focus back to the active terminal surface.
+  private focusActiveTerminal(): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (!rt) {
+      return;
+    }
+    const id: string = rt.surfaceId;
     setTimeout(() => {
-      focusControl.requestFocus(this.surfaceId);
+      focusControl.requestFocus(id);
     }, 0);
   }
 
-  private connect(): void {
+  private updateTabMeta(id: number, state: DriverState, statusText: string): void {
+    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
+      if (t.id === id) {
+        return { id: t.id, title: t.title, state, statusText };
+      }
+      return t;
+    });
+    this.tabs = next;
+  }
+
+  // Open a new tab and start a session to the current host/port/token.
+  private openTab(): void {
+    const host: string = this.host.trim();
+    const token: string = this.token.trim();
+    const port: number = Number(this.port);
+    if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535 || token.length === 0) {
+      // Missing creds — fall back to the connect form by clearing all tabs.
+      this.formError = '请先填写连接信息';
+      return;
+    }
+
+    const id: number = this.nextId++;
+    const rt: TerminalRuntime = new TerminalRuntime(id);
+    this.applySettingsTo(rt.controller);
+    this.runtimes.set(id, rt);
+
+    const meta: TabMeta = { id, title: '终端 ' + id, state: DriverState.Connecting, statusText: '连接中…' };
+    this.tabs = this.tabs.concat(meta);
+    this.activeId = id;
+
+    const cfg: FishConnectConfig = { host, port, token, tls: this.tls };
+    const session: TerminalSession = new TerminalSession(rt.controller, new FishWebSocketDriver(cfg));
+    session.onStatus((s: DriverStatus): void => {
+      this.updateTabMeta(id, s.state, stateLabel(s));
+    });
+    rt.session = session;
+    session.start();
+    this.focusActiveTerminal();
+  }
+
+  private switchTab(id: number): void {
+    if (id === this.activeId) {
+      this.focusActiveTerminal();
+      return;
+    }
+    this.activeId = id;
+    this.focusActiveTerminal();
+  }
+
+  private closeTab(id: number): void {
+    const rt: TerminalRuntime | undefined = this.runtimes.get(id);
+    if (rt) {
+      rt.session?.stop();
+      this.runtimes.delete(id);
+    }
+    const remaining: TabMeta[] = this.tabs.filter((t: TabMeta) => t.id !== id);
+    this.tabs = remaining;
+
+    if (this.activeId === id) {
+      this.activeId = remaining.length > 0 ? remaining[remaining.length - 1].id : -1;
+    }
+    if (remaining.length > 0) {
+      this.focusActiveTerminal();
+    }
+  }
+
+  // ----- connect form --------------------------------------------------------
+
+  private connectFromForm(): void {
     const host: string = this.host.trim();
     const token: string = this.token.trim();
     const port: number = Number(this.port);
@@ -155,40 +303,12 @@ struct Index {
       };
       this.store.save(profile);
     }
-
-    this.stopSession();
-
-    const cfg: FishConnectConfig = { host, port, token, tls: this.tls };
-    const session: TerminalSession = new TerminalSession(this.controller, new FishWebSocketDriver(cfg));
-    session.onStatus((s: DriverStatus): void => {
-      this.statusText = stateLabel(s);
-      this.driverState = s.state;
-    });
-    this.session = session;
-    this.statusText = '连接中…';
-    this.driverState = DriverState.Connecting;
-    this.connected = true;
-    session.start();
-    this.focusTerminal();
-  }
-
-  private disconnect(): void {
-    this.stopSession();
-    this.connected = false;
-    this.statusText = '空闲';
-    this.driverState = DriverState.Idle;
-  }
-
-  private stopSession(): void {
-    if (this.session) {
-      this.session.stop();
-      this.session = null;
-    }
+    this.openTab();
   }
 
   private applyFontSize(size: number): void {
     this.fontSize = size;
-    this.controller.updateConfig({ fontSize: size });
+    this.broadcastConfig();
     if (this.store) {
       this.store.saveFontSize(size);
     }
@@ -196,11 +316,11 @@ struct Index {
 
   private adjustFont(deltaSteps: number): void {
     this.applyFontSize(stepFontSize(this.fontSize, deltaSteps));
-    this.focusTerminal();
+    this.focusActiveTerminal();
   }
 
-  private dotColor(): string {
-    switch (this.driverState) {
+  private dotColor(state: DriverState): string {
+    switch (state) {
       case DriverState.Connected:
         return Palette.accent;
       case DriverState.Connecting:
@@ -216,29 +336,31 @@ struct Index {
   build() {
     Stack() {
       Column() {
-        if (this.connected) {
-          this.buildStatusBar();
-        }
-        TerminalSurface({
-          controller: this.controller,
-          surfaceId: this.surfaceId,
-          surfaceColor: Palette.base
-        })
+        if (this.tabs.length > 0) {
+          this.buildTabStrip();
+          this.buildToolbar();
+          Stack() {
+            ForEach(this.tabs, (tab: TabMeta) => {
+              this.buildSurface(tab.id);
+            }, (tab: TabMeta) => tab.id.toString())
+          }
           .layoutWeight(1)
+          .width('100%')
+        }
       }
       .width('100%')
       .height('100%')
       .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
         preferType: SheetType.CENTER,
-        width: '92%',
+        width: 380,
         height: 600,
         dragBar: false,
         showClose: false,
         backgroundColor: Palette.base,
-        onDisappear: () => { this.focusTerminal(); }
+        onDisappear: () => { this.focusActiveTerminal(); }
       })
 
-      if (!this.connected) {
+      if (this.tabs.length === 0) {
         this.buildForm();
       }
     }
@@ -247,61 +369,133 @@ struct Index {
     .backgroundColor(Palette.base)
   }
 
-  // Minimalist "adjustments" icon: two slider tracks with cyan knobs.
   @Builder
-  private settingsIcon() {
-    Column({ space: 5 }) {
-      // top track: knob toward the right
-      Stack({ alignContent: Alignment.Start }) {
-        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
-        Row()
-          .width(6).height(6).borderRadius(3)
-          .backgroundColor(Palette.accent)
-          .margin({ left: 8 })
-      }
-      .width(16).height(6)
-
-      // bottom track: knob toward the left
-      Stack({ alignContent: Alignment.Start }) {
-        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
-        Row()
-          .width(6).height(6).borderRadius(3)
-          .backgroundColor(Palette.accent)
-          .margin({ left: 2 })
-      }
-      .width(16).height(6)
-    }
-    .justifyContent(FlexAlign.Center)
-  }
-
-  @Builder
-  private buildSettingsSheet() {
-    SettingsPanel({
-      controller: this.controller,
-      store: this.store,
-      fontSize: this.fontSize,
-      themeName: this.themeName,
-      cursorStyle: this.cursorStyle,
-      cursorBlink: this.cursorBlink,
-      scrollbackLines: this.scrollbackLines,
-      onThemeChange: (n: string) => { this.themeName = n; },
-      onCursorStyleChange: (v: number) => { this.cursorStyle = v; },
-      onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; },
-      onScrollbackChange: (v: number) => { this.scrollbackLines = v; },
-      onFontSizeChange: (s: number) => { this.applyFontSize(s); },
-      onClose: () => { this.showSettings = false; }
+  private buildSurface(id: number) {
+    // Each surface stays mounted; only the active one is visible & focusable.
+    TerminalSurface({
+      controller: this.runtimes.get(id)?.controller ?? new TerminalController(),
+      surfaceId: this.runtimes.get(id)?.surfaceId ?? ('fishTermSurface_' + id),
+      surfaceColor: Palette.base
     })
+      .width('100%')
+      .height('100%')
+      .visibility(id === this.activeId ? Visibility.Visible : Visibility.Hidden)
+  }
+
+  // App logo glyph ">_" rendered with primitives (matches the launcher icon).
+  @Builder
+  private logoGlyph() {
+    Row({ space: 3 }) {
+      Text('>')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Palette.accent)
+      Row()
+        .width(9).height(2).borderRadius(1)
+        .backgroundColor(Palette.accent)
+        .margin({ top: 6 })
+    }
+  }
+
+  // Top strip that replaces the system title bar: app logo + tabs + "+" + caption buttons.
+  @Builder
+  private buildTabStrip() {
+    Row() {
+      Row() {
+        this.logoGlyph()
+      }
+      .padding({ left: 14, right: 10 })
+
+      Scroll() {
+        Row({ space: 6 }) {
+          ForEach(this.tabs, (tab: TabMeta) => {
+            this.buildTabChip(tab)
+          }, (tab: TabMeta) => 'chip_' + tab.id.toString())
+
+          // "+" new tab
+          Row() {
+            Text('+')
+              .fontSize(18)
+              .fontColor(Palette.textDim)
+          }
+          .width(28)
+          .height(28)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius(7)
+          .focusable(false)
+          .onClick(() => { this.openTab(); })
+        }
+        .height(40)
+        .padding({ right: 8 })
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .layoutWeight(1)
+      .align(Alignment.Start)
+
+      // window caption buttons
+      this.buildCaptionButton('—', Palette.textDim, () => { this.winMinimize(); })
+      this.buildCaptionButton(this.windowMaximized ? '❐' : '▢', Palette.textDim, () => { this.winToggleMax(); })
+      this.buildCaptionButton('✕', Palette.textDim, () => { this.winClose(); })
+    }
+    .width('100%')
+    .height(40)
+    .backgroundColor('#0A0E13')
+    .border({ width: { bottom: 1 }, color: Palette.border })
   }
 
   @Builder
-  private buildStatusBar() {
+  private buildCaptionButton(label: string, color: string, action: () => void) {
+    Row() {
+      Text(label)
+        .fontSize(13)
+        .fontColor(color)
+    }
+    .width(40)
+    .height(40)
+    .justifyContent(FlexAlign.Center)
+    .focusable(false)
+    .onClick(action)
+  }
+
+  @Builder
+  private buildTabChip(tab: TabMeta) {
+    Row({ space: 7 }) {
+      Text('●')
+        .fontSize(8)
+        .fontColor(this.dotColor(tab.state))
+      Text(tab.title)
+        .fontSize(12)
+        .fontColor(tab.id === this.activeId ? Palette.text : Palette.textDim)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text('✕')
+        .fontSize(11)
+        .fontColor(Palette.textDim)
+        .focusable(false)
+        .onClick(() => { this.closeTab(tab.id); })
+    }
+    .height(30)
+    .padding({ left: 12, right: 10 })
+    .borderRadius(8)
+    .backgroundColor(tab.id === this.activeId ? Palette.surface : Color.Transparent)
+    .border({
+      width: 1,
+      color: tab.id === this.activeId ? Palette.border : Color.Transparent
+    })
+    .focusable(false)
+    .onClick(() => { this.switchTab(tab.id); })
+  }
+
+  // Second-row toolbar: active-tab status + host + font controls + settings.
+  @Builder
+  private buildToolbar() {
     Row({ space: 12 }) {
-      // status group: colored dot + label
       Row({ space: 7 }) {
         Text('●')
           .fontSize(10)
-          .fontColor(this.dotColor())
-        Text(this.statusText)
+          .fontColor(this.dotColor(this.activeMeta().state))
+        Text(this.activeMeta().statusText)
           .fontSize(13)
           .fontColor(Palette.text)
           .maxLines(1)
@@ -320,7 +514,7 @@ struct Index {
           Text('A-')
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
-            .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : '#3DD6C4')
+            .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : Palette.accent)
         }
         .width(32)
         .height(28)
@@ -338,7 +532,7 @@ struct Index {
         Text(this.fontSize.toString())
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#3DD6C4')
+          .fontColor(Palette.accent)
           .width(26)
           .textAlign(TextAlign.Center)
 
@@ -346,7 +540,7 @@ struct Index {
           Text('A+')
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
-            .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : '#3DD6C4')
+            .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : Palette.accent)
         }
         .width(32)
         .height(28)
@@ -377,27 +571,65 @@ struct Index {
       .borderRadius(8)
       .focusable(false)
       .onClick(() => { this.showSettings = true; })
-
-      Button('断开')
-        .type(ButtonType.Normal)
-        .height(28)
-        .fontSize(13)
-        .focusable(false)
-        .backgroundColor(Color.Transparent)
-        .fontColor(Palette.danger)
-        .borderWidth(1)
-        .borderColor(Palette.danger)
-        .borderRadius(8)
-        .padding({ left: 12, right: 12 })
-        .onClick(() => {
-          this.disconnect();
-        })
     }
     .width('100%')
     .height(44)
     .padding({ left: 14, right: 14 })
     .backgroundColor(Palette.surface)
     .border({ width: { bottom: 1 }, color: Palette.border })
+  }
+
+  private activeMeta(): TabMeta {
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      if (this.tabs[i].id === this.activeId) {
+        return this.tabs[i];
+      }
+    }
+    return { id: -1, title: '', state: DriverState.Idle, statusText: '空闲' };
+  }
+
+  // Minimalist "adjustments" icon: two slider tracks with cyan knobs.
+  @Builder
+  private settingsIcon() {
+    Column({ space: 5 }) {
+      Stack({ alignContent: Alignment.Start }) {
+        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
+        Row()
+          .width(6).height(6).borderRadius(3)
+          .backgroundColor(Palette.accent)
+          .margin({ left: 8 })
+      }
+      .width(16).height(6)
+
+      Stack({ alignContent: Alignment.Start }) {
+        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
+        Row()
+          .width(6).height(6).borderRadius(3)
+          .backgroundColor(Palette.accent)
+          .margin({ left: 2 })
+      }
+      .width(16).height(6)
+    }
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private buildSettingsSheet() {
+    SettingsPanel({
+      controller: this.activeController(),
+      store: this.store,
+      fontSize: this.fontSize,
+      themeName: this.themeName,
+      cursorStyle: this.cursorStyle,
+      cursorBlink: this.cursorBlink,
+      scrollbackLines: this.scrollbackLines,
+      onThemeChange: (n: string) => { this.themeName = n; this.broadcastTheme(); },
+      onCursorStyleChange: (v: number) => { this.cursorStyle = v; this.broadcastConfig(); },
+      onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
+      onScrollbackChange: (v: number) => { this.scrollbackLines = v; this.broadcastConfig(); },
+      onFontSizeChange: (s: number) => { this.applyFontSize(s); },
+      onClose: () => { this.showSettings = false; }
+    })
   }
 
   @Builder
@@ -425,20 +657,10 @@ struct Index {
             .borderRadius(8)
             .borderWidth(1)
             .borderColor(this.focusedField === 'host' ? Palette.accent : Palette.border)
-            .onFocus(() => {
-              this.focusedField = 'host';
-            })
-            .onBlur(() => {
-              if (this.focusedField === 'host') {
-                this.focusedField = '';
-              }
-            })
-            .onChange((v: string) => {
-              this.host = v;
-            })
-            .onSubmit(() => {
-              this.connect();
-            })
+            .onFocus(() => { this.focusedField = 'host'; })
+            .onBlur(() => { if (this.focusedField === 'host') { this.focusedField = ''; } })
+            .onChange((v: string) => { this.host = v; })
+            .onSubmit(() => { this.connectFromForm(); })
           TextInput({ text: this.port, placeholder: '端口' })
             .layoutWeight(1)
             .height(44)
@@ -450,20 +672,10 @@ struct Index {
             .borderRadius(8)
             .borderWidth(1)
             .borderColor(this.focusedField === 'port' ? Palette.accent : Palette.border)
-            .onFocus(() => {
-              this.focusedField = 'port';
-            })
-            .onBlur(() => {
-              if (this.focusedField === 'port') {
-                this.focusedField = '';
-              }
-            })
-            .onChange((v: string) => {
-              this.port = v;
-            })
-            .onSubmit(() => {
-              this.connect();
-            })
+            .onFocus(() => { this.focusedField = 'port'; })
+            .onBlur(() => { if (this.focusedField === 'port') { this.focusedField = ''; } })
+            .onChange((v: string) => { this.port = v; })
+            .onSubmit(() => { this.connectFromForm(); })
         }
         .width('100%')
 
@@ -479,20 +691,10 @@ struct Index {
             .borderRadius(8)
             .borderWidth(1)
             .borderColor(this.focusedField === 'token' ? Palette.accent : Palette.border)
-            .onFocus(() => {
-              this.focusedField = 'token';
-            })
-            .onBlur(() => {
-              if (this.focusedField === 'token') {
-                this.focusedField = '';
-              }
-            })
-            .onChange((v: string) => {
-              this.token = v;
-            })
-            .onSubmit(() => {
-              this.connect();
-            })
+            .onFocus(() => { this.focusedField = 'token'; })
+            .onBlur(() => { if (this.focusedField === 'token') { this.focusedField = ''; } })
+            .onChange((v: string) => { this.token = v; })
+            .onSubmit(() => { this.connectFromForm(); })
           Button(this.showToken ? '隐藏' : '显示')
             .height(44)
             .width(56)
@@ -500,9 +702,7 @@ struct Index {
             .backgroundColor(Palette.inputBg)
             .fontColor(Palette.textDim)
             .borderRadius(8)
-            .onClick(() => {
-              this.showToken = !this.showToken;
-            })
+            .onClick(() => { this.showToken = !this.showToken; })
         }
         .width('100%')
 
@@ -513,9 +713,7 @@ struct Index {
             .fontColor(Palette.text)
           Toggle({ type: ToggleType.Switch, isOn: this.tls })
             .selectedColor(Palette.accent)
-            .onChange((on: boolean) => {
-              this.tls = on;
-            })
+            .onChange((on: boolean) => { this.tls = on; })
         }
         .width('100%')
 
@@ -526,9 +724,7 @@ struct Index {
             .fontColor(Palette.text)
           Toggle({ type: ToggleType.Switch, isOn: this.rememberToken })
             .selectedColor(Palette.accent)
-            .onChange((on: boolean) => {
-              this.rememberToken = on;
-            })
+            .onChange((on: boolean) => { this.rememberToken = on; })
         }
         .width('100%')
 
@@ -546,9 +742,7 @@ struct Index {
           .fontColor(Palette.base)
           .backgroundColor(Palette.accent)
           .borderRadius(10)
-          .onClick(() => {
-            this.connect();
-          })
+          .onClick(() => { this.connectFromForm(); })
       }
       .width('100%')
       .constraintSize({ maxWidth: 420 })
