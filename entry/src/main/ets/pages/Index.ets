@@ -340,7 +340,7 @@ struct Index {
       .height('100%')
       .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
         preferType: SheetType.CENTER,
-        width: '30%',
+        width: '50%',
         height: 600,
         dragBar: false,
         showClose: false,
