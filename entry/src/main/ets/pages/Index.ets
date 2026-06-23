@@ -440,7 +440,8 @@ struct Index {
       Image($r('app.media.app_logo'))
         .width(26)
         .height(26)
-        .margin({ left: 14, right: 10 })
+        // nudged down so it sits closer to the tab baseline (strip height unchanged)
+        .margin({ left: 14, right: 10, top: 7 })
         .opacity(this.hoverLogo ? 0.65 : 1.0)
         .scale(this.hoverLogo ? { x: 0.92, y: 0.92 } : { x: 1.0, y: 1.0 })
         .animation({ duration: 150, curve: Curve.EaseOut })
@@ -463,6 +464,7 @@ struct Index {
           }
           .width(24)
           .height(24)
+          .margin({ bottom: 5 })
           .justifyContent(FlexAlign.Center)
           .borderRadius(5)
           .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
@@ -482,16 +484,23 @@ struct Index {
       .layoutWeight(1)
       .align(Alignment.Start)
 
-      // Settings button — borderless, same visual weight as system controls
+      // Settings button — borderless, same visual weight as system controls.
+      // Hover highlight lives on a smaller inner box (not the full 40×40 hit
+      // area) so it matches the size of the system window-control buttons.
       Row() {
-        this.settingsIcon()
+        Row() {
+          this.settingsIcon()
+        }
+        .width(30)
+        .height(28)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(7)
+        .backgroundColor(this.hoverSettings ? '#1FFFFFFF' : Color.Transparent)
+        .animation({ duration: 150, curve: Curve.EaseOut })
       }
       .width(40)
       .height(40)
       .justifyContent(FlexAlign.Center)
-      .borderRadius(8)
-      .backgroundColor(this.hoverSettings ? '#1FFFFFFF' : Color.Transparent)
-      .animation({ duration: 150, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverSettings = h; })
       .onClick(() => { this.settingsInitialTab = 0; this.showSettings = true; })
