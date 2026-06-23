@@ -60,6 +60,13 @@ ExampleDriverWriteInputFn ResolveExampleDriverWriteInput()
 std::mutex g_imeProxyHostsMutex;
 std::unordered_map<InputMethod_TextEditorProxy*, TerminalHost*> g_imeProxyHosts;
 
+// The HarmonyOS input method is attached process-wide to a single editor at a
+// time: a second terminal tab attaching supersedes the first. Track which host
+// currently owns the live attachment so background/superseded tabs stop pushing
+// IME updates (NotifySelectionChange/NotifyCursorUpdate) with a now-invalid
+// proxy — that error storm every frame is what froze the app on tab close.
+std::atomic<TerminalHost*> g_activeImeHost{nullptr};
+
 TerminalHost* FindImeHost(InputMethod_TextEditorProxy* proxy)
 {
     std::lock_guard<std::mutex> lock(g_imeProxyHostsMutex);
@@ -1857,6 +1864,9 @@ private:
         if (rc != IME_ERR_OK) {
             OH_LOG_ERROR(LOG_APP, "Failed to attach IME: %{public}d", static_cast<int>(rc));
             m_imeInputMethodProxy = nullptr;
+        } else {
+            // We now own the single process-wide IME attachment.
+            g_activeImeHost.store(this);
         }
     }
 
@@ -1873,11 +1883,20 @@ private:
             m_imeTextEditorProxy = nullptr;
         }
         m_wantsIme = false;
+        // Release ownership if we held it, so no one keeps notifying.
+        TerminalHost* expected = this;
+        g_activeImeHost.compare_exchange_strong(expected, nullptr);
     }
 
     void ShowImeLocked(InputMethod_RequestKeyboardReason reason)
     {
         m_wantsIme = true;
+        // If another tab has since taken over the process-wide IME, our proxy is
+        // stale: drop it and re-attach so this (now focused) tab owns it again.
+        if (m_imeInputMethodProxy != nullptr && g_activeImeHost.load() != this) {
+            OH_InputMethodController_Detach(m_imeInputMethodProxy);
+            m_imeInputMethodProxy = nullptr;
+        }
         if (m_imeInputMethodProxy == nullptr) {
             AttachImeLocked();
         }
@@ -2124,6 +2143,13 @@ private:
     void NotifyImeStateLocked()
     {
         if (m_imeInputMethodProxy == nullptr || m_terminal == nullptr || !m_surfaceReady) {
+            return;
+        }
+        // Only the host owning the single process-wide IME attachment may push
+        // updates; a superseded/background tab would otherwise spam the IME
+        // framework with an invalid proxy every frame (error 401/12800009),
+        // which froze the app after closing a tab.
+        if (g_activeImeHost.load() != this) {
             return;
         }
 
