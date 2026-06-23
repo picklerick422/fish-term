@@ -42,16 +42,16 @@ export struct TerminalSurface {
   @State private hoverSearchPrev: boolean = false;
   @State private hoverSearchNext: boolean = false;
   @State private hoverSearchClose: boolean = false;
-  // IME input bar: a toggleable text bar at the bottom of the terminal.
-  // XComponent SURFACE does not participate in ArkUI's IME pipeline, so
-  // Chinese/Japanese/Korean input requires a real TextInput to hold focus.
-  // The bar is toggled with the 中 button (bottom-left corner). User types
-  // in the bar, presses ↵ or Enter to send the composed text to the terminal,
-  // then the bar can be dismissed and focus returns to the XComponent.
-  @State private showImeBar: boolean = false;
+  // IME input bar: toggled from the host page's tab strip (the 中 button).
+  // When true the bar appears at the bottom of the terminal and holds focus
+  // so the system IME pipeline can attach. XComponent SURFACE does not
+  // participate in ArkUI's IME pipeline on its own.
+  @Prop @Watch('onShowImeBarChange') showImeBar: boolean = false;
+  // Called back when the user closes the bar from inside (✕ button).
+  onImeBarClose: (() => void) | null = null;
   @State private imeBarText: string = '';
-  @State private hoverImeToggle: boolean = false;
   @State private hoverImeSend: boolean = false;
+  @State private hoverImeClose: boolean = false;
   private imeBarId: string = this.surfaceId + '_imebar';
   private imeBarController: TextInputController = new TextInputController();
 
@@ -99,9 +99,8 @@ export struct TerminalSurface {
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
-      // IME bar: sticks to the bottom edge of the terminal. When visible it
-      // holds focus so the system input method can compose text (e.g. pinyin).
-      // Toggle with the 中 button in the bottom-left corner.
+      // IME bar: anchored to the bottom of the terminal. Toggled by the 中
+      // button in the host page's tab strip (always visible there, never clipped).
       if (this.showImeBar) {
         Column() {
           Blank().layoutWeight(1)
@@ -111,8 +110,6 @@ export struct TerminalSurface {
         .height('100%')
         .hitTestBehavior(HitTestMode.Default)
       }
-      // 中 toggle button — always visible, bottom-left, non-intrusive
-      this.buildImeToggle()
       if (this.searchVisible) {
         this.buildSearchOverlay();
       }
@@ -184,45 +181,12 @@ export struct TerminalSurface {
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 
-  // Small "中" toggle button in the bottom-left corner of the terminal.
-  // Tapping it opens/closes the IME input bar.
-  @Builder
-  private buildImeToggle() {
-    Row() {
-      Text('中')
-        .fontSize(11)
-        .fontColor(this.showImeBar ? '#3DD6C4' : (this.hoverImeToggle ? '#F4F7FB' : '#8A94A6'))
-        .animation({ duration: 100, curve: Curve.EaseOut })
-    }
-    .width(26)
-    .height(22)
-    .justifyContent(FlexAlign.Center)
-    .borderRadius(5)
-    .backgroundColor(this.showImeBar ? '#1A3DD6C4' : (this.hoverImeToggle ? '#1AFFFFFF' : '#CC0E1318'))
-    .border({ width: 1, color: this.showImeBar ? '#2A3DD6C4' : '#1E2630' })
-    .margin({ left: 8, bottom: 8 })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onHover((h: boolean) => { this.hoverImeToggle = h; })
-    .onClick(() => {
-      this.showImeBar = !this.showImeBar;
-      if (this.showImeBar) {
-        // Give the TextInput focus so IME attaches immediately
-        setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 50);
-      } else {
-        this.imeBarText = '';
-        this.requestTerminalFocus();
-      }
-    })
-  }
-
-  // Floating input bar that anchors the system IME. User types / composes
-  // text here then presses ↵ (or the send button) to inject it into the
-  // terminal. The bar stays open so they can send multiple lines without
-  // having to re-open it each time.
+  // Floating IME input bar at the bottom of the terminal surface.
+  // Toggled by the host page's "中" button in the tab strip (not clipped).
   @Builder
   private buildImeBar() {
     Row({ space: 8 }) {
-      TextInput({ text: this.imeBarText, placeholder: '输入内容发送到终端…', controller: this.imeBarController })
+      TextInput({ text: this.imeBarText, placeholder: '输入中文后点 ↵ 发送…', controller: this.imeBarController })
         .id(this.imeBarId)
         .layoutWeight(1)
         .height(40)
@@ -238,7 +202,7 @@ export struct TerminalSurface {
         .onChange((v: string) => { this.imeBarText = v; })
         .onSubmit(() => { this.sendImeBar(); })
 
-      // Send button (↵)
+      // Send ↵
       Row() {
         Text('↵')
           .fontSize(16)
@@ -254,6 +218,28 @@ export struct TerminalSurface {
       .animation({ duration: 100, curve: Curve.EaseOut })
       .onHover((h: boolean) => { this.hoverImeSend = h; })
       .onClick(() => { this.sendImeBar(); })
+
+      // Close ✕ — returns focus to terminal
+      Row() {
+        Text('✕')
+          .fontSize(13)
+          .fontColor(this.hoverImeClose ? '#FF6B6B' : '#8A94A6')
+          .animation({ duration: 100, curve: Curve.EaseOut })
+      }
+      .width(36)
+      .height(40)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(8)
+      .backgroundColor(this.hoverImeClose ? '#17FF6B6B' : Color.Transparent)
+      .animation({ duration: 100, curve: Curve.EaseOut })
+      .onHover((h: boolean) => { this.hoverImeClose = h; })
+      .onClick(() => {
+        this.imeBarText = '';
+        if (this.onImeBarClose) {
+          this.onImeBarClose();
+        }
+        this.requestTerminalFocus();
+      })
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
@@ -553,6 +539,16 @@ export struct TerminalSurface {
     return `-/${this.searchTotal}`;
   }
 
+  // React to the host-controlled showImeBar prop changing.
+  private onShowImeBarChange(): void {
+    if (this.showImeBar) {
+      setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 50);
+    } else {
+      this.imeBarText = '';
+      this.requestTerminalFocus();
+    }
+  }
+
   // Send the IME bar's text to the terminal and clear for the next entry.
   // Does NOT append '\r' so the user controls when to submit a shell command
   // (they can tap the physical Enter key after closing the bar, or type '\n'
@@ -563,7 +559,6 @@ export struct TerminalSurface {
       this.controller.write(text);
     }
     this.imeBarText = '';
-    // Keep the bar open and re-focus it so they can send more input.
     setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 0);
   }
 
