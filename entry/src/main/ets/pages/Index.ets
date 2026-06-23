@@ -250,10 +250,14 @@ struct Index {
       controller: this.controller,
       store: this.store,
       fontSize: this.fontSize,
-      themeName: $$this.themeName,
-      cursorStyle: $$this.cursorStyle,
-      cursorBlink: $$this.cursorBlink,
-      scrollbackLines: $$this.scrollbackLines,
+      themeName: this.themeName,
+      cursorStyle: this.cursorStyle,
+      cursorBlink: this.cursorBlink,
+      scrollbackLines: this.scrollbackLines,
+      onThemeChange: (n: string) => { this.themeName = n; },
+      onCursorStyleChange: (v: number) => { this.cursorStyle = v; },
+      onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; },
+      onScrollbackChange: (v: number) => { this.scrollbackLines = v; },
       onFontSizeChange: (s: number) => { this.applyFontSize(s); },
       onClose: () => { this.showSettings = false; }
     })

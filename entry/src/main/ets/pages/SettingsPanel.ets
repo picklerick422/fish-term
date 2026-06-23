@@ -3,6 +3,11 @@ import { Palette } from '../theme/Palette';
 import { ConnectionStore, TerminalPrefs } from '../store/ConnectionStore';
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from '../theme/FontScale';
 
+interface CursorOpt {
+  label: string;
+  value: number;
+}
+
 // Deterministic swatch color from theme name
 function swatchColor(name: string): string {
   let hash: number = 0;
@@ -24,10 +29,14 @@ export struct SettingsPanel {
   controller: TerminalController = new TerminalController();
   store: ConnectionStore | null = null;
   fontSize: number = 16;
-  @Link themeName: string;
-  @Link cursorStyle: number;
-  @Link cursorBlink: boolean;
-  @Link scrollbackLines: number;
+  @Prop themeName: string = '';
+  @Prop cursorStyle: number = 0;
+  @Prop cursorBlink: boolean = true;
+  @Prop scrollbackLines: number = 20000;
+  onThemeChange: (name: string) => void = (_name: string) => {};
+  onCursorStyleChange: (v: number) => void = (_v: number) => {};
+  onCursorBlinkChange: (v: boolean) => void = (_v: boolean) => {};
+  onScrollbackChange: (v: number) => void = (_v: number) => {};
   onFontSizeChange: (size: number) => void = (_size: number) => {};
   onClose: () => void = () => {};
 
@@ -244,6 +253,7 @@ export struct SettingsPanel {
             .focusable(false)
             .onClick(() => {
               this.themeName = item;
+              this.onThemeChange(item);
               this.controller.setTheme(item);
               if (this.store) {
                 this.store.saveTheme(item);
@@ -267,7 +277,7 @@ export struct SettingsPanel {
       this.buildSectionHeader('光标样式')
       Row({ space: 0 }) {
         ForEach([{ label: '块状', value: 0 }, { label: '下划线', value: 1 }, { label: '竖线', value: 2 }],
-          (opt: { label: string; value: number }) => {
+          (opt: CursorOpt) => {
             Text(opt.label)
               .layoutWeight(1)
               .fontSize(13)
@@ -284,6 +294,7 @@ export struct SettingsPanel {
               .focusable(false)
               .onClick(() => {
                 this.cursorStyle = opt.value;
+                this.onCursorStyleChange(opt.value);
                 this.controller.updateConfig({ cursorStyle: opt.value });
                 if (this.store) {
                   this.store.saveTerminalPrefs({
@@ -317,6 +328,7 @@ export struct SettingsPanel {
           .focusable(false)
           .onChange((on: boolean) => {
             this.cursorBlink = on;
+            this.onCursorBlinkChange(on);
             this.controller.updateConfig({ cursorBlink: on });
             if (this.store) {
               this.store.saveTerminalPrefs({
@@ -369,6 +381,7 @@ export struct SettingsPanel {
           .onChange((value: number, mode: SliderChangeMode) => {
             this.scrollbackLines = Math.round(value);
             if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onScrollbackChange(Math.round(value));
               this.controller.updateConfig({ scrollbackLines: Math.round(value) });
               if (this.store) {
                 this.store.saveTerminalPrefs({
