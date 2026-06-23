@@ -364,25 +364,27 @@ struct Index {
       Column() {
         if (this.tabs.length > 0) {
           this.buildTabStrip();
-          // Terminal content as a rounded card, inset on left/right/bottom by
-          // the frame color (Palette.surface, same as the strip) for a
-          // consistent border on all three sides. Rounded top corners only,
-          // so it reads as one continuous surface with the strip above.
+          // Terminal content as a rounded card. The frame (Palette.surface,
+          // same color as the strip) shows on left/right/bottom because the
+          // parent Column pads those sides. Cross-axis stretch fills the rest,
+          // so no width('100%') is set (that would overflow the padding and
+          // clip the right border).
           Stack() {
             ForEach(this.tabs, (tab: TabMeta) => {
               this.buildSurface(tab.id);
             }, (tab: TabMeta) => tab.id.toString())
           }
           .layoutWeight(1)
-          .width('100%')
           .backgroundColor(this.themeBg)
           .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 10, bottomRight: 10 })
           .clip(true)
-          .margin({ left: 8, right: 8, bottom: 8 })
         }
       }
       .width('100%')
       .height('100%')
+      // Frame: leave a Palette.surface border on top (above the tab strip),
+      // left, right and bottom — the whole panel floats inside the frame.
+      .padding({ top: 6, left: 8, right: 8, bottom: 8 })
       .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
         preferType: SheetType.CENTER,
         width: '50%',
