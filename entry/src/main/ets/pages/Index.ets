@@ -382,9 +382,11 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      // Frame: leave a Palette.surface border on top (above the tab strip),
-      // left, right and bottom — the whole panel floats inside the frame.
-      .padding({ top: 6, left: 8, right: 8, bottom: 8 })
+      // Frame: Palette.surface border on left / right / bottom. The top frame
+      // above the tabs is produced inside the (full-height) strip by making
+      // the tab chips shorter than the strip — so the strip stays aligned with
+      // the system window controls.
+      .padding({ left: 8, right: 8, bottom: 8 })
       .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
         preferType: SheetType.CENTER,
         width: '50%',
@@ -463,15 +465,14 @@ struct Index {
       .layoutWeight(1)
       .align(Alignment.Start)
 
-      // settings button (sits to the left of the system window controls)
+      // settings button — borderless, same visual weight as the system
+      // window-control buttons it sits next to.
       Row() {
         this.settingsIcon()
       }
-      .width(34)
-      .height(28)
+      .width(40)
+      .height(40)
       .justifyContent(FlexAlign.Center)
-      .borderRadius(7)
-      .backgroundColor(Palette.base)
       .focusable(false)
       .onClick(() => { this.showSettings = true; })
     }
@@ -508,11 +509,11 @@ struct Index {
     // edge, its flat bottom merges seamlessly into the content area (same
     // color) — the Chrome-style "tab opens into the page" effect.
     // Inactive tabs: transparent against the dark strip backdrop.
-    .height(tab.id === this.activeId ? 40 : 30)
+    .height(tab.id === this.activeId ? 30 : 24)
     .padding({ left: 12, right: 10 })
     .borderRadius(tab.id === this.activeId
-      ? { topLeft: 10, topRight: 10, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
-      : { topLeft: 8, topRight: 8, bottomLeft: 8, bottomRight: 8 } as BorderRadiuses)
+      ? { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
+      : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
     .backgroundColor(tab.id === this.activeId ? this.themeBg : Color.Transparent)
     .alignItems(VerticalAlign.Center)
     .focusable(false)
@@ -528,24 +529,30 @@ struct Index {
     return { id: -1, title: '', state: DriverState.Idle, statusText: '空闲' };
   }
 
-  // Minimalist "adjustments" icon: two slider tracks with cyan knobs.
+  // Thin-line "sliders" icon, monochrome to match the system window-control
+  // buttons (minimize / maximize / close) it sits beside: same light-gray
+  // stroke weight, hollow knobs, no fill, no accent color.
   @Builder
   private settingsIcon() {
-    Column({ space: 5 }) {
+    Column({ space: 6 }) {
+      // top slider: knob on the right
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
-        Row()
-          .width(6).height(6).borderRadius(3)
-          .backgroundColor(Palette.accent)
+        Row().width(16).height(1.5).borderRadius(1).backgroundColor('#B8BEC9')
+        Circle({ width: 6, height: 6 })
+          .fill(Palette.surface)
+          .stroke('#B8BEC9')
+          .strokeWidth(1.5)
           .margin({ left: 8 })
       }
       .width(16).height(6)
 
+      // bottom slider: knob on the left
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
-        Row()
-          .width(6).height(6).borderRadius(3)
-          .backgroundColor(Palette.accent)
+        Row().width(16).height(1.5).borderRadius(1).backgroundColor('#B8BEC9')
+        Circle({ width: 6, height: 6 })
+          .fill(Palette.surface)
+          .stroke('#B8BEC9')
+          .strokeWidth(1.5)
           .margin({ left: 2 })
       }
       .width(16).height(6)
