@@ -52,6 +52,11 @@ struct Index {
 
   @State private tabs: TabMeta[] = [];
   @State private activeId: number = -1;
+  @State private hoverAddTab: boolean = false;
+  @State private hoverSettings: boolean = false;
+  @State private hoverLogo: boolean = false;
+  @State private hoverCloseId: number = -1;
+  @State private hoverTabId: number = -1;
   @State private host: string = '192.168.1.10';
   @State private port: string = '8765';
   @State private token: string = '';
@@ -431,10 +436,17 @@ struct Index {
   @Builder
   private buildTabStrip() {
     Row() {
+      // Logo: hover dims slightly; click → About page in settings
       Image($r('app.media.app_logo'))
         .width(26)
         .height(26)
         .margin({ left: 14, right: 10 })
+        .opacity(this.hoverLogo ? 0.65 : 1.0)
+        .scale(this.hoverLogo ? { x: 0.92, y: 0.92 } : { x: 1.0, y: 1.0 })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverLogo = h; })
+        .onClick(() => { this.settingsInitialTab = 3; this.showSettings = true; })
 
       Scroll() {
         Row({ space: 4 }) {
@@ -442,45 +454,49 @@ struct Index {
             this.buildTabChip(tab)
           }, (tab: TabMeta) => 'chip_' + tab.id.toString())
 
-          // "+" new tab
+          // "+" new tab — vertically centered in the strip
           Row() {
             Text('+')
-              .fontSize(18)
-              .fontColor(Palette.textDim)
+              .fontSize(16)
+              .fontColor(this.hoverAddTab ? Palette.text : Palette.textDim)
+              .animation({ duration: 150, curve: Curve.EaseOut })
           }
-          .width(28)
-          .height(28)
+          .width(26)
+          .height(26)
           .justifyContent(FlexAlign.Center)
-          .borderRadius(7)
+          .borderRadius(6)
+          .backgroundColor(this.hoverAddTab ? '#FFFFFF18' : Color.Transparent)
+          .animation({ duration: 150, curve: Curve.EaseOut })
           .focusable(false)
+          .onHover((h: boolean) => { this.hoverAddTab = h; })
           .onClick(() => { this.openTab(); })
         }
         .height(40)
         .padding({ right: 8 })
-        .alignItems(VerticalAlign.Bottom)
+        .alignItems(VerticalAlign.Center)
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .layoutWeight(1)
       .align(Alignment.Start)
 
-      // settings button — borderless, same visual weight as the system
-      // window-control buttons it sits next to.
+      // Settings button — borderless, same visual weight as system controls
       Row() {
         this.settingsIcon()
       }
       .width(40)
       .height(40)
       .justifyContent(FlexAlign.Center)
+      .borderRadius(8)
+      .backgroundColor(this.hoverSettings ? '#FFFFFF12' : Color.Transparent)
+      .animation({ duration: 150, curve: Curve.EaseOut })
       .focusable(false)
-      .onClick(() => { this.showSettings = true; })
+      .onHover((h: boolean) => { this.hoverSettings = h; })
+      .onClick(() => { this.settingsInitialTab = 0; this.showSettings = true; })
     }
     .width('100%')
     .height(40)
     .padding({ right: 130 })
-    // Strip backdrop is the app frame color (always dark), distinct from the
-    // terminal bg, so the active tab — painted in themeBg — reads as a shape
-    // that opens down into the content area below it.
     .backgroundColor(Palette.surface)
   }
 
@@ -492,30 +508,31 @@ struct Index {
         .fontColor(this.dotColor(tab.state))
       Text(tab.title)
         .fontSize(12)
-        // Active tab: use the theme's actual foreground color so text stays
-        // readable on both dark and light themes (e.g. white bg needs dark fg).
         .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+      // ✕ turns red on hover to signal "this will close"
       Text('✕')
         .fontSize(11)
-        .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
+        .fontColor(this.hoverCloseId === tab.id ? Palette.danger
+          : (tab.id === this.activeId ? this.themeFg : Palette.textDim))
+        .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
+        .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
         .onClick(() => { this.closeTab(tab.id); })
     }
-    // Active tab: painted in the terminal background color with rounded TOP
-    // corners only and zero bottom radius. Sitting flush at the strip's bottom
-    // edge, its flat bottom merges seamlessly into the content area (same
-    // color) — the Chrome-style "tab opens into the page" effect.
-    // Inactive tabs: transparent against the dark strip backdrop.
     .height(tab.id === this.activeId ? 30 : 24)
     .padding({ left: 12, right: 10 })
     .borderRadius(tab.id === this.activeId
       ? { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
       : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
-    .backgroundColor(tab.id === this.activeId ? this.themeBg : Color.Transparent)
+    // Inactive tab gets a subtle highlight on hover
+    .backgroundColor(tab.id === this.activeId ? this.themeBg
+      : (this.hoverTabId === tab.id ? '#FFFFFF14' : Color.Transparent))
+    .animation({ duration: 150, curve: Curve.EaseOut })
     .alignItems(VerticalAlign.Center)
     .focusable(false)
+    .onHover((h: boolean) => { this.hoverTabId = h ? tab.id : -1; })
     .onClick(() => { this.switchTab(tab.id); })
   }
 
