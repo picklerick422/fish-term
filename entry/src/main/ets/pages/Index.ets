@@ -228,19 +228,32 @@ struct Index {
 
   private closeTab(id: number): void {
     const rt: TerminalRuntime | undefined = this.runtimes.get(id);
-    if (rt) {
-      rt.session?.stop();
-      this.runtimes.delete(id);
+    if (!rt) {
+      return; // already closing / closed (guards double-tap on ✕)
     }
-    const remaining: TabMeta[] = this.tabs.filter((t: TabMeta) => t.id !== id);
-    this.tabs = remaining;
+    // Stop the driver immediately so no more output/input flows.
+    rt.session?.stop();
 
-    if (this.activeId === id) {
-      this.activeId = remaining.length > 0 ? remaining[remaining.length - 1].id : -1;
-    }
-    if (remaining.length > 0) {
+    const remaining: TabMeta[] = this.tabs.filter((t: TabMeta) => t.id !== id);
+
+    // If we're closing the active tab, move focus to a neighbour FIRST so the
+    // surface being destroyed no longer holds keyboard focus / IME — tearing
+    // down the focused surface in the same frame could otherwise stall.
+    if (this.activeId === id && remaining.length > 0) {
+      this.activeId = remaining[remaining.length - 1].id;
       this.focusActiveTerminal();
     }
+
+    // Defer the actual removal (surface unmount + native teardown) to the next
+    // tick so the focus/visibility change commits before the XComponent is
+    // destroyed.
+    setTimeout(() => {
+      this.runtimes.delete(id);
+      this.tabs = this.tabs.filter((t: TabMeta) => t.id !== id);
+      if (this.activeId === id) {
+        this.activeId = this.tabs.length > 0 ? this.tabs[this.tabs.length - 1].id : -1;
+      }
+    }, 0);
   }
 
   // ----- connect form --------------------------------------------------------

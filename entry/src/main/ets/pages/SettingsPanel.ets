@@ -151,34 +151,7 @@ export struct SettingsPanel {
       .height(48)
       .padding({ left: 8, right: 8 })
 
-      // Connection status card (moved out of the main toolbar)
-      Column() {
-        Row({ space: 8 }) {
-          Text('●')
-            .fontSize(10)
-            .fontColor(this.statusColor)
-          Text(this.statusText)
-            .fontSize(13)
-            .fontColor(Palette.text)
-          Text(this.hostLabel)
-            .layoutWeight(1)
-            .fontSize(12)
-            .fontColor(Palette.textDim)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .textAlign(TextAlign.End)
-        }
-        .width('100%')
-        .height(40)
-        .padding({ left: 14, right: 14 })
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 4 })
-
-      // Tab row
+      // Tab row (fixed under the header)
       Row({ space: 8 }) {
         Text('外观')
           .fontSize(13)
@@ -204,9 +177,33 @@ export struct SettingsPanel {
       .height(40)
       .padding({ left: 16, right: 16 })
 
-      // Tab content
+      // Scrollable body: the whole region (status card + tab content) responds
+      // to the wheel, so hovering anywhere in the panel scrolls it.
       Scroll() {
         Column({ space: 16 }) {
+          // Connection status card
+          Row({ space: 8 }) {
+            Text('●')
+              .fontSize(10)
+              .fontColor(this.statusColor)
+            Text(this.statusText)
+              .fontSize(13)
+              .fontColor(Palette.text)
+            Text(this.hostLabel)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontColor(Palette.textDim)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .textAlign(TextAlign.End)
+          }
+          .width('100%')
+          .height(40)
+          .padding({ left: 14, right: 14 })
+          .backgroundColor(Palette.surface)
+          .borderRadius(10)
+          .border({ width: 1, color: Palette.border })
+
           if (this.tab === 0) {
             this.buildAppearanceTab()
           } else {
@@ -218,6 +215,7 @@ export struct SettingsPanel {
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
     }
     .width('100%')
     .height('100%')

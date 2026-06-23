@@ -8,6 +8,7 @@
 #include <cstring>
 #include <hilog/log.h>
 #include <inttypes.h>
+#include <mutex>
 #include <native_buffer/buffer_common.h>
 #include <native_buffer/native_buffer.h>
 #include <rawfile/raw_file_manager.h>
@@ -24,6 +25,27 @@ constexpr uint64_t kBufferUsage =
 
 constexpr size_t kMaxGlyphCacheEntries = 4096;
 std::atomic<uint64_t> g_frameCounter {0};
+
+// The font collection from OH_Drawing_CreateSharedFontCollection() is a
+// process-wide shared object. With multiple terminal tabs (each its own
+// renderer) it MUST NOT be destroyed when one renderer tears down — doing so
+// frees fonts the other live renderers are still drawing with, which
+// intermittently freezes/crashes the app on tab close. So we hold it as a
+// process singleton: created once, never destroyed by an instance.
+std::mutex g_fontCollectionMutex;
+OH_Drawing_FontCollection* g_sharedFontCollection = nullptr;
+
+OH_Drawing_FontCollection* AcquireSharedFontCollection()
+{
+    std::lock_guard<std::mutex> lock(g_fontCollectionMutex);
+    if (!g_sharedFontCollection) {
+        g_sharedFontCollection = OH_Drawing_CreateSharedFontCollection();
+        if (!g_sharedFontCollection) {
+            g_sharedFontCollection = OH_Drawing_CreateFontCollection();
+        }
+    }
+    return g_sharedFontCollection;
+}
 
 bool IsSuspiciousCodepoint(uint32_t codepoint)
 {
@@ -174,10 +196,8 @@ bool NativeDrawingRenderer::init(OHNativeWindow* window, uint32_t width, uint32_
     }
 
     if (!m_fontCollection) {
-        m_fontCollection = OH_Drawing_CreateSharedFontCollection();
-        if (!m_fontCollection) {
-            m_fontCollection = OH_Drawing_CreateFontCollection();
-        }
+        // Process-wide shared singleton (see AcquireSharedFontCollection).
+        m_fontCollection = AcquireSharedFontCollection();
     }
 
     updateCellDimensions();
@@ -216,10 +236,10 @@ void NativeDrawingRenderer::cleanup()
         OH_Drawing_CanvasDestroy(m_canvas);
         m_canvas = nullptr;
     }
-    if (m_fontCollection) {
-        OH_Drawing_DestroyFontCollection(m_fontCollection);
-        m_fontCollection = nullptr;
-    }
+    // Do NOT destroy m_fontCollection here: it is the process-wide shared
+    // collection (AcquireSharedFontCollection) that other live renderers/tabs
+    // keep using. Just drop our reference.
+    m_fontCollection = nullptr;
 
     m_lastCursorRectValid = false;
     m_window = nullptr;
@@ -242,23 +262,33 @@ bool NativeDrawingRenderer::loadFontAtlas(NativeResourceManager* resourceManager
         return true;
     }
 
-    const char* monoFontPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";
-    if (access(monoFontPath, R_OK) == 0) {
-        uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, m_primaryFontFamily.c_str(), monoFontPath);
-        OH_LOG_INFO(LOG_APP, "Registered mono font rc=%u path=%{public}s", rc, monoFontPath);
-    } else {
-        OH_LOG_WARN(LOG_APP, "Mono font path unavailable: %{public}s", monoFontPath);
-    }
+    // Fonts live in the process-wide shared collection, so only the first
+    // renderer needs to register them. Guard with a global once-flag + the
+    // collection mutex so concurrent tab setups don't race on RegisterFont.
+    {
+        std::lock_guard<std::mutex> lock(g_fontCollectionMutex);
+        static bool s_fontsRegistered = false;
+        if (!s_fontsRegistered) {
+            const char* monoFontPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";
+            if (access(monoFontPath, R_OK) == 0) {
+                uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, m_primaryFontFamily.c_str(), monoFontPath);
+                OH_LOG_INFO(LOG_APP, "Registered mono font rc=%u path=%{public}s", rc, monoFontPath);
+            } else {
+                OH_LOG_WARN(LOG_APP, "Mono font path unavailable: %{public}s", monoFontPath);
+            }
 
-    if (resourceManager && !filesDir.empty()) {
-        const std::string fontDir = filesDir + "/fonts";
-        const std::string symbolFontPath = fontDir + "/SymbolsNerdFontMono-Regular.ttf";
-        if (EnsureDirectory(fontDir) &&
-            ExtractRawFileToPath(resourceManager, "fonts/SymbolsNerdFontMono-Regular.ttf", symbolFontPath)) {
-            uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, m_symbolFontFamily.c_str(), symbolFontPath.c_str());
-            OH_LOG_INFO(LOG_APP, "Registered symbol font rc=%u path=%{public}s", rc, symbolFontPath.c_str());
-        } else {
-            OH_LOG_WARN(LOG_APP, "Failed to extract bundled symbol font");
+            if (resourceManager && !filesDir.empty()) {
+                const std::string fontDir = filesDir + "/fonts";
+                const std::string symbolFontPath = fontDir + "/SymbolsNerdFontMono-Regular.ttf";
+                if (EnsureDirectory(fontDir) &&
+                    ExtractRawFileToPath(resourceManager, "fonts/SymbolsNerdFontMono-Regular.ttf", symbolFontPath)) {
+                    uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, m_symbolFontFamily.c_str(), symbolFontPath.c_str());
+                    OH_LOG_INFO(LOG_APP, "Registered symbol font rc=%u path=%{public}s", rc, symbolFontPath.c_str());
+                } else {
+                    OH_LOG_WARN(LOG_APP, "Failed to extract bundled symbol font");
+                }
+            }
+            s_fontsRegistered = true;
         }
     }
 
