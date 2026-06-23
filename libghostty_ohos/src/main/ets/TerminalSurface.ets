@@ -183,6 +183,18 @@ export struct TerminalSurface {
         if (this.searchVisible) {
           this.searchInputController.stopEditing();
         }
+        // In direct-input mode the system IME is attached to the terminal; do
+        // NOT steal focus back to the XComponent or we break the IME binding
+        // and the candidate bar disappears. Instead re-show the IME so a tap
+        // re-engages composition.
+        if (this.directInput) {
+          if (this.imeCtrl && this.imeAttached) {
+            this.imeCtrl.showTextInput().catch((err: Object) => {
+              console.error('IME showTextInput failed: ' + JSON.stringify(err));
+            });
+          }
+          return;
+        }
         // Give focus to the XComponent so native key events (arrow keys, control
         // sequences, function keys) are handled by the ghostty engine directly.
         // IME input is captured separately by the IME bar (buildImeBar).
@@ -580,10 +592,16 @@ export struct TerminalSurface {
           enterKeyType: inputMethod.EnterKeyType.NONE
         }
       };
-      // showKeyboard=false: on 2in1 we type with the physical keyboard; the
-      // composition panel still appears for CJK without a soft keyboard.
-      ctrl.attach(false, textConfig).then(() => {
+      // showKeyboard=true is required to actually engage the input method —
+      // without it no candidate bar appears and composition never starts.
+      // On 2in1 the physical keyboard drives composition; the soft panel may
+      // or may not show depending on the device, but the IME pipeline is live.
+      ctrl.attach(true, textConfig).then(() => {
         this.imeAttached = true;
+        // Explicitly show the text input so the IME candidate bar engages.
+        ctrl.showTextInput().catch((err: Object) => {
+          console.error('IME showTextInput failed: ' + JSON.stringify(err));
+        });
         this.imeInsertCb = (text: string): void => {
           if (text.length > 0) {
             this.controller.write(text);
