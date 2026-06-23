@@ -448,14 +448,13 @@ struct Index {
 
   @Builder
   private buildTabChip(tab: TabMeta) {
-    const isActive = tab.id === this.activeId;
     Row({ space: 7 }) {
       Text('●')
         .fontSize(8)
         .fontColor(this.dotColor(tab.state))
       Text(tab.title)
         .fontSize(12)
-        .fontColor(isActive ? Palette.text : Palette.textDim)
+        .fontColor(tab.id === this.activeId ? Palette.text : Palette.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       Text('✕')
@@ -466,13 +465,13 @@ struct Index {
     }
     // Active tab is flush with the terminal below (same bg, no bottom border).
     // Inactive tabs float as small rounded chips.
-    .height(isActive ? 40 : 30)
+    .height(tab.id === this.activeId ? 40 : 30)
     .padding({ left: 12, right: 10 })
-    .borderRadius(isActive
+    .borderRadius(tab.id === this.activeId
       ? { topLeft: 8, topRight: 8, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
       : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
-    .backgroundColor(isActive ? Palette.base : Color.Transparent)
-    .border(isActive
+    .backgroundColor(tab.id === this.activeId ? Palette.base : Color.Transparent)
+    .border(tab.id === this.activeId
       ? { width: { top: 1, left: 1, right: 1 }, color: Palette.border }
       : { width: 1, color: Color.Transparent })
     .alignItems(VerticalAlign.Center)
