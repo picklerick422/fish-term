@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl';
 import { display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { inputMethod } from '@kit.IMEKit';
 import { TerminalController } from './TerminalController';
 import { DEFAULT_TERMINAL_CONFIG, TerminalConfig, TerminalLinkListener, TerminalSearchStatus } from './TerminalTypes';
 
@@ -55,6 +56,20 @@ export struct TerminalSurface {
   private imeBarId: string = this.surfaceId + '_imebar';
   private imeBarController: TextInputController = new TextInputController();
 
+  // Direct input mode (experimental, "native"): attach the system input
+  // method controller directly so committed text (incl. composed CJK) is
+  // delivered via the insertText callback and written straight to the
+  // terminal — no intermediate bar. The IME composition panel floats over
+  // the terminal; only confirmed text is forwarded (composing pinyin is not).
+  @Prop @Watch('onDirectInputChange') directInput: boolean = false;
+  private imeAttached: boolean = false;
+  private imeCtrl: inputMethod.InputMethodController | null = null;
+  private imeInsertCb: ((text: string) => void) | null = null;
+  private imeDeleteLeftCb: ((len: number) => void) | null = null;
+  private imeDeleteRightCb: ((len: number) => void) | null = null;
+  private imeFnKeyCb: ((fk: inputMethod.FunctionKey) => void) | null = null;
+  private imeMoveCursorCb: ((dir: inputMethod.Direction) => void) | null = null;
+
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     // Pre-request READ_PASTEBOARD so the permission dialog (if any) appears
@@ -87,6 +102,7 @@ export struct TerminalSurface {
 
   aboutToDisappear(): void {
     this.stopFallbackPolling();
+    this.detachDirectInput();
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
@@ -537,6 +553,114 @@ export struct TerminalSurface {
       return `${this.searchSelected + 1}/${this.searchTotal}`;
     }
     return `-/${this.searchTotal}`;
+  }
+
+  // React to the host-controlled directInput prop. Attach/detach the system
+  // input method controller so committed text flows straight to the terminal.
+  private onDirectInputChange(): void {
+    if (this.directInput) {
+      this.attachDirectInput();
+    } else {
+      this.detachDirectInput();
+    }
+  }
+
+  private attachDirectInput(): void {
+    if (this.imeAttached) {
+      return;
+    }
+    try {
+      const ctrl = inputMethod.getController();
+      this.imeCtrl = ctrl;
+      // NONE enter key so Enter is delivered via sendFunctionKey, not as a
+      // newline insert; TEXT type gives normal CJK composition.
+      const textConfig: inputMethod.TextConfig = {
+        inputAttribute: {
+          textInputType: inputMethod.TextInputType.TEXT,
+          enterKeyType: inputMethod.EnterKeyType.NONE
+        }
+      };
+      // showKeyboard=false: on 2in1 we type with the physical keyboard; the
+      // composition panel still appears for CJK without a soft keyboard.
+      ctrl.attach(false, textConfig).then(() => {
+        this.imeAttached = true;
+        this.imeInsertCb = (text: string): void => {
+          if (text.length > 0) {
+            this.controller.write(text);
+          }
+        };
+        this.imeDeleteLeftCb = (len: number): void => {
+          for (let i = 0; i < len; i++) {
+            this.controller.write('\x7f'); // DEL / backspace
+          }
+        };
+        this.imeDeleteRightCb = (len: number): void => {
+          for (let i = 0; i < len; i++) {
+            this.controller.write('\x1b[3~'); // forward delete
+          }
+        };
+        this.imeFnKeyCb = (fk: inputMethod.FunctionKey): void => {
+          if (fk.enterKeyType !== undefined) {
+            this.controller.write('\r');
+          }
+        };
+        this.imeMoveCursorCb = (dir: inputMethod.Direction): void => {
+          switch (dir) {
+            case inputMethod.Direction.CURSOR_UP:
+              this.controller.write('\x1b[A');
+              break;
+            case inputMethod.Direction.CURSOR_DOWN:
+              this.controller.write('\x1b[B');
+              break;
+            case inputMethod.Direction.CURSOR_LEFT:
+              this.controller.write('\x1b[D');
+              break;
+            case inputMethod.Direction.CURSOR_RIGHT:
+              this.controller.write('\x1b[C');
+              break;
+            default:
+              break;
+          }
+        };
+        ctrl.on('insertText', this.imeInsertCb);
+        ctrl.on('deleteLeft', this.imeDeleteLeftCb);
+        ctrl.on('deleteRight', this.imeDeleteRightCb);
+        ctrl.on('sendFunctionKey', this.imeFnKeyCb);
+        ctrl.on('moveCursor', this.imeMoveCursorCb);
+      }).catch((err: Object) => {
+        console.error('IME attach failed: ' + JSON.stringify(err));
+      });
+    } catch (err) {
+      console.error('IME getController failed: ' + JSON.stringify(err));
+    }
+  }
+
+  private detachDirectInput(): void {
+    const ctrl = this.imeCtrl;
+    if (!ctrl) {
+      this.imeAttached = false;
+      return;
+    }
+    try {
+      if (this.imeInsertCb) { ctrl.off('insertText', this.imeInsertCb); }
+      if (this.imeDeleteLeftCb) { ctrl.off('deleteLeft', this.imeDeleteLeftCb); }
+      if (this.imeDeleteRightCb) { ctrl.off('deleteRight', this.imeDeleteRightCb); }
+      if (this.imeFnKeyCb) { ctrl.off('sendFunctionKey', this.imeFnKeyCb); }
+      if (this.imeMoveCursorCb) { ctrl.off('moveCursor', this.imeMoveCursorCb); }
+      ctrl.detach().catch((err: Object) => {
+        console.error('IME detach failed: ' + JSON.stringify(err));
+      });
+    } catch (err) {
+      console.error('IME off/detach failed: ' + JSON.stringify(err));
+    }
+    this.imeInsertCb = null;
+    this.imeDeleteLeftCb = null;
+    this.imeDeleteRightCb = null;
+    this.imeFnKeyCb = null;
+    this.imeMoveCursorCb = null;
+    this.imeAttached = false;
+    this.imeCtrl = null;
+    this.requestTerminalFocus();
   }
 
   // React to the host-controlled showImeBar prop changing.

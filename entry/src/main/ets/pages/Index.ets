@@ -93,6 +93,9 @@ struct Index {
   // shows the bar, but the button lives in the tab strip so it's always visible).
   @State private showImeBar: boolean = false;
   @State private hoverIme: boolean = false;
+  // Experimental "direct input": attaches the system IME straight to the
+  // terminal so committed CJK text is typed directly (no input bar).
+  @State private directInput: boolean = false;
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
   @State private dragSwaps: number = 0;
@@ -573,6 +576,7 @@ struct Index {
       isActiveTab: id === this.activeId,
       searchSignal: this.searchSignal,
       showImeBar: id === this.activeId && this.showImeBar,
+      directInput: id === this.activeId && this.directInput,
       onImeBarClose: () => { this.showImeBar = false; },
       onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },
       onOpenShortcuts: () => { this.settingsInitialTab = 2; this.showSettings = true; },
@@ -682,14 +686,16 @@ struct Index {
           Row() {
             Text('中')
               .fontSize(12)
-              .fontColor(this.showImeBar ? '#3DD6C4' : (this.hoverIme ? '#F4F7FB' : '#B8BEC9'))
+              .fontColor((this.showImeBar || this.directInput) ? '#3DD6C4'
+                : (this.hoverIme ? '#F4F7FB' : '#B8BEC9'))
               .animation({ duration: 100, curve: Curve.EaseOut })
           }
           .width(30)
           .height(28)
           .justifyContent(FlexAlign.Center)
           .borderRadius(7)
-          .backgroundColor(this.showImeBar ? '#1A3DD6C4' : (this.hoverIme ? '#1FFFFFFF' : Color.Transparent))
+          .backgroundColor((this.showImeBar || this.directInput) ? '#1A3DD6C4'
+            : (this.hoverIme ? '#1FFFFFFF' : Color.Transparent))
           .animation({ duration: 120, curve: Curve.EaseOut })
         }
         .width(40)
@@ -697,9 +703,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .focusable(false)
         .onHover((h: boolean) => { this.hoverIme = h; })
-        .onClick(() => {
-          this.showImeBar = !this.showImeBar;
-        })
+        .bindMenu(this.buildImeMenu())
       }
 
       // Guide help button — line-art circled "?" matching the system controls
@@ -840,6 +844,35 @@ struct Index {
       }
     }
     return { id: -1, title: '', state: DriverState.Idle, statusText: '空闲' };
+  }
+
+  // Menu for the 中 (input method) button: pick between the experimental
+  // direct-input mode (system IME attached straight to the terminal) and the
+  // always-reliable input bar. Selecting a mode turns the other off.
+  @Builder
+  private buildImeMenu() {
+    Menu() {
+      MenuItem({
+        content: this.directInput ? '✓ 直接输入（实验）' : '直接输入（实验）'
+      })
+        .onClick(() => {
+          this.directInput = !this.directInput;
+          if (this.directInput) {
+            this.showImeBar = false;
+          } else {
+            this.focusActiveTerminal();
+          }
+        })
+      MenuItem({
+        content: this.showImeBar ? '✓ 输入条' : '输入条'
+      })
+        .onClick(() => {
+          this.showImeBar = !this.showImeBar;
+          if (this.showImeBar) {
+            this.directInput = false;
+          }
+        })
+    }
   }
 
   // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
