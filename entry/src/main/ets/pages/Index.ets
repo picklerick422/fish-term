@@ -83,8 +83,12 @@ struct Index {
   // First-run onboarding guide.
   @State private showGuide: boolean = false;
   @State private guideStep: number = 0;
-  // id of the tab chip currently being dragged for reorder (-1 = none).
-  private draggingTabId: number = -1;
+  // Hover states for guide button and guide card buttons
+  @State private hoverGuide: boolean = false;
+  @State private guideHover: string = '';
+  // Tab drag-reorder via horizontal PanGesture (not OS drag — stays on baseline).
+  @State private dragTabId: number = -1;
+  @State private dragOffsetX: number = 0;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -322,37 +326,32 @@ struct Index {
     }
   }
 
-  // Reorder tabs by moving the dragged chip to land before `targetId`.
-  private reorderTab(targetId: number): void {
-    const from: number = this.draggingTabId;
-    this.draggingTabId = -1;
-    if (from < 0 || from === targetId) {
-      return;
-    }
+  // Commit the horizontal pan drag: compute how many slots to move based on
+  // cumulative X offset, then splice the tab array. Each chip is ~110 vp wide
+  // on average; rounding to nearest slot gives natural snapping.
+  private reorderByDrag(fromId: number, totalOffsetX: number): void {
     const list: TabMeta[] = this.tabs.slice();
     let fromIdx: number = -1;
-    let toIdx: number = -1;
     for (let i: number = 0; i < list.length; i++) {
-      if (list[i].id === from) {
+      if (list[i].id === fromId) {
         fromIdx = i;
-      }
-      if (list[i].id === targetId) {
-        toIdx = i;
-      }
-    }
-    if (fromIdx < 0 || toIdx < 0) {
-      return;
-    }
-    const moved: TabMeta = list.splice(fromIdx, 1)[0];
-    // After removal indices shift; recompute insertion point at target.
-    let insertAt: number = 0;
-    for (let i: number = 0; i < list.length; i++) {
-      if (list[i].id === targetId) {
-        insertAt = i;
         break;
       }
     }
-    list.splice(insertAt, 0, moved);
+    if (fromIdx < 0) {
+      return;
+    }
+    const CHIP_WIDTH: number = 110;
+    const steps: number = Math.round(totalOffsetX / CHIP_WIDTH);
+    if (steps === 0) {
+      return;
+    }
+    const toIdx: number = Math.max(0, Math.min(list.length - 1, fromIdx + steps));
+    if (toIdx === fromIdx) {
+      return;
+    }
+    const moved: TabMeta = list.splice(fromIdx, 1)[0];
+    list.splice(toIdx, 0, moved);
     this.tabs = list;
   }
 
@@ -636,6 +635,28 @@ struct Index {
       .layoutWeight(1)
       .align(Alignment.Start)
 
+      // Guide "?" button — same visual weight as settings button
+      Row() {
+        Row() {
+          Text('?')
+            .fontSize(13)
+            .fontColor(this.hoverGuide ? '#F4F7FB' : '#8A94A6')
+            .animation({ duration: 120, curve: Curve.EaseOut })
+        }
+        .width(30)
+        .height(28)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(7)
+        .backgroundColor(this.hoverGuide ? '#1FFFFFFF' : Color.Transparent)
+        .animation({ duration: 150, curve: Curve.EaseOut })
+      }
+      .width(36)
+      .height(40)
+      .justifyContent(FlexAlign.Center)
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverGuide = h; })
+      .onClick(() => { this.guideStep = 0; this.showGuide = true; })
+
       // Settings button — borderless, same visual weight as system controls.
       // Hover highlight lives on a smaller inner box (not the full 40×40 hit
       // area) so it matches the size of the system window-control buttons.
@@ -692,19 +713,40 @@ struct Index {
     // Inactive tab gets a subtle highlight on hover
     .backgroundColor(tab.id === this.activeId ? this.themeBg
       : (this.hoverTabId === tab.id ? '#1FFFFFFF' : Color.Transparent))
-    .animation({ duration: 150, curve: Curve.EaseOut })
+    // During a pan the dragged chip slides horizontally via translate; it stays
+    // on the tab baseline (y never changes). Other chips stay still; the array
+    // is re-spliced only on gesture end so the animation stays smooth.
+    .translate({ x: this.dragTabId === tab.id ? this.dragOffsetX : 0, y: 0 })
+    .zIndex(this.dragTabId === tab.id ? 10 : 0)
+    .animation(this.dragTabId === tab.id
+      ? { duration: 0 }          // no animation on the dragged chip itself
+      : { duration: 150, curve: Curve.EaseOut })
     .alignItems(VerticalAlign.Center)
     .focusable(false)
     .onHover((h: boolean) => { this.hoverTabId = h ? tab.id : -1; })
-    .onClick(() => { this.switchTab(tab.id); })
-    // Drag to reorder: pick up this chip, drop it onto another to move it there.
-    .draggable(true)
-    .onDragStart((): DragItemInfo => {
-      this.draggingTabId = tab.id;
-      return { extraInfo: 'tab' } as DragItemInfo;
+    .onClick(() => {
+      // Suppress click that fires right after a drag gesture ends
+      if (Math.abs(this.dragOffsetX) < 4) {
+        this.switchTab(tab.id);
+      }
     })
-    .allowDrop(null)
-    .onDrop(() => { this.reorderTab(tab.id); })
+    // Horizontal PanGesture for drag-to-reorder. priorityGesture takes
+    // precedence over the parent Scroll's scroll gesture.
+    .priorityGesture(
+      PanGesture({ direction: PanDirection.Horizontal, distance: 6 })
+        .onActionStart(() => {
+          this.dragTabId = tab.id;
+          this.dragOffsetX = 0;
+        })
+        .onActionUpdate((e: GestureEvent) => {
+          this.dragOffsetX = e.offsetX;
+        })
+        .onActionEnd(() => {
+          this.reorderByDrag(this.dragTabId, this.dragOffsetX);
+          this.dragTabId = -1;
+          this.dragOffsetX = 0;
+        })
+    )
   }
 
   private activeMeta(): TabMeta {
@@ -853,9 +895,13 @@ struct Index {
         Row({ space: 10 }) {
           Text('跳过')
             .fontSize(14)
-            .fontColor(Palette.textDim)
+            .fontColor(this.guideHover === 'skip' ? Palette.text : Palette.textDim)
             .padding({ left: 14, right: 14, top: 9, bottom: 9 })
+            .borderRadius(8)
+            .backgroundColor(this.guideHover === 'skip' ? '#1FFFFFFF' : Color.Transparent)
+            .animation({ duration: 120, curve: Curve.EaseOut })
             .focusable(false)
+            .onHover((h: boolean) => { this.guideHover = h ? 'skip' : ''; })
             .onClick(() => { this.finishGuide(); })
 
           Blank()
@@ -866,9 +912,11 @@ struct Index {
               .fontColor(Palette.text)
               .padding({ left: 16, right: 16, top: 9, bottom: 9 })
               .borderRadius(9)
-              .backgroundColor(Palette.surface)
+              .backgroundColor(this.guideHover === 'prev' ? '#1FFFFFFF' : Palette.surface)
               .border({ width: 1, color: Palette.border })
+              .animation({ duration: 120, curve: Curve.EaseOut })
               .focusable(false)
+              .onHover((h: boolean) => { this.guideHover = h ? 'prev' : ''; })
               .onClick(() => { this.guideStep = this.guideStep - 1; })
           }
 
@@ -877,8 +925,12 @@ struct Index {
             .fontColor(Palette.base)
             .padding({ left: 18, right: 18, top: 9, bottom: 9 })
             .borderRadius(9)
+            .opacity(this.guideHover === 'next' ? 0.85 : 1.0)
+            .scale(this.guideHover === 'next' ? { x: 0.97, y: 0.97 } : { x: 1.0, y: 1.0 })
             .backgroundColor(Palette.accent)
+            .animation({ duration: 120, curve: Curve.EaseOut })
             .focusable(false)
+            .onHover((h: boolean) => { this.guideHover = h ? 'next' : ''; })
             .onClick(() => {
               if (this.guideStep >= this.guideCount - 1) {
                 this.finishGuide();

@@ -38,6 +38,10 @@ export struct TerminalSurface {
   @State private searchText: string = '';
   @State private searchTotal: number = 0;
   @State private searchSelected: number = -1;
+  // Hover states for search bar buttons
+  @State private hoverSearchPrev: boolean = false;
+  @State private hoverSearchNext: boolean = false;
+  @State private hoverSearchClose: boolean = false;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -173,54 +177,110 @@ export struct TerminalSurface {
   @Builder
   private buildSearchOverlay() {
     Column() {
-      Row({ space: 8 }) {
+      Row({ space: 0 }) {
+        // Search input
         TextInput({ text: this.searchText, controller: this.searchInputController })
           .id(this.searchInputId)
-          .width(220)
-          .height(38)
-          .fontSize(15)
-          .backgroundColor('#FF1C222B')
-          .fontColor('#FFF4F7FB')
-          .borderRadius(8)
+          .width(200)
+          .height(34)
+          .fontSize(13)
+          .fontColor('#F4F7FB')
+          .placeholderColor('#8A94A6')
+          .backgroundColor('#0E1318')
+          .caretColor('#3DD6C4')
+          .borderRadius({ topLeft: 7, topRight: 0, bottomLeft: 7, bottomRight: 0 })
+          .padding({ left: 10, right: 10 })
           .onChange((value: string) => {
             this.searchText = value;
             this.controller.updateSearch(value);
             this.syncSearchStatus();
           })
-          .onSubmit(() => {
-            this.navigateSearch(true);
-          })
+          .onSubmit(() => { this.navigateSearch(true); })
 
+        // Divider
+        Row()
+          .width(1)
+          .height(34)
+          .backgroundColor('#1E2630')
+
+        // Match count
         Text(this.searchLabel())
-          .fontSize(13)
-          .fontColor('#FFB8C4D9')
-          .width(64)
+          .fontSize(12)
+          .fontColor(this.searchTotal > 0 ? '#3DD6C4' : '#8A94A6')
+          .width(48)
+          .height(34)
           .textAlign(TextAlign.Center)
+          .backgroundColor('#11161D')
 
-        Button('Prev')
+        // Divider
+        Row()
+          .width(1)
           .height(34)
-          .fontSize(13)
-          .onClick(() => {
-            this.navigateSearch(false);
-          })
+          .backgroundColor('#1E2630')
 
-        Button('Next')
-          .height(34)
-          .fontSize(13)
-          .onClick(() => {
-            this.navigateSearch(true);
-          })
+        // Prev ↑
+        Row() {
+          Text('↑')
+            .fontSize(15)
+            .fontColor(this.hoverSearchPrev ? '#F4F7FB' : '#8A94A6')
+            .animation({ duration: 100, curve: Curve.EaseOut })
+        }
+        .width(34)
+        .height(34)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.hoverSearchPrev ? '#1FFFFFFF' : '#11161D')
+        .animation({ duration: 100, curve: Curve.EaseOut })
+        .onHover((h: boolean) => { this.hoverSearchPrev = h; })
+        .onClick(() => { this.navigateSearch(false); })
 
-        Button('Close')
+        // Divider
+        Row()
+          .width(1)
           .height(34)
-          .fontSize(13)
-          .onClick(() => {
-            this.closeSearch();
-          })
+          .backgroundColor('#1E2630')
+
+        // Next ↓
+        Row() {
+          Text('↓')
+            .fontSize(15)
+            .fontColor(this.hoverSearchNext ? '#F4F7FB' : '#8A94A6')
+            .animation({ duration: 100, curve: Curve.EaseOut })
+        }
+        .width(34)
+        .height(34)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.hoverSearchNext ? '#1FFFFFFF' : '#11161D')
+        .animation({ duration: 100, curve: Curve.EaseOut })
+        .onHover((h: boolean) => { this.hoverSearchNext = h; })
+        .onClick(() => { this.navigateSearch(true); })
+
+        // Divider
+        Row()
+          .width(1)
+          .height(34)
+          .backgroundColor('#1E2630')
+
+        // Close ✕
+        Row() {
+          Text('✕')
+            .fontSize(13)
+            .fontColor(this.hoverSearchClose ? '#FF6B6B' : '#8A94A6')
+            .animation({ duration: 100, curve: Curve.EaseOut })
+        }
+        .width(34)
+        .height(34)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius({ topLeft: 0, topRight: 7, bottomLeft: 0, bottomRight: 7 })
+        .backgroundColor(this.hoverSearchClose ? '#17FF6B6B' : '#11161D')
+        .animation({ duration: 100, curve: Curve.EaseOut })
+        .onHover((h: boolean) => { this.hoverSearchClose = h; })
+        .onClick(() => { this.closeSearch(); })
       }
-      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-      .backgroundColor('#EE11161D')
-      .borderRadius(12)
+      // Single unified container row: flat pill shape
+      .borderRadius(8)
+      .border({ width: 1, color: '#1E2630' })
+      .clip(true)
+      .shadow({ radius: 16, color: '#4D000000', offsetX: 0, offsetY: 4 })
     }
     .width('100%')
     .height('100%')
