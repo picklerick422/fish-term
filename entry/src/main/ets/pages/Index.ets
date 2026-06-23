@@ -1,6 +1,5 @@
 import { common } from '@kit.AbilityKit';
 import { emitter } from '@kit.BasicServicesKit';
-import { window } from '@kit.ArkUI';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { TerminalRuntime } from '../session/TerminalTab';
@@ -8,7 +7,7 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
-import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, stepFontSize, clampFontSize } from '../theme/FontScale';
+import { DEFAULT_FONT_SIZE, clampFontSize } from '../theme/FontScale';
 import { SettingsPanel } from './SettingsPanel';
 
 function stateLabel(s: DriverStatus): string {
@@ -63,7 +62,6 @@ struct Index {
   @State private formError: string = '';
   @State private focusedField: string = '';
   @State private showSettings: boolean = false;
-  @State private windowMaximized: boolean = false;
   @State private themeName: string = 'Aizen_Dark';
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
@@ -153,34 +151,6 @@ struct Index {
     this.runtimes.forEach((rt: TerminalRuntime) => {
       rt.controller.setTheme(this.themeName);
     });
-  }
-
-  // ----- window controls (system decor is hidden; we draw our own) -----------
-
-  private winMinimize(): void {
-    if (!this.context) {
-      return;
-    }
-    window.getLastWindow(this.context).then((w: window.Window) => {
-      w.minimize().catch(() => {});
-    }).catch(() => {});
-  }
-
-  private winToggleMax(): void {
-    if (!this.context) {
-      return;
-    }
-    window.getLastWindow(this.context).then((w: window.Window) => {
-      if (this.windowMaximized) {
-        w.recover().then(() => { this.windowMaximized = false; }).catch(() => {});
-      } else {
-        w.maximize().then(() => { this.windowMaximized = true; }).catch(() => {});
-      }
-    }).catch(() => {});
-  }
-
-  private winClose(): void {
-    this.context?.terminateSelf();
   }
 
   // ----- tab lifecycle -------------------------------------------------------
@@ -314,10 +284,6 @@ struct Index {
     }
   }
 
-  private adjustFont(deltaSteps: number): void {
-    this.applyFontSize(stepFontSize(this.fontSize, deltaSteps));
-    this.focusActiveTerminal();
-  }
 
   private dotColor(state: DriverState): string {
     switch (state) {
@@ -338,7 +304,6 @@ struct Index {
       Column() {
         if (this.tabs.length > 0) {
           this.buildTabStrip();
-          this.buildToolbar();
           Stack() {
             ForEach(this.tabs, (tab: TabMeta) => {
               this.buildSurface(tab.id);
@@ -382,29 +347,18 @@ struct Index {
       .visibility(id === this.activeId ? Visibility.Visible : Visibility.Hidden)
   }
 
-  // App logo glyph ">_" rendered with primitives (matches the launcher icon).
-  @Builder
-  private logoGlyph() {
-    Row({ space: 3 }) {
-      Text('>')
-        .fontSize(14)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(Palette.accent)
-      Row()
-        .width(9).height(2).borderRadius(1)
-        .backgroundColor(Palette.accent)
-        .margin({ top: 6 })
-    }
-  }
-
-  // Top strip that replaces the system title bar: app logo + tabs + "+" + caption buttons.
+  // Top strip that replaces the system title bar: app logo + tabs + "+" + settings.
+  // The right padding reserves room for the system window control buttons that
+  // float at the top-right after the decoration bar is hidden, so our settings
+  // button sits just to their left without overlapping.
   @Builder
   private buildTabStrip() {
     Row() {
-      Row() {
-        this.logoGlyph()
-      }
-      .padding({ left: 14, right: 10 })
+      Image($r('app.media.app_logo'))
+        .width(22)
+        .height(22)
+        .borderRadius(5)
+        .margin({ left: 14, right: 10 })
 
       Scroll() {
         Row({ space: 6 }) {
@@ -433,29 +387,23 @@ struct Index {
       .layoutWeight(1)
       .align(Alignment.Start)
 
-      // window caption buttons
-      this.buildCaptionButton('—', Palette.textDim, () => { this.winMinimize(); })
-      this.buildCaptionButton(this.windowMaximized ? '❐' : '▢', Palette.textDim, () => { this.winToggleMax(); })
-      this.buildCaptionButton('✕', Palette.textDim, () => { this.winClose(); })
+      // settings button (sits to the left of the system window controls)
+      Row() {
+        this.settingsIcon()
+      }
+      .width(34)
+      .height(28)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(7)
+      .backgroundColor('#0D1520')
+      .focusable(false)
+      .onClick(() => { this.showSettings = true; })
     }
     .width('100%')
     .height(40)
+    .padding({ right: 130 })
     .backgroundColor('#0A0E13')
     .border({ width: { bottom: 1 }, color: Palette.border })
-  }
-
-  @Builder
-  private buildCaptionButton(label: string, color: string, action: () => void) {
-    Row() {
-      Text(label)
-        .fontSize(13)
-        .fontColor(color)
-    }
-    .width(40)
-    .height(40)
-    .justifyContent(FlexAlign.Center)
-    .focusable(false)
-    .onClick(action)
   }
 
   @Builder
@@ -485,98 +433,6 @@ struct Index {
     })
     .focusable(false)
     .onClick(() => { this.switchTab(tab.id); })
-  }
-
-  // Second-row toolbar: active-tab status + host + font controls + settings.
-  @Builder
-  private buildToolbar() {
-    Row({ space: 12 }) {
-      Row({ space: 7 }) {
-        Text('●')
-          .fontSize(10)
-          .fontColor(this.dotColor(this.activeMeta().state))
-        Text(this.activeMeta().statusText)
-          .fontSize(13)
-          .fontColor(Palette.text)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      Text(this.host + ':' + this.port)
-        .layoutWeight(1)
-        .fontSize(12)
-        .fontColor(Palette.textDim)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      // font-size pill (mouse-only, never steals keyboard focus)
-      Row({ space: 2 }) {
-        Row() {
-          Text('A-')
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : Palette.accent)
-        }
-        .width(32)
-        .height(28)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor('#0D1520')
-        .borderRadius(8)
-        .focusable(false)
-        .enabled(this.fontSize > MIN_FONT_SIZE)
-        .onClick(() => {
-          if (this.fontSize > MIN_FONT_SIZE) {
-            this.adjustFont(-1);
-          }
-        })
-
-        Text(this.fontSize.toString())
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.accent)
-          .width(26)
-          .textAlign(TextAlign.Center)
-
-        Row() {
-          Text('A+')
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : Palette.accent)
-        }
-        .width(32)
-        .height(28)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor('#0D1520')
-        .borderRadius(8)
-        .focusable(false)
-        .enabled(this.fontSize < MAX_FONT_SIZE)
-        .onClick(() => {
-          if (this.fontSize < MAX_FONT_SIZE) {
-            this.adjustFont(1);
-          }
-        })
-      }
-      .padding({ left: 3, right: 3, top: 2, bottom: 2 })
-      .backgroundColor('#080F18')
-      .borderRadius(16)
-      .border({ width: 1, color: '#1E2630' })
-
-      // settings button (minimalist "adjustments" sliders icon)
-      Row() {
-        this.settingsIcon()
-      }
-      .width(32)
-      .height(28)
-      .justifyContent(FlexAlign.Center)
-      .backgroundColor('#0D1520')
-      .borderRadius(8)
-      .focusable(false)
-      .onClick(() => { this.showSettings = true; })
-    }
-    .width('100%')
-    .height(44)
-    .padding({ left: 14, right: 14 })
-    .backgroundColor(Palette.surface)
-    .border({ width: { bottom: 1 }, color: Palette.border })
   }
 
   private activeMeta(): TabMeta {
@@ -619,6 +475,9 @@ struct Index {
       controller: this.activeController(),
       store: this.store,
       fontSize: this.fontSize,
+      statusText: this.activeMeta().statusText,
+      statusColor: this.dotColor(this.activeMeta().state),
+      hostLabel: this.host + ':' + this.port,
       themeName: this.themeName,
       cursorStyle: this.cursorStyle,
       cursorBlink: this.cursorBlink,
@@ -635,9 +494,14 @@ struct Index {
   @Builder
   private buildForm() {
     Column() {
-      Column({ space: 6 }) {
-        Text('◐ fish-term')
-          .fontSize(26)
+      Column({ space: 10 }) {
+        Image($r('app.media.app_logo'))
+          .width(72)
+          .height(72)
+          .borderRadius(16)
+        Text('fish-term')
+          .fontSize(24)
+          .fontWeight(FontWeight.Medium)
           .fontColor(Palette.text)
         Text('connect to fish-agent')
           .fontSize(13)

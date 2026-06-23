@@ -50,6 +50,9 @@ export struct SettingsPanel {
   controller: TerminalController = new TerminalController();
   store: ConnectionStore | null = null;
   fontSize: number = 16;
+  @Prop statusText: string = '空闲';
+  @Prop statusColor: string = '#8A94A6';
+  @Prop hostLabel: string = '';
   @Prop themeName: string = '';
   @Prop cursorStyle: number = 0;
   @Prop cursorBlink: boolean = true;
@@ -147,6 +150,33 @@ export struct SettingsPanel {
       .width('100%')
       .height(48)
       .padding({ left: 8, right: 8 })
+
+      // Connection status card (moved out of the main toolbar)
+      Column() {
+        Row({ space: 8 }) {
+          Text('●')
+            .fontSize(10)
+            .fontColor(this.statusColor)
+          Text(this.statusText)
+            .fontSize(13)
+            .fontColor(Palette.text)
+          Text(this.hostLabel)
+            .layoutWeight(1)
+            .fontSize(12)
+            .fontColor(Palette.textDim)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .height(40)
+        .padding({ left: 14, right: 14 })
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: Palette.border })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 4 })
 
       // Tab row
       Row({ space: 8 }) {
