@@ -1663,7 +1663,12 @@ private:
                     }
                     if (shouldRender && m_renderer && m_terminal && m_surfaceReady) {
                         m_terminal->drawFrame();
-                        NotifyImeStateLocked();
+                        // NOTE: do NOT push IME updates from the render thread.
+                        // NotifyImeStateLocked() does a synchronous cross-process
+                        // IME IPC; when a tab closes, OnSurfaceDestroyed joins this
+                        // render thread and would block on a slow/hung IME call,
+                        // freezing the UI (ANR). IME cursor rect is updated from
+                        // input events on the main thread instead.
                     }
                 }
 
