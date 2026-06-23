@@ -72,6 +72,11 @@ export struct TerminalSurface {
   private imeDeleteRightCb: ((len: number) => void) | null = null;
   private imeFnKeyCb: ((fk: inputMethod.FunctionKey) => void) | null = null;
   private imeMoveCursorCb: ((dir: inputMethod.Direction) => void) | null = null;
+  // Heartbeat timer: periodically calls showTextInput to keep the IME alive.
+  // If the system has auto-detached (focus loss, background, tab switch, etc.)
+  // showTextInput will fail and we immediately re-attach, so the user never
+  // has to re-toggle the menu.
+  private imeHeartbeat: number = -1;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -679,6 +684,23 @@ export struct TerminalSurface {
         ctrl.on('deleteRight', this.imeDeleteRightCb);
         ctrl.on('sendFunctionKey', this.imeFnKeyCb);
         ctrl.on('moveCursor', this.imeMoveCursorCb);
+        // Start heartbeat: every 1.5 s try to show the IME.  If the system has
+        // auto-detached it (background / tab switch / settings sheet / focus
+        // loss), showTextInput rejects and we do a full re-attach so typing
+        // Chinese resumes within 1.5 s without any user interaction.
+        if (this.imeHeartbeat >= 0) {
+          clearInterval(this.imeHeartbeat);
+        }
+        this.imeHeartbeat = setInterval(() => {
+          if (!this.directInput || !this.isActiveTab || !this.imeAttached) {
+            return;
+          }
+          this.imeCtrl?.showTextInput().catch(() => {
+            // The system detached our IME session; reset flag and re-attach.
+            this.imeAttached = false;
+            this.attachDirectInput();
+          });
+        }, 1500) as number;
       }).catch((err: Object) => {
         console.error('IME attach failed: ' + JSON.stringify(err));
       });
@@ -694,6 +716,10 @@ export struct TerminalSurface {
       return;
     }
     try {
+      if (this.imeHeartbeat >= 0) {
+        clearInterval(this.imeHeartbeat);
+        this.imeHeartbeat = -1;
+      }
       if (this.imeInsertCb) { ctrl.off('insertText', this.imeInsertCb); }
       if (this.imeDeleteLeftCb) { ctrl.off('deleteLeft', this.imeDeleteLeftCb); }
       if (this.imeDeleteRightCb) { ctrl.off('deleteRight', this.imeDeleteRightCb); }
