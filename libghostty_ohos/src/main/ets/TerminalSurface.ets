@@ -206,6 +206,16 @@ export struct TerminalSurface {
       .focusable(true)
       .focusOnTouch(true)
       .defaultFocus(true)
+      .onFocus(() => {
+        // The system auto-detaches the IME on any focus loss (settings sheet,
+        // app background, tab switch, window blur…). Whenever this surface
+        // regains focus while direct-input mode is on, re-attach so the user
+        // never has to re-toggle the menu to keep typing Chinese.
+        if (this.directInput && this.isActiveTab) {
+          this.imeAttached = false;
+          this.attachDirectInput();
+        }
+      })
       .width('100%')
       .height('100%')
       .backgroundColor(this.surfaceColor)
