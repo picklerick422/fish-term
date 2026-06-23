@@ -465,7 +465,7 @@ struct Index {
           .height(24)
           .justifyContent(FlexAlign.Center)
           .borderRadius(5)
-          .backgroundColor(this.hoverAddTab ? '#FFFFFF0C' : Color.Transparent)
+          .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
           .animation({ duration: 120, curve: Curve.EaseOut })
           .focusable(false)
           .onHover((h: boolean) => { this.hoverAddTab = h; })
@@ -473,7 +473,9 @@ struct Index {
         }
         .height(40)
         .padding({ right: 8 })
-        .alignItems(VerticalAlign.Center)
+        // Bottom-align so the active tab's flat bottom edge sits flush on the
+        // terminal card below it — that's what makes them visually fuse.
+        .alignItems(VerticalAlign.Bottom)
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
@@ -488,7 +490,7 @@ struct Index {
       .height(40)
       .justifyContent(FlexAlign.Center)
       .borderRadius(8)
-      .backgroundColor(this.hoverSettings ? '#FFFFFF0C' : Color.Transparent)
+      .backgroundColor(this.hoverSettings ? '#1FFFFFFF' : Color.Transparent)
       .animation({ duration: 150, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverSettings = h; })
@@ -528,7 +530,7 @@ struct Index {
       : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
     // Inactive tab gets a subtle highlight on hover
     .backgroundColor(tab.id === this.activeId ? this.themeBg
-      : (this.hoverTabId === tab.id ? '#FFFFFF0A' : Color.Transparent))
+      : (this.hoverTabId === tab.id ? '#1FFFFFFF' : Color.Transparent))
     .animation({ duration: 150, curve: Curve.EaseOut })
     .alignItems(VerticalAlign.Center)
     .focusable(false)
