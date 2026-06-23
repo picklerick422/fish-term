@@ -1872,9 +1872,16 @@ private:
 
     void DetachImeLocked()
     {
+        const bool owner = (g_activeImeHost.load() == this);
         HideImeLocked();
         if (m_imeInputMethodProxy != nullptr) {
-            OH_InputMethodController_Detach(m_imeInputMethodProxy);
+            // Only detach through the framework if we still own the live
+            // attachment. Detaching a superseded proxy ("g_inputMethodProxy is
+            // not equal") is a main-thread IPC that hangs — the freeze seen on
+            // closing a tab. For a superseded proxy just drop our handle.
+            if (owner) {
+                OH_InputMethodController_Detach(m_imeInputMethodProxy);
+            }
             m_imeInputMethodProxy = nullptr;
         }
         if (m_imeTextEditorProxy != nullptr) {
@@ -1892,9 +1899,10 @@ private:
     {
         m_wantsIme = true;
         // If another tab has since taken over the process-wide IME, our proxy is
-        // stale: drop it and re-attach so this (now focused) tab owns it again.
+        // stale. Drop it WITHOUT a framework Detach (that targets the superseded
+        // proxy and blocks the main thread) and re-attach so this focused tab
+        // owns it again.
         if (m_imeInputMethodProxy != nullptr && g_activeImeHost.load() != this) {
-            OH_InputMethodController_Detach(m_imeInputMethodProxy);
             m_imeInputMethodProxy = nullptr;
         }
         if (m_imeInputMethodProxy == nullptr) {
@@ -1923,7 +1931,11 @@ private:
         if (m_imeInputMethodProxy == nullptr || !m_imeVisible) {
             return;
         }
-        OH_InputMethodProxy_HideKeyboard(m_imeInputMethodProxy);
+        // Only the owner may issue framework calls; hiding via a superseded
+        // proxy is an IPC that blocks the main thread (freeze on tab close).
+        if (g_activeImeHost.load() == this) {
+            OH_InputMethodProxy_HideKeyboard(m_imeInputMethodProxy);
+        }
         m_imeVisible = false;
     }
 
