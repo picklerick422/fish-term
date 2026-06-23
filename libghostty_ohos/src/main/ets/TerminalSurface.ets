@@ -16,6 +16,12 @@ export struct TerminalSurface {
   onOpenSettings: (() => void) | null = null;
   onOpenConnections: (() => void) | null = null;
   onOpenShortcuts: (() => void) | null = null;
+  // Whether this surface belongs to the currently active tab. Only the active
+  // surface reacts to the page-level search signal.
+  @Prop isActiveTab: boolean = true;
+  // Monotonically increasing counter bumped by the host page (e.g. on Ctrl+Shift+F)
+  // to request the find overlay on the active terminal.
+  @Prop @Watch('onSearchSignal') searchSignal: number = 0;
 
   private context: common.UIAbilityContext | null = null;
   private searchInputController: TextInputController = new TextInputController();
@@ -235,6 +241,14 @@ export struct TerminalSurface {
 
   private requestTerminalFocus(): void {
     focusControl.requestFocus(this.surfaceId);
+  }
+
+  // Host page bumped searchSignal — open (or refocus) the find overlay, but only
+  // on the active tab's surface so background terminals stay untouched.
+  private onSearchSignal(): void {
+    if (this.searchSignal > 0 && this.isActiveTab) {
+      this.openSearch(this.searchVisible ? this.searchText : '');
+    }
   }
 
   private startFallbackPolling(): void {

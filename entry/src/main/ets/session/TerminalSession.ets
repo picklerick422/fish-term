@@ -92,6 +92,16 @@ export class TerminalSession {
     }
   }
 
+  // Force an immediate reconnect (skips the backoff wait). No-op once stopped.
+  reconnectNow(): void {
+    if (this.stopped) {
+      return;
+    }
+    if (this.driver instanceof FishWebSocketDriver) {
+      (this.driver as FishWebSocketDriver).reconnectNow();
+    }
+  }
+
   // Begin the driver. The surface is already bound (page mounts it once), so we
   // wire input/resize and start as soon as a valid size is available.
   start(): void {

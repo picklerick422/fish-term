@@ -87,6 +87,18 @@ export class FishWebSocketDriver implements TerminalDriver {
     this.connect();
   }
 
+  // Force an immediate (re)connect attempt, bypassing the backoff wait. Used by
+  // the in-app "立即重连" button on the connection-status banner.
+  reconnectNow(): void {
+    this.manualStop = false;
+    if (this.connected) {
+      return;
+    }
+    this.clearReconnect();
+    this.backoff.reset();
+    this.connect();
+  }
+
   stop(): void {
     this.manualStop = true;
     this.clearReconnect();

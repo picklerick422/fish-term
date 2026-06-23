@@ -20,6 +20,7 @@ const KEY_THEME: string = 'theme_name';
 const KEY_CURSOR_STYLE: string = 'cursor_style';
 const KEY_CURSOR_BLINK: string = 'cursor_blink';
 const KEY_SCROLLBACK: string = 'scrollback_lines';
+const KEY_ONBOARDED: string = 'onboarded';
 const TOKEN_ALIAS: string = 'fish_agent_token';
 const ASSET_NOT_FOUND: number = 24000002;
 
@@ -177,6 +178,28 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-termsave terminalPrefs failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadOnboarded(): Promise<boolean> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_ONBOARDED, false) as boolean;
+    } catch (e) {
+      console.error('fish-termload onboarded failed: ' + JSON.stringify(e));
+      return false;
+    }
+  }
+
+  async saveOnboarded(done: boolean): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_ONBOARDED, done);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-termsave onboarded failed: ' + JSON.stringify(e));
     }
   }
 

@@ -63,6 +63,7 @@ export struct SettingsPanel {
   onCursorBlinkChange: (v: boolean) => void = (_v: boolean) => {};
   onScrollbackChange: (v: number) => void = (_v: number) => {};
   onFontSizeChange: (size: number) => void = (_size: number) => {};
+  onReplayGuide: () => void = () => {};
   onClose: () => void = () => {};
 
   @State private tab: number = 0;
@@ -326,6 +327,22 @@ export struct SettingsPanel {
       .alignItems(HorizontalAlign.Start)
       .width('100%')
 
+      Row() {
+        Text('查看新手引导')
+          .fontSize(14)
+          .fontColor(Palette.accent)
+          .textAlign(TextAlign.Center)
+          .width('100%')
+      }
+      .width('100%')
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(Palette.surface)
+      .borderRadius(10)
+      .border({ width: 1, color: Palette.border })
+      .focusable(false)
+      .onClick(() => { this.onReplayGuide(); })
+
       Text('© 2026 fish-term · 基于开源组件构建')
         .fontSize(11)
         .fontColor(Palette.textDim)
@@ -336,8 +353,76 @@ export struct SettingsPanel {
     .width('100%')
   }
 
+  // Live preview of the currently selected theme: a mock terminal snippet
+  // rendered with that theme's real bg / fg / accent colors.
+  @Builder
+  private buildThemePreview() {
+    Column({ space: 4 }) {
+      Row({ space: 6 }) {
+        Text('user@fish')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).a2)
+        Text('~/project')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).a3)
+        Text('$ ls')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).fg)
+      }
+      .width('100%')
+
+      Row({ space: 10 }) {
+        Text('README.md')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).a1)
+        Text('src')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).a2)
+        Text('build.zig')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).a3)
+      }
+      .width('100%')
+
+      Row({ space: 0 }) {
+        Text('$ ')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .fontColor(this.colorsFor(this.themeName).fg)
+        // blinking-cursor stand-in
+        Text(' ')
+          .fontSize(12)
+          .fontFamily('monospace')
+          .backgroundColor(this.colorsFor(this.themeName).cursor)
+          .width(8)
+          .height(15)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(14)
+    .backgroundColor(this.colorsFor(this.themeName).bg)
+    .borderRadius(10)
+    .border({ width: 1, color: Palette.border })
+  }
+
   @Builder
   private buildAppearanceTab() {
+    // Live theme preview
+    Column({ space: 0 }) {
+      this.buildSectionHeader('预览')
+      this.buildThemePreview()
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+
     // Font size section
     Column({ space: 0 }) {
       this.buildSectionHeader('字号')

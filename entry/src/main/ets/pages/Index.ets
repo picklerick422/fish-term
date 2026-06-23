@@ -78,6 +78,13 @@ struct Index {
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
   @State private scrollbackLines: number = 20000;
+  // Bumped on Ctrl+Shift+F to open the find overlay on the active terminal.
+  @State private searchSignal: number = 0;
+  // First-run onboarding guide.
+  @State private showGuide: boolean = false;
+  @State private guideStep: number = 0;
+  // id of the tab chip currently being dragged for reorder (-1 = none).
+  private draggingTabId: number = -1;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -124,6 +131,20 @@ struct Index {
       this.scrollbackLines = prefs.scrollbackLines;
       this.broadcastConfig();
     });
+    store.loadOnboarded().then((done: boolean): void => {
+      if (!done) {
+        this.showGuide = true;
+        this.guideStep = 0;
+      }
+    });
+  }
+
+  private finishGuide(): void {
+    this.showGuide = false;
+    this.guideStep = 0;
+    if (this.store) {
+      this.store.saveOnboarded(true);
+    }
   }
 
   aboutToDisappear(): void {
@@ -270,6 +291,80 @@ struct Index {
     this.focusActiveTerminal();
   }
 
+  // Ctrl+1..9 — jump to the Nth tab (1-based). Out-of-range is ignored.
+  private switchToIndex(index: number): void {
+    if (index >= 0 && index < this.tabs.length) {
+      this.switchTab(this.tabs[index].id);
+    }
+  }
+
+  // Ctrl+Tab — cycle to the next (dir=1) / previous (dir=-1) tab, wrapping.
+  private cycleTab(dir: number): void {
+    if (this.tabs.length <= 1) {
+      return;
+    }
+    let cur: number = 0;
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      if (this.tabs[i].id === this.activeId) {
+        cur = i;
+        break;
+      }
+    }
+    const n: number = this.tabs.length;
+    const next: number = ((cur + dir) % n + n) % n;
+    this.switchTab(this.tabs[next].id);
+  }
+
+  // Ctrl+Shift+F — open the find overlay on the active terminal.
+  private requestSearch(): void {
+    if (this.tabs.length > 0) {
+      this.searchSignal = this.searchSignal + 1;
+    }
+  }
+
+  // Reorder tabs by moving the dragged chip to land before `targetId`.
+  private reorderTab(targetId: number): void {
+    const from: number = this.draggingTabId;
+    this.draggingTabId = -1;
+    if (from < 0 || from === targetId) {
+      return;
+    }
+    const list: TabMeta[] = this.tabs.slice();
+    let fromIdx: number = -1;
+    let toIdx: number = -1;
+    for (let i: number = 0; i < list.length; i++) {
+      if (list[i].id === from) {
+        fromIdx = i;
+      }
+      if (list[i].id === targetId) {
+        toIdx = i;
+      }
+    }
+    if (fromIdx < 0 || toIdx < 0) {
+      return;
+    }
+    const moved: TabMeta = list.splice(fromIdx, 1)[0];
+    // After removal indices shift; recompute insertion point at target.
+    let insertAt: number = 0;
+    for (let i: number = 0; i < list.length; i++) {
+      if (list[i].id === targetId) {
+        insertAt = i;
+        break;
+      }
+    }
+    list.splice(insertAt, 0, moved);
+    this.tabs = list;
+  }
+
+  // Force an immediate reconnect of the active tab's session.
+  private reconnectActive(): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (rt) {
+      rt.session?.reconnectNow();
+    }
+    this.focusActiveTerminal();
+  }
+
   private closeTab(id: number): void {
     const rt: TerminalRuntime | undefined = this.runtimes.get(id);
     if (!rt) {
@@ -374,10 +469,11 @@ struct Index {
           // parent Column pads those sides. Cross-axis stretch fills the rest,
           // so no width('100%') is set (that would overflow the padding and
           // clip the right border).
-          Stack() {
+          Stack({ alignContent: Alignment.Top }) {
             ForEach(this.tabs, (tab: TabMeta) => {
               this.buildSurface(tab.id);
             }, (tab: TabMeta) => tab.id.toString())
+            this.buildStatusBanner()
           }
           .layoutWeight(1)
           .backgroundColor(this.themeBg)
@@ -405,12 +501,31 @@ struct Index {
       if (this.tabs.length === 0 || this.showNewConnection) {
         this.buildForm();
       }
+
+      if (this.showGuide) {
+        this.buildGuide();
+      }
     }
     .width('100%')
     .height('100%')
     // Frame color matches the strip — forms a consistent border on
     // left / right / bottom of the terminal card.
     .backgroundColor(Palette.surface)
+    // App-level keyboard shortcuts (work while the window is focused, even
+    // though the terminal XComponent owns native key focus).
+    .keyboardShortcut('f', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.requestSearch(); })
+    .keyboardShortcut('t', [ModifierKey.CTRL], () => { this.openTab(); })
+    .keyboardShortcut('w', [ModifierKey.CTRL], () => { this.closeTab(this.activeId); })
+    .keyboardShortcut(FunctionKey.TAB, [ModifierKey.CTRL], () => { this.cycleTab(1); })
+    .keyboardShortcut('1', [ModifierKey.CTRL], () => { this.switchToIndex(0); })
+    .keyboardShortcut('2', [ModifierKey.CTRL], () => { this.switchToIndex(1); })
+    .keyboardShortcut('3', [ModifierKey.CTRL], () => { this.switchToIndex(2); })
+    .keyboardShortcut('4', [ModifierKey.CTRL], () => { this.switchToIndex(3); })
+    .keyboardShortcut('5', [ModifierKey.CTRL], () => { this.switchToIndex(4); })
+    .keyboardShortcut('6', [ModifierKey.CTRL], () => { this.switchToIndex(5); })
+    .keyboardShortcut('7', [ModifierKey.CTRL], () => { this.switchToIndex(6); })
+    .keyboardShortcut('8', [ModifierKey.CTRL], () => { this.switchToIndex(7); })
+    .keyboardShortcut('9', [ModifierKey.CTRL], () => { this.switchToIndex(8); })
   }
 
   @Builder
@@ -420,6 +535,8 @@ struct Index {
       controller: this.runtimes.get(id)?.controller ?? new TerminalController(),
       surfaceId: this.runtimes.get(id)?.surfaceId ?? ('fishTermSurface_' + id),
       surfaceColor: this.themeBg,
+      isActiveTab: id === this.activeId,
+      searchSignal: this.searchSignal,
       onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },
       onOpenShortcuts: () => { this.settingsInitialTab = 2; this.showSettings = true; },
       onOpenConnections: () => { this.openNewConnection(); }
@@ -427,6 +544,41 @@ struct Index {
       .width('100%')
       .height('100%')
       .visibility(id === this.activeId ? Visibility.Visible : Visibility.Hidden)
+  }
+
+  // Thin banner over the terminal shown while the active tab is not connected.
+  // Gives the user live feedback plus a one-tap "立即重连".
+  @Builder
+  private buildStatusBanner() {
+    if (this.activeMeta().state === DriverState.Reconnecting
+      || this.activeMeta().state === DriverState.Error
+      || this.activeMeta().state === DriverState.Connecting) {
+      Row({ space: 8 }) {
+        Text('●')
+          .fontSize(9)
+          .fontColor(this.dotColor(this.activeMeta().state))
+        Text(this.activeMeta().statusText)
+          .fontSize(12)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.activeMeta().state !== DriverState.Connecting) {
+          Text('立即重连')
+            .fontSize(12)
+            .fontColor(Palette.accent)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .borderRadius(6)
+            .backgroundColor('#1FFFFFFF')
+            .focusable(false)
+            .onClick(() => { this.reconnectActive(); })
+        }
+      }
+      .width('100%')
+      .padding({ left: 14, right: 12, top: 8, bottom: 8 })
+      .backgroundColor('#E6171C25')
+      .alignItems(VerticalAlign.Center)
+    }
   }
 
   // Top strip that replaces the system title bar: app logo + tabs + "+" + settings.
@@ -545,6 +697,14 @@ struct Index {
     .focusable(false)
     .onHover((h: boolean) => { this.hoverTabId = h ? tab.id : -1; })
     .onClick(() => { this.switchTab(tab.id); })
+    // Drag to reorder: pick up this chip, drop it onto another to move it there.
+    .draggable(true)
+    .onDragStart((): DragItemInfo => {
+      this.draggingTabId = tab.id;
+      return { extraInfo: 'tab' } as DragItemInfo;
+    })
+    .allowDrop(null)
+    .onDrop(() => { this.reorderTab(tab.id); })
   }
 
   private activeMeta(): TabMeta {
@@ -606,8 +766,144 @@ struct Index {
       onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
       onScrollbackChange: (v: number) => { this.scrollbackLines = v; this.broadcastConfig(); },
       onFontSizeChange: (s: number) => { this.applyFontSize(s); },
+      onReplayGuide: () => { this.showSettings = false; this.guideStep = 0; this.showGuide = true; },
       onClose: () => { this.showSettings = false; }
     })
+  }
+
+  // ----- onboarding guide ----------------------------------------------------
+
+  private readonly guideCount: number = 5;
+
+  private guideTitle(step: number): string {
+    switch (step) {
+      case 0: return '欢迎使用 fish-term';
+      case 1: return '第 1 步 · 运行 fish-agent';
+      case 2: return '第 2 步 · 获取连接信息';
+      case 3: return '第 3 步 · 新建连接';
+      default: return '第 4 步 · 开始使用';
+    }
+  }
+
+  private guideDesc(step: number): string {
+    switch (step) {
+      case 0:
+        return 'fish-term 是一个连接到 fish-agent 的 HarmonyOS 终端。\n只需几步就能在手机/平板上获得完整的远程终端体验。';
+      case 1:
+        return '在你的电脑或服务器上下载并运行 fish-agent：\n\n  ./fish-agent --listen 0.0.0.0:8765\n\n它会启动一个 WebSocket 服务，等待终端接入。';
+      case 2:
+        return '启动后 fish-agent 会输出三项信息：\n\n  · 主机地址 host（如 192.168.1.10）\n  · 端口 port（默认 8765）\n  · 访问 token（用于鉴权）\n\n确保设备与该主机在同一网络可达。';
+      case 3:
+        return '回到 fish-term，在首页填入 host / 端口 / token，\n如需加密传输可打开 TLS(wss)，点击「连接」即可开启第一个终端标签页。';
+      default:
+        return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+Shift+F：查找；Ctrl+Shift+C/V：复制/粘贴\n  · Ctrl+T 新建标签，Ctrl+W 关闭，Ctrl+1~9 / Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
+    }
+  }
+
+  // Placeholder filename for the screenshot to drop in for each step.
+  private guideImageName(step: number): string {
+    return 'guide_' + step + '.png';
+  }
+
+  @Builder
+  private buildGuide() {
+    Column() {
+      Column() {
+        // Image placeholder — replace with real screenshots later.
+        Stack({ alignContent: Alignment.Center }) {
+          Column({ space: 6 }) {
+            Text('🖼')
+              .fontSize(34)
+              .fontColor(Palette.textDim)
+            Text('图片占位 · ' + this.guideImageName(this.guideStep))
+              .fontSize(12)
+              .fontColor(Palette.textDim)
+          }
+        }
+        .width('100%')
+        .height(190)
+        .backgroundColor(Palette.inputBg)
+        .borderRadius(12)
+        .border({ width: 1, color: Palette.border })
+        .margin({ bottom: 18 })
+
+        Text(this.guideTitle(this.guideStep))
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Palette.text)
+          .width('100%')
+          .margin({ bottom: 10 })
+
+        Text(this.guideDesc(this.guideStep))
+          .fontSize(14)
+          .fontColor(Palette.textDim)
+          .lineHeight(22)
+          .width('100%')
+
+        // Step dots
+        Row({ space: 6 }) {
+          ForEach(['0', '1', '2', '3', '4'], (s: string) => {
+            Circle({ width: 7, height: 7 })
+              .fill(Number(s) === this.guideStep ? Palette.accent : Palette.border)
+          }, (s: string) => s)
+        }
+        .margin({ top: 20, bottom: 18 })
+        .justifyContent(FlexAlign.Center)
+
+        Row({ space: 10 }) {
+          Text('跳过')
+            .fontSize(14)
+            .fontColor(Palette.textDim)
+            .padding({ left: 14, right: 14, top: 9, bottom: 9 })
+            .focusable(false)
+            .onClick(() => { this.finishGuide(); })
+
+          Blank()
+
+          if (this.guideStep > 0) {
+            Text('上一步')
+              .fontSize(14)
+              .fontColor(Palette.text)
+              .padding({ left: 16, right: 16, top: 9, bottom: 9 })
+              .borderRadius(9)
+              .backgroundColor(Palette.surface)
+              .border({ width: 1, color: Palette.border })
+              .focusable(false)
+              .onClick(() => { this.guideStep = this.guideStep - 1; })
+          }
+
+          Text(this.guideStep >= this.guideCount - 1 ? '开始使用' : '下一步')
+            .fontSize(14)
+            .fontColor(Palette.base)
+            .padding({ left: 18, right: 18, top: 9, bottom: 9 })
+            .borderRadius(9)
+            .backgroundColor(Palette.accent)
+            .focusable(false)
+            .onClick(() => {
+              if (this.guideStep >= this.guideCount - 1) {
+                this.finishGuide();
+              } else {
+                this.guideStep = this.guideStep + 1;
+              }
+            })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+        .alignItems(VerticalAlign.Center)
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 460 })
+      .padding(24)
+      .backgroundColor(Palette.base)
+      .borderRadius(16)
+      .border({ width: 1, color: Palette.border })
+    }
+    .width('100%')
+    .height('100%')
+    .padding(24)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor('#CC000000')
   }
 
   @Builder
