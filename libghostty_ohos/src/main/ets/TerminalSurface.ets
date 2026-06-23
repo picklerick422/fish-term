@@ -83,7 +83,7 @@ export struct TerminalSurface {
     }
     .width('100%')
     .height('100%')
-    .padding(0)
+    .padding({ left: 8 })
     .backgroundColor(this.surfaceColor)
   }
 

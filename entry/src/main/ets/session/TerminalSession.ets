@@ -7,10 +7,39 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 // page and live for the whole page lifetime — this class never binds/unbinds the
 // renderer. It only manages the driver and the controller's input/size listeners,
 // so connect/disconnect never unmount the surface (which is what crashed before).
+// Extract the last OSC 0/2 window title from a chunk of terminal output.
+// Matches: ESC ] (0|1|2) ; <text> BEL
+function extractOscTitle(data: string): string | null {
+  let last: string | null = null;
+  let i = 0;
+  while (i < data.length) {
+    const esc = data.indexOf('\x1b]', i);
+    if (esc < 0) break;
+    const semi = data.indexOf(';', esc + 2);
+    if (semi < 0) break;
+    const ps = data.substring(esc + 2, semi);
+    if (ps === '0' || ps === '1' || ps === '2') {
+      const bel = data.indexOf('\x07', semi + 1);
+      const st = data.indexOf('\x1b\\', semi + 1);
+      let end = -1;
+      if (bel >= 0 && (st < 0 || bel < st)) end = bel;
+      else if (st >= 0) end = st;
+      if (end >= 0) {
+        last = data.substring(semi + 1, end);
+        i = end + 1;
+        continue;
+      }
+    }
+    i = esc + 2;
+  }
+  return last;
+}
+
 export class TerminalSession {
   private readonly controller: TerminalController;
   private readonly driver: TerminalDriver;
   private statusCb: ((s: DriverStatus) => void) | null = null;
+  private titleCb: ((title: string) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -24,6 +53,10 @@ export class TerminalSession {
     this.driver = driver;
     this.driver.onOutput((data: string): void => {
       if (!this.stopped) {
+        const title = extractOscTitle(data);
+        if (title !== null && this.titleCb) {
+          this.titleCb(title);
+        }
         this.controller.feed(data);
       }
     });
@@ -47,6 +80,10 @@ export class TerminalSession {
 
   onStatus(cb: (s: DriverStatus) => void): void {
     this.statusCb = cb;
+  }
+
+  onTitleChange(cb: (title: string) => void): void {
+    this.titleCb = cb;
   }
 
   onForeground(): void {

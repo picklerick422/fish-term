@@ -189,6 +189,18 @@ struct Index {
     this.tabs = next;
   }
 
+  private updateTabTitle(id: number, title: string): void {
+    const trimmed = title.trim();
+    if (trimmed.length === 0) return;
+    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
+      if (t.id === id) {
+        return { id: t.id, title: trimmed, state: t.state, statusText: t.statusText };
+      }
+      return t;
+    });
+    this.tabs = next;
+  }
+
   // Open a new tab and start a session to the current host/port/token.
   private openTab(): void {
     const host: string = this.host.trim();
@@ -213,6 +225,9 @@ struct Index {
     const session: TerminalSession = new TerminalSession(rt.controller, new FishWebSocketDriver(cfg));
     session.onStatus((s: DriverStatus): void => {
       this.updateTabMeta(id, s.state, stateLabel(s));
+    });
+    session.onTitleChange((title: string): void => {
+      this.updateTabTitle(id, title);
     });
     rt.session = session;
     session.start();
@@ -429,18 +444,18 @@ struct Index {
     .height(40)
     .padding({ right: 130 })
     .backgroundColor('#0A0E13')
-    .border({ width: { bottom: 1 }, color: Palette.border })
   }
 
   @Builder
   private buildTabChip(tab: TabMeta) {
+    const isActive = tab.id === this.activeId;
     Row({ space: 7 }) {
       Text('●')
         .fontSize(8)
         .fontColor(this.dotColor(tab.state))
       Text(tab.title)
         .fontSize(12)
-        .fontColor(tab.id === this.activeId ? Palette.text : Palette.textDim)
+        .fontColor(isActive ? Palette.text : Palette.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       Text('✕')
@@ -449,14 +464,18 @@ struct Index {
         .focusable(false)
         .onClick(() => { this.closeTab(tab.id); })
     }
-    .height(30)
+    // Active tab is flush with the terminal below (same bg, no bottom border).
+    // Inactive tabs float as small rounded chips.
+    .height(isActive ? 40 : 30)
     .padding({ left: 12, right: 10 })
-    .borderRadius(8)
-    .backgroundColor(tab.id === this.activeId ? Palette.surface : Color.Transparent)
-    .border({
-      width: 1,
-      color: tab.id === this.activeId ? Palette.border : Color.Transparent
-    })
+    .borderRadius(isActive
+      ? { topLeft: 8, topRight: 8, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
+      : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
+    .backgroundColor(isActive ? Palette.base : Color.Transparent)
+    .border(isActive
+      ? { width: { top: 1, left: 1, right: 1 }, color: Palette.border }
+      : { width: 1, color: Color.Transparent })
+    .alignItems(VerticalAlign.Center)
     .focusable(false)
     .onClick(() => { this.switchTab(tab.id); })
   }
