@@ -19,7 +19,7 @@ export struct TerminalSurface {
   onOpenShortcuts: (() => void) | null = null;
   // Whether this surface belongs to the currently active tab. Only the active
   // surface reacts to the page-level search signal.
-  @Prop isActiveTab: boolean = true;
+  @Prop @Watch('onIsActiveTabChange') isActiveTab: boolean = true;
   // Monotonically increasing counter bumped by the host page (e.g. on Ctrl+Shift+F)
   // to request the find overlay on the active terminal.
   @Prop @Watch('onSearchSignal') searchSignal: number = 0;
@@ -62,6 +62,9 @@ export struct TerminalSurface {
   // terminal — no intermediate bar. The IME composition panel floats over
   // the terminal; only confirmed text is forwarded (composing pinyin is not).
   @Prop @Watch('onDirectInputChange') directInput: boolean = false;
+  // Bumped by the host page each time the app returns to foreground so we can
+  // re-attach the IME (the system auto-detaches it when the app is backgrounded).
+  @Prop @Watch('onForegroundSignal') foregroundSignal: number = 0;
   private imeAttached: boolean = false;
   private imeCtrl: inputMethod.InputMethodController | null = null;
   private imeInsertCb: ((text: string) => void) | null = null;
@@ -565,6 +568,27 @@ export struct TerminalSurface {
       return `${this.searchSelected + 1}/${this.searchTotal}`;
     }
     return `-/${this.searchTotal}`;
+  }
+
+  // Re-attach when this surface becomes the active tab while direct mode is on.
+  private onIsActiveTabChange(): void {
+    if (!this.directInput) {
+      return;
+    }
+    if (this.isActiveTab) {
+      this.imeAttached = false; // force fresh attach
+      this.attachDirectInput();
+    } else {
+      this.detachDirectInput();
+    }
+  }
+
+  // Re-attach after app returns to foreground (system auto-detaches on background).
+  private onForegroundSignal(): void {
+    if (this.directInput && this.isActiveTab) {
+      this.imeAttached = false;
+      this.attachDirectInput();
+    }
   }
 
   // React to the host-controlled directInput prop. Attach/detach the system

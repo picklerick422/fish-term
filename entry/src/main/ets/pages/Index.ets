@@ -96,6 +96,7 @@ struct Index {
   // Experimental "direct input": attaches the system IME straight to the
   // terminal so committed CJK text is typed directly (no input bar).
   @State private directInput: boolean = false;
+  @State private foregroundSignal: number = 0;
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
   @State private dragSwaps: number = 0;
@@ -113,6 +114,8 @@ struct Index {
       this.runtimes.forEach((rt: TerminalRuntime) => {
         rt.session?.onForeground();
       });
+      // Bump so active TerminalSurface re-attaches the IME if direct mode is on.
+      this.foregroundSignal = this.foregroundSignal + 1;
     });
   }
 
@@ -577,6 +580,7 @@ struct Index {
       searchSignal: this.searchSignal,
       showImeBar: id === this.activeId && this.showImeBar,
       directInput: id === this.activeId && this.directInput,
+      foregroundSignal: this.foregroundSignal,
       onImeBarClose: () => { this.showImeBar = false; },
       onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },
       onOpenShortcuts: () => { this.settingsInitialTab = 2; this.showSettings = true; },
