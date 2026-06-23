@@ -65,6 +65,11 @@ struct Index {
   @State private settingsInitialTab: number = 0;
   @State private showNewConnection: boolean = false;
   @State private themeName: string = 'Aizen_Dark';
+  // Actual background color of the active theme (#RRGGBB). The active tab,
+  // the content area and the terminal surface all share this color so the
+  // selected tab visually fuses with the terminal below it — even after the
+  // user picks a light theme.
+  @State private themeBg: string = Palette.base;
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
   @State private scrollbackLines: number = 20000;
@@ -153,6 +158,19 @@ struct Index {
     this.runtimes.forEach((rt: TerminalRuntime) => {
       rt.controller.setTheme(this.themeName);
     });
+    this.refreshThemeBg();
+  }
+
+  // Pull the real background color of the current theme so the tab strip /
+  // active tab can match the terminal exactly. Needs a bound native controller;
+  // falls back to the previous value when none is available yet.
+  private refreshThemeBg(): void {
+    this.runtimes.forEach((rt: TerminalRuntime) => {
+      const colors: string[] = rt.controller.getThemeColors(this.themeName);
+      if (colors && colors.length >= 1 && colors[0].length > 0) {
+        this.themeBg = colors[0];
+      }
+    });
   }
 
   // ----- tab lifecycle -------------------------------------------------------
@@ -232,6 +250,9 @@ struct Index {
     rt.session = session;
     session.start();
     this.focusActiveTerminal();
+    // Native bind happens in the surface's onLoad; poll briefly so the tab/
+    // content background can pick up the real theme bg once it's available.
+    setTimeout(() => { this.refreshThemeBg(); }, 250);
   }
 
   private switchTab(id: number): void {
@@ -369,7 +390,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Palette.base)
+    .backgroundColor(this.themeBg)
   }
 
   @Builder
@@ -378,7 +399,7 @@ struct Index {
     TerminalSurface({
       controller: this.runtimes.get(id)?.controller ?? new TerminalController(),
       surfaceId: this.runtimes.get(id)?.surfaceId ?? ('fishTermSurface_' + id),
-      surfaceColor: Palette.base,
+      surfaceColor: this.themeBg,
       onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },
       onOpenShortcuts: () => { this.settingsInitialTab = 2; this.showSettings = true; },
       onOpenConnections: () => { this.openNewConnection(); }
@@ -437,14 +458,17 @@ struct Index {
       .height(28)
       .justifyContent(FlexAlign.Center)
       .borderRadius(7)
-      .backgroundColor(Palette.surface)
+      .backgroundColor(Palette.base)
       .focusable(false)
       .onClick(() => { this.showSettings = true; })
     }
     .width('100%')
     .height(40)
     .padding({ right: 130 })
-    .backgroundColor(Palette.base)
+    // Strip backdrop is the app frame color (always dark), distinct from the
+    // terminal bg, so the active tab — painted in themeBg — reads as a shape
+    // that opens down into the content area below it.
+    .backgroundColor(Palette.surface)
   }
 
   @Builder
@@ -464,13 +488,17 @@ struct Index {
         .focusable(false)
         .onClick(() => { this.closeTab(tab.id); })
     }
-    // Active tab: same background as terminal, full height, accent top border = "fused".
-    // Inactive tabs: smaller rounded chip floating above the strip bottom.
-    .height(tab.id === this.activeId ? 38 : 28)
+    // Active tab: painted in the terminal background color with rounded TOP
+    // corners only and zero bottom radius. Sitting flush at the strip's bottom
+    // edge, its flat bottom merges seamlessly into the content area (same
+    // color) — the Chrome-style "tab opens into the page" effect.
+    // Inactive tabs: transparent against the dark strip backdrop.
+    .height(tab.id === this.activeId ? 40 : 30)
     .padding({ left: 12, right: 10 })
-    .borderRadius(tab.id === this.activeId ? 7 : 6)
-    .backgroundColor(tab.id === this.activeId ? Palette.surface : Color.Transparent)
-    .border({ width: { top: tab.id === this.activeId ? 2 : 0 }, color: Palette.accent })
+    .borderRadius(tab.id === this.activeId
+      ? { topLeft: 10, topRight: 10, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
+      : { topLeft: 8, topRight: 8, bottomLeft: 8, bottomRight: 8 } as BorderRadiuses)
+    .backgroundColor(tab.id === this.activeId ? this.themeBg : Color.Transparent)
     .alignItems(VerticalAlign.Center)
     .focusable(false)
     .onClick(() => { this.switchTab(tab.id); })
