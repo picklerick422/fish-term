@@ -62,6 +62,8 @@ struct Index {
   @State private formError: string = '';
   @State private focusedField: string = '';
   @State private showSettings: boolean = false;
+  @State private settingsInitialTab: number = 0;
+  @State private showNewConnection: boolean = false;
   @State private themeName: string = 'Aizen_Dark';
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
@@ -258,6 +260,13 @@ struct Index {
 
   // ----- connect form --------------------------------------------------------
 
+  // "连接管理": show the connect form as an overlay so the user can open a new
+  // connection (to the same or a different host) as a fresh tab.
+  private openNewConnection(): void {
+    this.formError = '';
+    this.showNewConnection = true;
+  }
+
   private connectFromForm(): void {
     const host: string = this.host.trim();
     const token: string = this.token.trim();
@@ -286,6 +295,7 @@ struct Index {
       };
       this.store.save(profile);
     }
+    this.showNewConnection = false;
     this.openTab();
   }
 
@@ -330,7 +340,7 @@ struct Index {
       .height('100%')
       .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
         preferType: SheetType.CENTER,
-        width: 380,
+        width: '30%',
         height: 600,
         dragBar: false,
         showClose: false,
@@ -338,7 +348,7 @@ struct Index {
         onDisappear: () => { this.focusActiveTerminal(); }
       })
 
-      if (this.tabs.length === 0) {
+      if (this.tabs.length === 0 || this.showNewConnection) {
         this.buildForm();
       }
     }
@@ -353,7 +363,10 @@ struct Index {
     TerminalSurface({
       controller: this.runtimes.get(id)?.controller ?? new TerminalController(),
       surfaceId: this.runtimes.get(id)?.surfaceId ?? ('fishTermSurface_' + id),
-      surfaceColor: Palette.base
+      surfaceColor: Palette.base,
+      onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },
+      onOpenShortcuts: () => { this.settingsInitialTab = 2; this.showSettings = true; },
+      onOpenConnections: () => { this.openNewConnection(); }
     })
       .width('100%')
       .height('100%')
@@ -488,6 +501,7 @@ struct Index {
       controller: this.activeController(),
       store: this.store,
       fontSize: this.fontSize,
+      initialTab: this.settingsInitialTab,
       statusText: this.activeMeta().statusText,
       statusColor: this.dotColor(this.activeMeta().state),
       hostLabel: this.host + ':' + this.port,
@@ -507,12 +521,27 @@ struct Index {
   @Builder
   private buildForm() {
     Column() {
+      // cancel affordance when opened as a "new connection" overlay
+      if (this.showNewConnection) {
+        Row() {
+          Text('✕ 取消')
+            .fontSize(14)
+            .fontColor(Palette.textDim)
+            .focusable(false)
+            .onClick(() => { this.showNewConnection = false; this.focusActiveTerminal(); })
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: 420 })
+        .justifyContent(FlexAlign.End)
+        .margin({ bottom: 10 })
+      }
+
       Column({ space: 10 }) {
         Image($r('app.media.app_logo'))
           .width(72)
           .height(72)
           .borderRadius(16)
-        Text('fish-term')
+        Text(this.showNewConnection ? '新建连接' : 'fish-term')
           .fontSize(24)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.text)

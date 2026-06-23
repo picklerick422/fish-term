@@ -12,6 +12,10 @@ export struct TerminalSurface {
   searchInputId: string = 'terminalSearchInput';
   surfaceColor: string = '#0B0D10';
   onLinkActivated: TerminalLinkListener | null = null;
+  // App-level context-menu actions (wired by the host page).
+  onOpenSettings: (() => void) | null = null;
+  onOpenConnections: (() => void) | null = null;
+  onOpenShortcuts: (() => void) | null = null;
 
   private context: common.UIAbilityContext | null = null;
   private searchInputController: TextInputController = new TextInputController();
@@ -289,44 +293,69 @@ export struct TerminalSurface {
     });
   }
 
+  // Submenu for buffer / selection operations (the "缓冲区 ▸" cascade).
   @Builder
-  private buildTerminalContextMenu() {
+  private buildBufferSubMenu() {
     Menu() {
-      MenuItem({ content: 'Find' })
-        .onClick(() => {
-          this.openSearch(this.searchVisible ? this.searchText : '');
-        })
       if (this.hasTerminalSelection()) {
-        MenuItem({ content: 'Find Selection' })
-          .onClick(() => {
-            this.openSearch(this.controller.getSelectedText());
-          })
-      }
-      if (this.hasTerminalSelection()) {
-        MenuItem({ content: 'Copy' })
+        MenuItem({ content: '复制选区' })
           .onClick(() => {
             this.copyToClipboard(this.controller.getSelectedText());
           })
       }
-      if (this.hasClipboardContents()) {
-        MenuItem({ content: 'Paste' })
+      if (this.hasTerminalScreenContent()) {
+        MenuItem({ content: '复制屏幕' })
           .onClick(() => {
-            this.pasteFromClipboard();
+            this.copyToClipboard(this.controller.getScreenContent());
           })
       }
       if (this.hasTerminalSelection()) {
-        MenuItem({ content: 'Clear Selection' })
+        MenuItem({ content: '清除选择' })
           .onClick(() => {
             this.controller.clearSelection();
             this.requestTerminalFocus();
           })
       }
-      if (this.hasTerminalScreenContent()) {
-        MenuItem({ content: 'Copy Screen' })
+    }
+  }
+
+  @Builder
+  private buildTerminalContextMenu() {
+    Menu() {
+      MenuItem({ content: '查找' })
+        .onClick(() => {
+          this.openSearch(this.searchVisible ? this.searchText : '');
+        })
+      if (this.hasTerminalSelection()) {
+        MenuItem({ content: '查找选中' })
           .onClick(() => {
-            this.copyToClipboard(this.controller.getScreenContent());
+            this.openSearch(this.controller.getSelectedText());
           })
       }
+      MenuItem({ content: '粘贴' })
+        .enabled(this.hasClipboardContents())
+        .onClick(() => {
+          this.pasteFromClipboard();
+        })
+      MenuItem({ content: '缓冲区', builder: this.buildBufferSubMenu })
+      MenuItem({ content: '连接管理' })
+        .onClick(() => {
+          if (this.onOpenConnections) {
+            this.onOpenConnections();
+          }
+        })
+      MenuItem({ content: '设置' })
+        .onClick(() => {
+          if (this.onOpenSettings) {
+            this.onOpenSettings();
+          }
+        })
+      MenuItem({ content: '快捷键' })
+        .onClick(() => {
+          if (this.onOpenShortcuts) {
+            this.onOpenShortcuts();
+          }
+        })
     }
   }
 

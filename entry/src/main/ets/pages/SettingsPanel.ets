@@ -49,7 +49,8 @@ const RECOMMENDED_THEMES: string[] = [
 export struct SettingsPanel {
   controller: TerminalController = new TerminalController();
   store: ConnectionStore | null = null;
-  fontSize: number = 16;
+  @Prop fontSize: number = 16;
+  @Prop initialTab: number = 0;
   @Prop statusText: string = '空闲';
   @Prop statusColor: string = '#8A94A6';
   @Prop hostLabel: string = '';
@@ -72,6 +73,7 @@ export struct SettingsPanel {
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
   aboutToAppear(): void {
+    this.tab = this.initialTab;
     const all: string[] = this.controller.getThemeList();
     // Pin recommended themes (that actually exist) to the top, rest follow.
     const present: Set<string> = new Set<string>();
@@ -122,7 +124,7 @@ export struct SettingsPanel {
 
   build() {
     Column() {
-      // Header
+      // Header: ← + left-aligned title, with the connection status on the right.
       Row() {
         Row() {
           Text('←')
@@ -136,78 +138,54 @@ export struct SettingsPanel {
         .onClick(() => { this.onClose(); })
 
         Text('设置')
-          .layoutWeight(1)
-          .fontSize(16)
+          .fontSize(17)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.text)
-          .textAlign(TextAlign.Center)
 
-        // empty right spacer to balance header
-        Row()
-          .width(40)
-          .height(40)
+        // connection status, pushed to the right
+        Row({ space: 6 }) {
+          Text('●')
+            .fontSize(9)
+            .fontColor(this.statusColor)
+          Text(this.statusText)
+            .fontSize(12)
+            .fontColor(Palette.textDim)
+          Text(this.hostLabel)
+            .fontSize(12)
+            .fontColor(Palette.textDim)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.End)
+        .padding({ right: 8 })
       }
       .width('100%')
       .height(48)
       .padding({ left: 8, right: 8 })
 
       // Tab row (fixed under the header)
-      Row({ space: 8 }) {
-        Text('外观')
-          .fontSize(13)
-          .fontColor(this.tab === 0 ? Palette.base : Palette.textDim)
-          .fontWeight(this.tab === 0 ? FontWeight.Medium : FontWeight.Normal)
-          .padding({ left: 16, right: 16, top: 6, bottom: 6 })
-          .backgroundColor(this.tab === 0 ? Palette.accent : Color.Transparent)
-          .borderRadius(20)
-          .focusable(false)
-          .onClick(() => { this.tab = 0; })
-
-        Text('终端')
-          .fontSize(13)
-          .fontColor(this.tab === 1 ? Palette.base : Palette.textDim)
-          .fontWeight(this.tab === 1 ? FontWeight.Medium : FontWeight.Normal)
-          .padding({ left: 16, right: 16, top: 6, bottom: 6 })
-          .backgroundColor(this.tab === 1 ? Palette.accent : Color.Transparent)
-          .borderRadius(20)
-          .focusable(false)
-          .onClick(() => { this.tab = 1; })
+      Row({ space: 6 }) {
+        this.buildTabButton('外观', 0)
+        this.buildTabButton('终端', 1)
+        this.buildTabButton('快捷键', 2)
+        this.buildTabButton('关于', 3)
       }
       .width('100%')
       .height(40)
       .padding({ left: 16, right: 16 })
 
-      // Scrollable body: the whole region (status card + tab content) responds
-      // to the wheel, so hovering anywhere in the panel scrolls it.
+      // Scrollable body — the whole region responds to the wheel.
       Scroll() {
         Column({ space: 16 }) {
-          // Connection status card
-          Row({ space: 8 }) {
-            Text('●')
-              .fontSize(10)
-              .fontColor(this.statusColor)
-            Text(this.statusText)
-              .fontSize(13)
-              .fontColor(Palette.text)
-            Text(this.hostLabel)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontColor(Palette.textDim)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .textAlign(TextAlign.End)
-          }
-          .width('100%')
-          .height(40)
-          .padding({ left: 14, right: 14 })
-          .backgroundColor(Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.border })
-
           if (this.tab === 0) {
             this.buildAppearanceTab()
-          } else {
+          } else if (this.tab === 1) {
             this.buildTerminalTab()
+          } else if (this.tab === 2) {
+            this.buildShortcutsTab()
+          } else {
+            this.buildAboutTab()
           }
         }
         .width('100%')
@@ -230,6 +208,120 @@ export struct SettingsPanel {
       .fontWeight(FontWeight.Medium)
       .width('100%')
       .margin({ bottom: 6 })
+  }
+
+  @Builder
+  private buildTabButton(label: string, index: number) {
+    Text(label)
+      .fontSize(13)
+      .fontColor(this.tab === index ? Palette.base : Palette.textDim)
+      .fontWeight(this.tab === index ? FontWeight.Medium : FontWeight.Normal)
+      .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+      .backgroundColor(this.tab === index ? Palette.accent : Color.Transparent)
+      .borderRadius(20)
+      .focusable(false)
+      .onClick(() => { this.tab = index; })
+  }
+
+  // A single "key: description" shortcut row.
+  @Builder
+  private buildShortcutRow(keys: string, desc: string) {
+    Row() {
+      Text(keys)
+        .fontSize(12)
+        .fontColor(Palette.accent)
+        .fontWeight(FontWeight.Medium)
+      Text(desc)
+        .layoutWeight(1)
+        .fontSize(13)
+        .fontColor(Palette.text)
+        .textAlign(TextAlign.End)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: 14, right: 14 })
+    .backgroundColor(Palette.surface)
+    .borderRadius(10)
+    .border({ width: 1, color: Palette.border })
+  }
+
+  @Builder
+  private buildShortcutsTab() {
+    Column({ space: 8 }) {
+      this.buildSectionHeader('终端快捷键')
+      this.buildShortcutRow('Ctrl+Shift+C', '复制选中文本')
+      this.buildShortcutRow('Ctrl+Shift+V', '粘贴')
+      this.buildShortcutRow('Shift+Tab', '反向制表（back-tab）')
+      this.buildShortcutRow('滚轮', '上下滚动缓冲区')
+      this.buildShortcutRow('右键', '打开上下文菜单')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+
+  @Builder
+  private buildAboutRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .fontSize(13)
+        .fontColor(Palette.textDim)
+      Text(value)
+        .layoutWeight(1)
+        .fontSize(13)
+        .fontColor(Palette.text)
+        .textAlign(TextAlign.End)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: 14, right: 14 })
+    .backgroundColor(Palette.surface)
+    .borderRadius(10)
+    .border({ width: 1, color: Palette.border })
+  }
+
+  @Builder
+  private buildAboutTab() {
+    Column({ space: 12 }) {
+      // App identity
+      Column({ space: 10 }) {
+        Image($r('app.media.app_logo'))
+          .width(64)
+          .height(64)
+          .borderRadius(14)
+        Text('fish-term')
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Palette.text)
+        Text('HarmonyOS 终端 · 连接 fish-agent')
+          .fontSize(12)
+          .fontColor(Palette.textDim)
+      }
+      .width('100%')
+      .padding({ top: 8, bottom: 8 })
+
+      Column({ space: 8 }) {
+        this.buildSectionHeader('信息')
+        this.buildAboutRow('版本', '1.0.0')
+        this.buildAboutRow('终端引擎', 'libghostty (ghostty VT)')
+        this.buildAboutRow('渲染', 'Native Drawing')
+        this.buildAboutRow('主题数量', this.themeList.length.toString())
+        this.buildAboutRow('传输', 'WebSocket (fish-agent)')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      Text('© 2026 fish-term · 基于开源组件构建')
+        .fontSize(11)
+        .fontColor(Palette.textDim)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 8 })
+    }
+    .width('100%')
   }
 
   @Builder
