@@ -234,7 +234,6 @@ struct Index {
         height: 600,
         dragBar: false,
         showClose: false,
-        radius: 18,
         backgroundColor: Palette.base,
         onDisappear: () => { this.focusTerminal(); }
       })
