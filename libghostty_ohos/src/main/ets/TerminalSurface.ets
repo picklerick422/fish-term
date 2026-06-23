@@ -599,11 +599,21 @@ export struct TerminalSurface {
   }
 
   // Re-attach after app returns to foreground (system auto-detaches on background).
+  // Force a clean cycle: fully detach the (now-stale) session, then re-attach
+  // after a short delay so the window has regained focus first — attaching too
+  // early, before the window is focusable again, is silently ignored by the
+  // system and leaves the IME dead until the user re-toggles the menu.
   private onForegroundSignal(): void {
-    if (this.directInput && this.isActiveTab) {
-      this.imeAttached = false;
-      this.attachDirectInput();
+    if (!this.directInput || !this.isActiveTab) {
+      return;
     }
+    this.detachDirectInput();
+    setTimeout(() => {
+      if (this.directInput && this.isActiveTab) {
+        this.imeAttached = false;
+        this.attachDirectInput();
+      }
+    }, 300);
   }
 
   // React to the host-controlled directInput prop. Attach/detach the system
