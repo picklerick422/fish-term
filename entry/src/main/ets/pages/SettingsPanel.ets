@@ -238,14 +238,16 @@ export struct SettingsPanel {
       })
   }
 
-  // Horizontal slide+fade for sub-page switches.
+  // Horizontal slide+fade for sub-page switches. Direction matches the tab order:
+  //   moving to a tab on the RIGHT → page slides right (new enters from the left)
+  //   moving to a tab on the LEFT  → page slides left  (new enters from the right)
   private slideEffect(forward: boolean): TransitionEffect {
-    const dx: number = forward ? 40 : -40;
+    const dx: number = forward ? -64 : 64;
     return TransitionEffect.asymmetric(
       TransitionEffect.translate({ x: dx }).combine(TransitionEffect.opacity(0))
-        .animation({ duration: 200, curve: Curve.EaseOut }),
+        .animation({ duration: 240, curve: Curve.EaseOut }),
       TransitionEffect.translate({ x: -dx }).combine(TransitionEffect.opacity(0))
-        .animation({ duration: 200, curve: Curve.EaseOut })
+        .animation({ duration: 240, curve: Curve.EaseOut })
     );
   }
 

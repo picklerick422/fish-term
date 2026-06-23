@@ -938,14 +938,18 @@ struct Index {
     this.guideStep = target;
   }
 
-  // Horizontal slide+fade used by the guide pages and settings sub-pages.
+  // Horizontal slide+fade for the guide pages. Direction matches intuition:
+  //   next → the whole page slides to the RIGHT (new page enters from the left)
+  //   prev → the whole page slides to the LEFT  (new page enters from the right)
   private slideEffect(forward: boolean): TransitionEffect {
-    const dx: number = forward ? 48 : -48;
+    // forward: entering page starts on the left (-dx) and moves right to 0;
+    // the leaving page moves right and off (+dx). Reversed for prev.
+    const dx: number = forward ? -64 : 64;
     return TransitionEffect.asymmetric(
       TransitionEffect.translate({ x: dx }).combine(TransitionEffect.opacity(0))
-        .animation({ duration: 220, curve: Curve.EaseOut }),
+        .animation({ duration: 260, curve: Curve.EaseOut }),
       TransitionEffect.translate({ x: -dx }).combine(TransitionEffect.opacity(0))
-        .animation({ duration: 220, curve: Curve.EaseOut })
+        .animation({ duration: 260, curve: Curve.EaseOut })
     );
   }
 
