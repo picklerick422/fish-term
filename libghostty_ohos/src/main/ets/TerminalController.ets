@@ -53,6 +53,7 @@ interface TerminalNativeBridge {
   setDensity: (density: number) => void;
   loadTheme: (themeName: string) => boolean;
   getThemeList: () => string[];
+  getThemeColors: (themeName: string) => string[];
   isRendererReady: () => boolean;
   getRendererError: () => string;
 }
@@ -159,6 +160,15 @@ export class TerminalController {
       return [];
     }
     return this.native.getThemeList();
+  }
+
+  // Returns key colors of a theme as #RRGGBB strings without applying it:
+  // [background, foreground, cursor, accent1, accent2, accent3]. Empty on failure.
+  getThemeColors(themeName: string): string[] {
+    if (!this.native) {
+      return [];
+    }
+    return this.native.getThemeColors(themeName);
   }
 
   setConfigListener(listener: TerminalConfigListener | null): void {

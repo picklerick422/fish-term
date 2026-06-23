@@ -229,8 +229,12 @@ struct Index {
       .width('100%')
       .height('100%')
       .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
-        detents: [SheetSize.MEDIUM, SheetSize.LARGE],
-        dragBar: true,
+        preferType: SheetType.CENTER,
+        width: '92%',
+        height: 600,
+        dragBar: false,
+        showClose: false,
+        radius: 18,
         backgroundColor: Palette.base,
         onDisappear: () => { this.focusTerminal(); }
       })
@@ -242,6 +246,33 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(Palette.base)
+  }
+
+  // Minimalist "adjustments" icon: two slider tracks with cyan knobs.
+  @Builder
+  private settingsIcon() {
+    Column({ space: 5 }) {
+      // top track: knob toward the right
+      Stack({ alignContent: Alignment.Start }) {
+        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
+        Row()
+          .width(6).height(6).borderRadius(3)
+          .backgroundColor(Palette.accent)
+          .margin({ left: 8 })
+      }
+      .width(16).height(6)
+
+      // bottom track: knob toward the left
+      Stack({ alignContent: Alignment.Start }) {
+        Row().width(16).height(2).borderRadius(1).backgroundColor(Palette.textDim)
+        Row()
+          .width(6).height(6).borderRadius(3)
+          .backgroundColor(Palette.accent)
+          .margin({ left: 2 })
+      }
+      .width(16).height(6)
+    }
+    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -336,11 +367,9 @@ struct Index {
       .borderRadius(16)
       .border({ width: 1, color: '#1E2630' })
 
-      // settings gear button
+      // settings button (minimalist "adjustments" sliders icon)
       Row() {
-        Text('⚙')
-          .fontSize(16)
-          .fontColor(Palette.textDim)
+        this.settingsIcon()
       }
       .width(32)
       .height(28)

@@ -1414,6 +1414,47 @@ public:
         return themes;
     }
 
+    // Parse a theme file (without applying it) and return its key colors as
+    // #RRGGBB strings: [background, foreground, cursor, accent1, accent2, accent3].
+    // Empty vector on failure.
+    std::vector<std::string> GetThemeColors(const std::string& themeName) const {
+        std::vector<std::string> out;
+        if (!m_resourceManager) {
+            return out;
+        }
+        std::string themePath = "themes/";
+        themePath += themeName;
+        RawFile* file = OH_ResourceManager_OpenRawFile(m_resourceManager, themePath.c_str());
+        if (!file) {
+            return out;
+        }
+        const size_t len = OH_ResourceManager_GetRawFileSize(file);
+        std::vector<char> data(len);
+        OH_ResourceManager_ReadRawFile(file, data.data(), len);
+        OH_ResourceManager_CloseRawFile(file);
+
+        TerminalTheme theme;
+        theme.name = themeName;
+        if (!ThemeParser::parseThemeFile(data.data(), len, theme)) {
+            return out;
+        }
+
+        auto hex = [](uint32_t c) -> std::string {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "#%02X%02X%02X",
+                     (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+            return std::string(buf);
+        };
+        out.push_back(hex(theme.background));
+        out.push_back(hex(theme.foreground));
+        out.push_back(hex(theme.cursorColor));
+        // accent swatches: red(1), green(2), blue(4) from the palette
+        out.push_back(hex(theme.palette[1]));
+        out.push_back(hex(theme.palette[2]));
+        out.push_back(hex(theme.palette[4]));
+        return out;
+    }
+
     void SetConfig(int fontSize, int scrollbackLines, uint32_t bgColor, uint32_t fgColor, int cursorStyle, bool cursorBlink) {
         m_fontSize = static_cast<float>(fontSize);
 
@@ -2813,6 +2854,30 @@ static napi_value GetThemeList(napi_env env, napi_callback_info info) {
     return result;
 }
 
+static napi_value GetThemeColors(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, args);
+
+    std::vector<std::string> colors;
+    if (host && argc >= 1) {
+        size_t nameLen = 0;
+        napi_get_value_string_utf8(env, args[0], nullptr, 0, &nameLen);
+        std::string name(nameLen, '\0');
+        napi_get_value_string_utf8(env, args[0], &name[0], nameLen + 1, &nameLen);
+        colors = host->GetThemeColors(name);
+    }
+
+    napi_value result;
+    napi_create_array_with_length(env, colors.size(), &result);
+    for (size_t i = 0; i < colors.size(); ++i) {
+        napi_value v;
+        napi_create_string_utf8(env, colors[i].c_str(), colors[i].length(), &v);
+        napi_set_element(env, result, i, v);
+    }
+    return result;
+}
+
 static napi_value SetDensity(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];
@@ -3001,6 +3066,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"setSurfaceFrame", nullptr, SetSurfaceFrame, nullptr, nullptr, nullptr, napi_default, host},
         {"loadTheme", nullptr, LoadTheme, nullptr, nullptr, nullptr, napi_default, host},
         {"getThemeList", nullptr, GetThemeList, nullptr, nullptr, nullptr, napi_default, host},
+        {"getThemeColors", nullptr, GetThemeColors, nullptr, nullptr, nullptr, napi_default, host},
         {"isRendererReady", nullptr, IsRendererReady, nullptr, nullptr, nullptr, napi_default, host},
         {"getRendererError", nullptr, GetRendererError, nullptr, nullptr, nullptr, napi_default, host},
     };

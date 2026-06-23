@@ -8,21 +8,42 @@ interface CursorOpt {
   value: number;
 }
 
-// Deterministic swatch color from theme name
-function swatchColor(name: string): string {
-  let hash: number = 0;
-  for (let i: number = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) & 0xFFFFFF;
-  }
-  const r: number = ((hash >> 16) & 0xFF);
-  const g: number = ((hash >> 8) & 0xFF);
-  const b: number = (hash & 0xFF);
-  const toHex = (n: number): string => {
-    const h: string = n.toString(16);
-    return h.length === 1 ? '0' + h : h;
-  };
-  return '#' + toHex(r) + toHex(g) + toHex(b);
+// Theme preview colors: [background, foreground, cursor, accent1, accent2, accent3]
+interface ThemeColors {
+  bg: string;
+  fg: string;
+  cursor: string;
+  a1: string;
+  a2: string;
+  a3: string;
 }
+
+const FALLBACK_COLORS: ThemeColors = {
+  bg: '#11161D', fg: '#F4F7FB', cursor: '#3DD6C4',
+  a1: '#FF6B6B', a2: '#3DD6C4', a3: '#84B4F8'
+};
+
+// Curated, widely-loved dark themes — pinned to the top of the list.
+const RECOMMENDED_THEMES: string[] = [
+  'Aizen_Dark',
+  'Dracula',
+  'TokyoNight_Night',
+  'Catppuccin_Mocha',
+  'Nord',
+  'Gruvbox_Dark_Hard',
+  'One_Half_Dark',
+  'Monokai_Pro',
+  'GitHub_Dark_Default',
+  'Ayu_Mirage',
+  'Night_Owl',
+  'Everforest_Dark_Hard',
+  'Kanagawa_Wave',
+  'Rose_Pine',
+  'Nightfox',
+  'Snazzy',
+  'Cobalt2',
+  'Solarized_Dark_Higher_Contrast'
+];
 
 @Component
 export struct SettingsPanel {
@@ -44,10 +65,46 @@ export struct SettingsPanel {
   @State private themeSearch: string = '';
   @State private themeList: string[] = [];
   @State private filteredThemes: string[] = [];
+  private recommendedSet: Set<string> = new Set<string>();
+  private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
   aboutToAppear(): void {
-    this.themeList = this.controller.getThemeList();
-    this.filteredThemes = this.themeList;
+    const all: string[] = this.controller.getThemeList();
+    // Pin recommended themes (that actually exist) to the top, rest follow.
+    const present: Set<string> = new Set<string>();
+    for (let i: number = 0; i < all.length; i++) {
+      present.add(all[i]);
+    }
+    const ordered: string[] = [];
+    for (let i: number = 0; i < RECOMMENDED_THEMES.length; i++) {
+      const name: string = RECOMMENDED_THEMES[i];
+      if (present.has(name)) {
+        ordered.push(name);
+        this.recommendedSet.add(name);
+      }
+    }
+    for (let i: number = 0; i < all.length; i++) {
+      if (!this.recommendedSet.has(all[i])) {
+        ordered.push(all[i]);
+      }
+    }
+    this.themeList = ordered;
+    this.filteredThemes = ordered;
+  }
+
+  // Memoized accurate preview colors pulled from the native theme parser.
+  private colorsFor(name: string): ThemeColors {
+    const cached: ThemeColors | undefined = this.colorCache.get(name);
+    if (cached) {
+      return cached;
+    }
+    const raw: string[] = this.controller.getThemeColors(name);
+    let c: ThemeColors = FALLBACK_COLORS;
+    if (raw && raw.length >= 6) {
+      c = { bg: raw[0], fg: raw[1], cursor: raw[2], a1: raw[3], a2: raw[4], a3: raw[5] };
+    }
+    this.colorCache.set(name, c);
+    return c;
   }
 
   private filterThemes(query: string): void {
@@ -226,30 +283,52 @@ export struct SettingsPanel {
         ForEach(this.filteredThemes, (item: string) => {
           ListItem() {
             Row({ space: 10 }) {
-              // Color swatch
-              Row()
-                .width(20)
-                .height(20)
-                .borderRadius(4)
-                .backgroundColor(swatchColor(item))
-                .flexShrink(0)
+              // Accurate mini preview: theme background tile with fg "A" + accent dots
+              Stack({ alignContent: Alignment.Center }) {
+                Text('A')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(this.colorsFor(item).fg)
+                Row({ space: 2 }) {
+                  Row().width(4).height(4).borderRadius(2).backgroundColor(this.colorsFor(item).a1)
+                  Row().width(4).height(4).borderRadius(2).backgroundColor(this.colorsFor(item).a2)
+                  Row().width(4).height(4).borderRadius(2).backgroundColor(this.colorsFor(item).a3)
+                }
+                .position({ x: 4, y: 24 })
+              }
+              .width(34)
+              .height(34)
+              .borderRadius(7)
+              .backgroundColor(this.colorsFor(item).bg)
+              .border({ width: 1, color: Palette.border })
+              .flexShrink(0)
+              .clip(true)
 
-              Text(item)
-                .layoutWeight(1)
-                .fontSize(13)
-                .fontColor(Palette.text)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Column({ space: 1 }) {
+                Text(item.split('_').join(' '))
+                  .fontSize(13)
+                  .fontColor(Palette.text)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (this.recommendedSet.has(item)) {
+                  Text('★ 推荐')
+                    .fontSize(10)
+                    .fontColor(Palette.accent)
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
 
               if (this.themeName === item) {
                 Text('✓')
-                  .fontSize(13)
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Bold)
                   .fontColor(Palette.accent)
               }
             }
             .width('100%')
-            .height(44)
-            .padding({ left: 10, right: 10 })
+            .height(48)
+            .padding({ left: 10, right: 12 })
             .focusable(false)
             .onClick(() => {
               this.themeName = item;
@@ -263,7 +342,7 @@ export struct SettingsPanel {
         })
       }
       .width('100%')
-      .height(280)
+      .height(300)
       .backgroundColor(Palette.surface)
       .borderRadius(10)
       .border({ width: 1, color: Palette.border })
