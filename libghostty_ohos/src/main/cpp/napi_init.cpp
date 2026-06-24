@@ -37,8 +37,6 @@
 
 namespace {
 class TerminalHost;
-// Per-vsync frame callback delivered by OH_NativeXComponent on the UI thread.
-void OnFrameCB(OH_NativeXComponent* component, uint64_t timestamp, uint64_t targetTimestamp);
 using ExampleDriverWriteInputFn = bool (*)(const char*, size_t);
 
 ExampleDriverWriteInputFn ResolveExampleDriverWriteInput()
@@ -104,9 +102,6 @@ bool IsNearOrigin(double left, double top)
 constexpr uint64_t LONG_PRESS_MS = 500;
 constexpr uint64_t MULTI_CLICK_MS = 400;
 constexpr float MOVE_THRESHOLD = 20.0f;
-// Number of trailing redraws to emit after a content change so the most recent
-// buffer is guaranteed presented even with a multi-buffer queue.
-constexpr int TRAILING_FLUSH_FRAMES = 2;
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_TAB =
     static_cast<OH_NativeXComponent_KeyCode>(15);
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_1 =
@@ -568,7 +563,7 @@ public:
         : m_component(component) {}
 
     ~TerminalHost() {
-        StopRenderLoop();
+        ClearRenderTsfn();
         ClearInputCallback();
         // Detach IME outside m_surfaceMutex (see OnSurfaceDestroyed) to avoid the
         // self-deadlock when the framework calls our editor callbacks during detach.
@@ -648,9 +643,8 @@ public:
             m_pendingWidth = static_cast<uint32_t>(width);
             m_pendingHeight = static_cast<uint32_t>(height);
             m_resizePending = true;
-            m_renderDirty = true;
         }
-        m_renderCv.notify_one();
+        RequestRender();
     }
 
     void OnSurfaceShow(OH_NativeXComponent* component, void* window) {
@@ -696,15 +690,9 @@ public:
     }
 
     void OnSurfaceHide() {
-        {
-            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-            m_surfaceReady = false;
-            HideImeLocked();
-        }
-        {
-            std::lock_guard<std::mutex> lock(m_renderMutex);
-            m_renderDirty = false;
-        }
+        std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+        m_surfaceReady = false;
+        HideImeLocked();
     }
 
     void OnSurfaceDestroyed() {
@@ -730,75 +718,6 @@ public:
         }
         CleanupSurfaceLocked();
         m_rendererReady = false;
-    }
-
-    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback on
-    // the UI thread. Rendering here — rather than from a private background
-    // thread or an independent OH_NativeVSync connection — is the key to
-    // reliable presentation. A bare NativeWindow flush from a background thread
-    // is NOT composited by the Render Service until some unrelated UI event
-    // wakes the pipeline, which is exactly why a typed character only appeared
-    // on the next keystroke ("hello world" shown as "hell world", "/" hidden
-    // until the following key). The XComponent frame callback runs inside
-    // ArkUI's own frame pipeline, so flushing from it makes every content change
-    // present on the very next refresh, independent of input.
-    void OnFrameTick(uint64_t timestampNs) {
-        bool doResize = false;
-        uint32_t resizeWidth = 0;
-        uint32_t resizeHeight = 0;
-        bool shouldRender = false;
-        {
-            std::lock_guard<std::mutex> lock(m_renderMutex);
-            if (m_resizePending) {
-                doResize = true;
-                resizeWidth = m_pendingWidth;
-                resizeHeight = m_pendingHeight;
-                m_resizePending = false;
-            }
-
-            const bool content = m_renderDirty || doResize;
-            if (content) {
-                m_renderDirty = false;
-                // Schedule a couple of trailing redraws so the latest buffer is
-                // guaranteed cycled through a multi-buffer swapchain even after
-                // content stops changing.
-                m_trailingFrames = TRAILING_FLUSH_FRAMES;
-            }
-
-            bool blinkDue = false;
-            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
-                const uint64_t nowMs = timestampNs / 1000000ull;
-                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
-                    m_lastBlinkMs = nowMs;
-                    blinkDue = true;
-                }
-            }
-
-            const bool trailing = !content && m_trailingFrames > 0;
-            if (trailing) {
-                --m_trailingFrames;
-            }
-
-            shouldRender = content || blinkDue || trailing;
-        }
-
-        if (doResize) {
-            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-            if (m_renderer) {
-                m_renderer->resize(resizeWidth, resizeHeight);
-                if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
-                    int cols = 80;
-                    int rows = 24;
-                    ComputeTerminalSize(resizeWidth, resizeHeight, cols, rows);
-                    m_terminal->resize(cols, rows);
-                    m_terminal->resetViewScroll();
-                }
-            }
-        }
-
-        if (shouldRender) {
-            DrawFrameLocked();
-        }
     }
 
     bool DispatchKeyEvent(OH_NativeXComponent* component) {
@@ -1201,9 +1120,8 @@ public:
             m_pendingWidth = pendingWidth;
             m_pendingHeight = pendingHeight;
             m_resizePending = true;
-            m_renderDirty = true;
-            m_renderCv.notify_one();
         }
+        RequestRender();
     }
 
     void WriteInput(const std::string& data) {
@@ -1685,17 +1603,98 @@ private:
         }
     }
 
+    // Schedule a draw on the JS/UI thread. Uses a NAPI threadsafe function so the
+    // call is safe from any thread (including the background PTY reader).
+    // A single draw is coalesced: if one is already queued, no second call is made.
     void RequestRender() {
-        // Just mark the frame dirty; the XComponent OnFrame callback (running on
-        // the UI thread, inside ArkUI's frame pipeline) picks it up on the next
-        // vsync and draws+flushes there so the Render Service composites it.
-        std::lock_guard<std::mutex> lock(m_renderMutex);
-        m_renderDirty = true;
+        if (m_renderTsfn == nullptr) {
+            return;
+        }
+        // Only schedule if no draw is already pending
+        bool expected = false;
+        if (m_drawPending.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            napi_call_threadsafe_function(m_renderTsfn, nullptr, napi_tsfn_nonblocking);
+        }
     }
 
-    // Draw + flush the current terminal state. Always invoked on the UI thread
-    // from OnFrameTick, so the flush is part of ArkUI's frame and presented on
-    // the next refresh.
+    // TSFN callback: invoked on the JS/UI thread when a draw has been requested.
+    // Drawing on the UI thread means the NativeWindow flush is part of the window's
+    // active render cycle, so the Render Service composites it at the next vsync
+    // without needing a separate vsync registration or a key-event to wake RS.
+    static void DrawCallJsCallback(napi_env /*env*/, napi_value /*func*/, void* context, void* /*data*/) {
+        if (auto* host = static_cast<TerminalHost*>(context)) {
+            host->OnUIThreadDraw();
+        }
+    }
+
+    void OnUIThreadDraw() {
+        // Clear the pending flag FIRST so that any content arriving while we draw
+        // will reschedule another frame rather than being silently dropped.
+        m_drawPending.store(false, std::memory_order_release);
+
+        // Handle pending resize
+        bool doResize = false;
+        uint32_t resizeW = 0;
+        uint32_t resizeH = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            if (m_resizePending) {
+                doResize = true;
+                resizeW = m_pendingWidth;
+                resizeH = m_pendingHeight;
+                m_resizePending = false;
+            }
+        }
+
+        if (doResize) {
+            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+            if (m_renderer) {
+                m_renderer->resize(resizeW, resizeH);
+                if (m_terminal && resizeW > 0 && resizeH > 0) {
+                    int cols = 80;
+                    int rows = 24;
+                    ComputeTerminalSize(resizeW, resizeH, cols, rows);
+                    m_terminal->resize(cols, rows);
+                    m_terminal->resetViewScroll();
+                }
+            }
+        }
+
+        DrawFrameLocked();
+    }
+
+    // Create the threadsafe function used to schedule draws on the UI thread.
+    // Must be called from the JS/UI thread (e.g. from Init).
+    void SetupRenderTsfn(napi_env env) {
+        if (m_renderTsfn != nullptr) {
+            return;
+        }
+        napi_value resourceName = nullptr;
+        napi_create_string_utf8(env, "terminalRender", NAPI_AUTO_LENGTH, &resourceName);
+        napi_create_threadsafe_function(
+            env,
+            nullptr,              // func: no JS function needed
+            nullptr,              // async_resource
+            resourceName,
+            0,                    // max_queue_size (0 = unlimited; our atomic ensures ≤1 pending)
+            1,                    // initial_thread_count
+            nullptr,              // thread_finalize_data
+            nullptr,              // thread_finalize_cb
+            this,                 // context passed to DrawCallJsCallback
+            DrawCallJsCallback,   // call_js_cb (replaces func call; runs on UI thread)
+            &m_renderTsfn);
+    }
+
+    void ClearRenderTsfn() {
+        m_drawPending.store(false);
+        napi_threadsafe_function tsfn = m_renderTsfn;
+        m_renderTsfn = nullptr;
+        if (tsfn != nullptr) {
+            napi_release_threadsafe_function(tsfn, napi_tsfn_abort);
+        }
+    }
+
+    // Draw + flush the current terminal state on whatever thread calls this.
     void DrawFrameLocked() {
         std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
         if (m_renderer && m_terminal && m_surfaceReady) {
@@ -1703,30 +1702,13 @@ private:
         }
     }
 
-    // Register for per-vsync frame callbacks from the XComponent. Idempotent and
-    // only touched on the UI thread (surface lifecycle callbacks + OnFrame all
-    // run there), so no locking is needed around the registration flag.
     void StartRenderLoop() {
-        if (m_frameCallbackRegistered || m_component == nullptr) {
-            RequestRender();
-            return;
-        }
-        if (OH_NativeXComponent_RegisterOnFrameCallback(m_component, OnFrameCB) == 0) {
-            m_frameCallbackRegistered = true;
-        }
         RequestRender();
     }
 
     void StopRenderLoop() {
-        {
-            std::lock_guard<std::mutex> lock(m_renderMutex);
-            m_renderDirty = false;
-            m_resizePending = false;
-        }
-        if (m_frameCallbackRegistered && m_component != nullptr) {
-            OH_NativeXComponent_UnregisterOnFrameCallback(m_component);
-            m_frameCallbackRegistered = false;
-        }
+        std::lock_guard<std::mutex> lock(m_renderMutex);
+        m_resizePending = false;
     }
 
     void ComputeTerminalSize(uint32_t width, uint32_t height, int& cols, int& rows) const {
@@ -2479,21 +2461,14 @@ private:
     uint64_t m_lastImeReattachMs = 0;
     static constexpr uint64_t IME_REATTACH_COOLDOWN_MS = 400;
 
-    // m_renderMutex guards the frame-request flags below, which are set from the
-    // terminal's background read thread (RequestRender) and consumed on the UI
-    // thread (OnFrameTick).
+    // m_renderMutex guards the resize-request flags below.
     std::mutex m_renderMutex;
-    std::condition_variable m_renderCv;
     std::mutex m_surfaceMutex;
-    bool m_renderDirty = false;
-    // Remaining trailing redraws to push the latest buffer through the swapchain
-    // after content stops changing.
-    int m_trailingFrames = 0;
-    // True while we hold an OH_NativeXComponent_RegisterOnFrameCallback
-    // registration. Only touched on the UI thread.
-    bool m_frameCallbackRegistered = false;
-    // Wall-clock (ms, from the OnFrame timestamp) of the last cursor-blink redraw.
-    uint64_t m_lastBlinkMs = 0;
+    // TSFN used to schedule draws on the JS/UI thread from any thread.
+    napi_threadsafe_function m_renderTsfn = nullptr;
+    // True when a draw has already been queued via m_renderTsfn; prevents
+    // duplicate calls from flooding the queue before the UI thread drains them.
+    std::atomic<bool> m_drawPending{false};
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
@@ -2552,13 +2527,6 @@ void OnSurfaceDestroyedCB(OH_NativeXComponent* component, void* window) {
     (void)window;
     if (TerminalHost* host = FindHost(component)) {
         host->OnSurfaceDestroyed();
-    }
-}
-
-void OnFrameCB(OH_NativeXComponent* component, uint64_t timestamp, uint64_t targetTimestamp) {
-    (void)targetTimestamp;
-    if (TerminalHost* host = FindHost(component)) {
-        host->OnFrameTick(timestamp);
     }
 }
 
@@ -3221,6 +3189,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getRendererError", nullptr, GetRendererError, nullptr, nullptr, nullptr, napi_default, host},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
+
+    if (host) {
+        host->SetupRenderTsfn(env);
+    }
+
     return exports;
 }
 
