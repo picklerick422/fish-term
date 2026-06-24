@@ -122,7 +122,13 @@ export struct TerminalSurface {
   private buildTerminalXComponent() {
     XComponent({
       id: this.surfaceId,
-      type: XComponentType.SURFACE,
+      // TEXTURE (not SURFACE): on this device RS never composites a bare SURFACE
+      // layer's flush on its own (it withholds independent vsync from the
+      // standalone surface), which froze the cursor blink and lagged the first
+      // typed char by one keystroke. As a TEXTURE the native buffer is sampled
+      // into ArkUI's own render tree, so every flush's buffer-available wakes the
+      // main-window frame pipeline (which does get vsync) and is composited.
+      type: XComponentType.TEXTURE,
       libraryname: 'libghostty_ohos'
     })
       .onLoad((nativeContext?: Object) => {
