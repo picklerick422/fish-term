@@ -66,14 +66,19 @@ export struct TerminalSurface {
   // Bumped by the host page each time the app returns to foreground so we can
   // restore focus to the hidden input (the system clears focus on background).
   @Prop @Watch('onForegroundSignal') foregroundSignal: number = 0;
-  // A zero-width-space sentinel kept at the start of the hidden input so that
-  // pressing Backspace when the user's own text is empty still produces an
-  // onChange (the sentinel is removed), which we map to a terminal backspace —
-  // letting the user delete previously-committed / pre-existing terminal text.
-  private readonly directInputSentinel: string = '\u200b';
+  // A pad of zero-width-space sentinels kept at the start of the hidden input.
+  // Backspacing past the user's own text eats into this pad; each removed
+  // sentinel produces an onChange we map to a terminal backspace, so the user
+  // can keep deleting previously-committed / pre-existing terminal text (e.g.
+  // words typed before direct-input was turned on). A multi-char pad — rather
+  // than a single sentinel — lets several rapid backspaces register reliably
+  // without waiting for the @State re-seed to round-trip; we top it back up
+  // after every change so the pad never runs dry.
+  private readonly directInputPadSize: number = 16;
+  private readonly directInputSentinel: string = '\u200b'.repeat(16);
   // The hidden input's current text and the last value we diffed against.
-  @State private directInputText: string = '\u200b';
-  private directInputLast: string = '\u200b';
+  @State private directInputText: string = '\u200b'.repeat(16);
+  private directInputLast: string = '\u200b'.repeat(16);
   private directInputController: TextInputController = new TextInputController();
   // ID of the transparent full-surface TextInput used for direct input.
   private imeAnchorId: string = this.surfaceId + '_imeanchor';
@@ -122,17 +127,15 @@ export struct TerminalSurface {
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
-      // Transparent 1-pixel-tall input anchored to the bottom of the terminal.
-      // Keeping it at the bottom means the system IME candidate panel pops up
-      // near the bottom of the screen (close to where a keyboard would appear)
-      // rather than at the top-left corner that a full-height overlay produces.
-      // Touch events pass through (HitTestMode.None) so taps still reach the
-      // terminal XComponent beneath it.
+      // Transparent full-surface input for direct-input mode. It holds focus so
+      // the system IME attaches to it; committed text is diffed in onChange and
+      // written to the terminal. Invisible (transparent text/caret/background)
+      // so the user only sees the terminal's own cursor.
       if (this.directInput) {
         TextInput({ text: this.directInputText, controller: this.directInputController })
           .id(this.imeAnchorId)
           .width('100%')
-          .height(1)
+          .height('100%')
           .fontColor(Color.Transparent)
           .caretColor(Color.Transparent)
           .backgroundColor(Color.Transparent)
@@ -140,15 +143,20 @@ export struct TerminalSurface {
           .borderWidth(0)
           .padding(0)
           .enableKeyboardOnFocus(true)
+          // Plain text only: no auto-capitalisation, no predictive/autofill
+          // popups, no selection menu — these would corrupt CJK and shell
+          // commands or pop UI over the terminal.
           .type(InputType.Normal)
           .enableAutoFill(false)
           .selectionMenuHidden(true)
           .enterKeyType(EnterKeyType.Send)
-          .hitTestBehavior(HitTestMode.None)
+          // Intercept hardware-keyboard control combos (Ctrl-C, Shift-Tab,
+          // arrows, etc.) BEFORE the IME sees them and forward them to the
+          // terminal, so shell/Claude-Code shortcuts work without first having
+          // to blur the input. Plain text keys return false and flow to the IME.
+          .onKeyPreIme((event: KeyEvent): boolean => this.handleDirectInputPreIme(event))
           .onChange((v: string) => { this.handleDirectInputChange(v); })
           .onSubmit(() => { this.handleDirectInputSubmit(); })
-          .position({ x: 0, y: '100%' })
-          .translate({ y: -1 })
       }
       // Visual badge: shown in the top-right corner while direct-input is active
       // so the user can tell at a glance that the system IME is attached.
@@ -684,12 +692,20 @@ export struct TerminalSurface {
       this.controller.write(added);
     }
     this.directInputLast = value;
-    // Re-seed the sentinel when the user backspaced it away (value lost its
-    // leading sentinel) or when the buffer grew long. Setting both fields keeps
-    // the resulting onChange a no-op (value === last).
-    if (!value.startsWith(this.directInputSentinel) || value.length > 64) {
-      this.directInputText = this.directInputSentinel;
-      this.directInputLast = this.directInputSentinel;
+    // Count how many leading sentinels survive in the new value. As the user
+    // backspaces past their own text they consume sentinels from the right edge
+    // of the pad, so this shrinks. Top the pad back up to its full size (and
+    // strip any long trailing content) so there is always headroom for the next
+    // backspaces. Setting both fields keeps the follow-up onChange a no-op.
+    let lead = 0;
+    while (lead < value.length && value.charCodeAt(lead) === 0x200b) {
+      lead++;
+    }
+    const userText = value.substring(lead);
+    if (lead < this.directInputPadSize || userText.length > 64) {
+      const reseeded = this.directInputSentinel + userText.substring(Math.max(0, userText.length - 64));
+      this.directInputText = reseeded;
+      this.directInputLast = reseeded;
     }
   }
 
@@ -700,6 +716,41 @@ export struct TerminalSurface {
     this.directInputText = this.directInputSentinel;
     this.directInputLast = this.directInputSentinel;
     this.focusDirectInput();
+  }
+
+  // Intercept hardware-keyboard events before the IME consumes them. We only
+  // claim control combos the IME never needs — Ctrl+<letter> and Shift+Tab —
+  // and forward them to the terminal as the matching control bytes so shell /
+  // Claude-Code shortcuts (Ctrl-C, Ctrl-D, Shift-Tab, …) work while the hidden
+  // input keeps focus. Everything else (plain letters, arrows, space, digits —
+  // which the IME uses to compose and pick CJK candidates) returns false and
+  // flows through to the IME untouched.
+  private handleDirectInputPreIme(event: KeyEvent): boolean {
+    let ctrl = false;
+    let shift = false;
+    try {
+      ctrl = event.getModifierKeyState(['Ctrl']);
+      shift = event.getModifierKeyState(['Shift']);
+    } catch (e) {
+      return false;
+    }
+    const code = event.keyCode;
+    // Ctrl + A..Z  ->  control bytes 0x01..0x1A
+    const isLetter = code >= 2017 && code <= 2042;
+    const isTab = code === 2049;
+    const handled = (ctrl && isLetter) || (shift && isTab);
+    if (!handled) {
+      return false;
+    }
+    // Act once, on key-down; swallow the matching key-up too.
+    if (event.type === KeyType.Down) {
+      if (ctrl && isLetter) {
+        this.controller.write(String.fromCharCode(code - 2017 + 1));
+      } else if (shift && isTab) {
+        this.controller.write('\x1b[Z');
+      }
+    }
+    return true;
   }
 
   // React to the host-controlled showImeBar prop changing.
