@@ -781,10 +781,6 @@ public:
             return false;
         }
 
-        OH_LOG_INFO(LOG_APP, "FT_KEY_HW code=%{public}d seqLen=%{public}zu first=0x%{public}02X imeVisible=%{public}d",
-            static_cast<int>(code), sequence.size(),
-            static_cast<unsigned char>(sequence[0]), m_imeVisible ? 1 : 0);
-
         ExampleDriverWriteInputFn nativeSink = ResolveExampleDriverWriteInput();
         if (nativeSink != nullptr && nativeSink(sequence.data(), sequence.size())) {
             return true;
@@ -2052,8 +2048,6 @@ private:
         }
         const std::string utf8 = Utf16ToUtf8(text, length);
         if (!utf8.empty()) {
-            OH_LOG_INFO(LOG_APP, "FT_KEY_IME len=%{public}zu first=0x%{public}02X",
-                utf8.size(), static_cast<unsigned char>(utf8[0]));
             m_terminal->writeInput(utf8.data(), utf8.size());
         }
     }

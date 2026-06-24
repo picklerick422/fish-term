@@ -557,6 +557,7 @@ void NativeDrawingRenderer::endFrame()
         return;
     }
 
+    // rectNumber=0 tells the OHOS compositor to treat the whole buffer as dirty.
     Region dirtyRegion {};
     dirtyRegion.rects = nullptr;
     dirtyRegion.rectNumber = 0;
