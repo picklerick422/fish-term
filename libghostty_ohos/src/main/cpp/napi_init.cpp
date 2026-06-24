@@ -1488,6 +1488,12 @@ public:
         return m_rendererReady;
     }
 
+    // Public entry point so Init (which lives outside the class) can create the
+    // render threadsafe function on the JS/UI thread.
+    void InitRenderTsfn(napi_env env) {
+        SetupRenderTsfn(env);
+    }
+
     const std::string& GetRendererError() const {
         return m_rendererError;
     }
@@ -3191,7 +3197,7 @@ static napi_value Init(napi_env env, napi_value exports) {
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
 
     if (host) {
-        host->SetupRenderTsfn(env);
+        host->InitRenderTsfn(env);
     }
 
     return exports;
