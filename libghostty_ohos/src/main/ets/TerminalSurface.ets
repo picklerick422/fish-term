@@ -150,6 +150,12 @@ export struct TerminalSurface {
           .enableAutoFill(false)
           .selectionMenuHidden(true)
           .enterKeyType(EnterKeyType.Send)
+          // Pass ALL pointer events (scroll, tap, mouse-drag for selection,
+          // right-click) through to the XComponent underneath. The TextInput
+          // retains its programmatic focus (and thus IME attachment) regardless
+          // of hit-test behaviour — focus and pointer-event routing are
+          // independent in ArkUI.
+          .hitTestBehavior(HitTestMode.None)
           // Intercept hardware-keyboard control combos (Ctrl-C, Shift-Tab,
           // arrows, etc.) BEFORE the IME sees them and forward them to the
           // terminal, so shell/Claude-Code shortcuts work without first having
