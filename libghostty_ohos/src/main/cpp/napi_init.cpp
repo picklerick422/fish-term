@@ -616,6 +616,7 @@ public:
             m_rendererError.clear();
             if (m_vsync == nullptr) {
                 m_vsync = OH_NativeVSync_Create("fishterm", 8);
+                OH_LOG_INFO(LOG_APP, "FT_VSYNC create -> %{public}p", m_vsync);
             }
             LoadFontsIfPossibleLocked();
             TryInitializeTerminalLocked();
@@ -1689,6 +1690,10 @@ private:
         DrawFrameLocked();
         m_presentNeeded.store(true, std::memory_order_release);
         if (m_vsync != nullptr) {
+            const uint64_t n = ++m_vsyncReqCount;
+            if (n <= 5 || n % 60 == 0) {
+                OH_LOG_INFO(LOG_APP, "FT_VSYNC request #%{public}llu", (unsigned long long)n);
+            }
             OH_NativeVSync_RequestFrame(m_vsync, &TerminalHost::OnVSyncPresent, this);
         }
     }
@@ -1696,7 +1701,14 @@ private:
     // Vsync callback. No work is needed here: the act of requesting the frame
     // already made the generator emit the pulse that wakes the Render Service to
     // composite our queued buffer. Kept as a valid target for RequestFrame.
-    static void OnVSyncPresent(long long /*timestamp*/, void* /*data*/) {}
+    static void OnVSyncPresent(long long /*timestamp*/, void* data) {
+        if (auto* host = static_cast<TerminalHost*>(data)) {
+            const uint64_t n = ++host->m_vsyncCbCount;
+            if (n <= 5 || n % 60 == 0) {
+                OH_LOG_INFO(LOG_APP, "FT_VSYNC callback #%{public}llu", (unsigned long long)n);
+            }
+        }
+    }
 
     // Create the threadsafe function used to schedule draws on the UI thread.
     // Must be called from the JS/UI thread (e.g. from Init).
@@ -2519,6 +2531,8 @@ private:
     // After every flush we ask the vsync generator for one pulse; the Render
     // Service consumes that pulse and composites our already-queued SURFACE buffer.
     OH_NativeVSync* m_vsync = nullptr;
+    std::atomic<uint64_t> m_vsyncReqCount{0};
+    std::atomic<uint64_t> m_vsyncCbCount{0};
     uint32_t m_windowWidth = 0;
     uint32_t m_windowHeight = 0;
     int32_t m_windowId = -1;
