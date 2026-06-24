@@ -26,20 +26,10 @@ export struct TerminalSurface {
   private context: common.UIAbilityContext | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private fallbackTimer: number = -1;
-  // Synthetic-vsync repaint pulse. This device delivers no independent vsync to
-  // the XComponent surface, so native flushes (cursor blink, output echo) are
-  // only composited when ArkUI runs a frame. A steady timer bumps repaintTick to
-  // keep submitting frames so the surface presents promptly. setInterval is used
-  // because timers demonstrably fire here (unlike the XComponent vsync callback).
-  private repaintTimer: number = -1;
   private contextMenuSelectedText: string = '';
   private contextMenuScreenContent: string = '';
   private contextMenuCanPaste: boolean = false;
 
-  // Bumped on every terminal output flush to force ArkUI to recomposite the
-  // XComponent's SURFACE layer (see TerminalController.repaintListener). Drives
-  // an imperceptible opacity change so the change is never optimized away.
-  @State private repaintTick: number = 0;
   @State private appliedFontSize: number = DEFAULT_TERMINAL_CONFIG.fontSize;
   @State private useTextFallback: boolean = false;
   @State private fallbackContent: string = '';
@@ -79,39 +69,20 @@ export struct TerminalSurface {
     this.controller.setPasteRequestListener(() => {
       this.pasteFromClipboard();
     });
-    this.controller.setRepaintListener(() => {
-      // Wrap so the value always changes; ArkUI re-renders the XComponent and
-      // the compositor latches the latest native surface buffer.
-      this.repaintTick = (this.repaintTick + 1) & 0xffff;
-    });
     this.appliedFontSize = this.controller.getConfig().fontSize;
   }
 
   aboutToDisappear(): void {
     this.stopFallbackPolling();
-    this.stopRepaintPulse();
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
     this.controller.setPasteRequestListener(null);
-    this.controller.setRepaintListener(null);
   }
 
   build() {
     Stack({ alignContent: Alignment.BottomStart }) {
       this.buildTerminalXComponent();
-      // Invisible 1px ticker. Its text content flips with repaintTick, which the
-      // repaint timer/feed pulse bumps. Re-rendering this sibling forces ArkUI to
-      // submit a frame, and every ArkUI frame makes the compositor re-latch the
-      // XComponent SURFACE layer's newest buffer — presenting native output that
-      // was flushed outside any vsync (this device delivers none to the surface).
-      // The property is on THIS element, not the XComponent, so the surface is
-      // never pushed into an offscreen/opacity cache (which froze the cursor).
-      Text(this.repaintTick % 2 === 0 ? ' ' : '​')
-        .width(1)
-        .height(1)
-        .opacity(0.01)
-        .hitTestBehavior(HitTestMode.None)
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
@@ -146,12 +117,10 @@ export struct TerminalSurface {
           this.startFallbackPolling();
         } else {
           this.stopFallbackPolling();
-          this.startRepaintPulse();
         }
       })
       .onDestroy(() => {
         this.stopFallbackPolling();
-        this.stopRepaintPulse();
         this.controller.unbindNative();
       })
       .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -368,25 +337,6 @@ export struct TerminalSurface {
 
     clearInterval(this.fallbackTimer);
     this.fallbackTimer = -1;
-  }
-
-  private startRepaintPulse(): void {
-    if (this.repaintTimer >= 0) {
-      return;
-    }
-    // ~60fps. Each tick re-renders the invisible ticker element, forcing an
-    // ArkUI frame so the compositor latches the latest native SURFACE buffer.
-    this.repaintTimer = setInterval(() => {
-      this.repaintTick = (this.repaintTick + 1) & 0xffff;
-    }, 16) as number;
-  }
-
-  private stopRepaintPulse(): void {
-    if (this.repaintTimer < 0) {
-      return;
-    }
-    clearInterval(this.repaintTimer);
-    this.repaintTimer = -1;
   }
 
   private syncFallbackScreen(): void {

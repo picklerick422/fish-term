@@ -11,6 +11,7 @@
 #include <mutex>
 #include <native_buffer/buffer_common.h>
 #include <native_buffer/native_buffer.h>
+#include <poll.h>
 #include <rawfile/raw_file_manager.h>
 #include <sstream>
 #include <sys/stat.h>
@@ -321,7 +322,25 @@ void NativeDrawingRenderer::beginFrame()
         return;
     }
 
-    m_currentFenceFd = fenceFd;
+    // RequestBuffer returns the ACQUIRE fence: it signals when the previous
+    // consumer (the Render Service) has finished reading this buffer and it is
+    // safe for us to write. We render on the CPU, so we must wait for that fence
+    // before drawing — otherwise we scribble into a buffer RS is still
+    // compositing. Critically, we must NOT pass this acquire fence back to
+    // FlushBuffer as if it were the producer's release fence: doing so makes RS
+    // wait on a fence with the wrong semantics, which can stall the surface's
+    // BufferQueue and starve the whole window of vsync (the "no vsync received
+    // in 500ms" / WMS OnVsyncTimeOut symptom). After waiting we close it and
+    // flush with no fence, since CPU writes are complete once Unmap returns.
+    if (fenceFd >= 0) {
+        struct pollfd pfd {};
+        pfd.fd = fenceFd;
+        pfd.events = POLLIN;
+        // Bounded wait; if the fence never signals we proceed rather than hang.
+        poll(&pfd, 1, 100);
+        close(fenceFd);
+    }
+    m_currentFenceFd = -1;
 
     if (OH_NativeBuffer_FromNativeWindowBuffer(m_currentBuffer, &m_currentNativeBuffer) != 0 || !m_currentNativeBuffer) {
         OH_LOG_ERROR(LOG_APP, "FromNativeWindowBuffer failed frame=%{public}" PRIu64 " buffer=%{public}p fence=%{public}d",
