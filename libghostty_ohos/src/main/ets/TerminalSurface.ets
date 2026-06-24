@@ -66,9 +66,14 @@ export struct TerminalSurface {
   // Bumped by the host page each time the app returns to foreground so we can
   // restore focus to the hidden input (the system clears focus on background).
   @Prop @Watch('onForegroundSignal') foregroundSignal: number = 0;
+  // A zero-width-space sentinel kept at the start of the hidden input so that
+  // pressing Backspace when the user's own text is empty still produces an
+  // onChange (the sentinel is removed), which we map to a terminal backspace —
+  // letting the user delete previously-committed / pre-existing terminal text.
+  private readonly directInputSentinel: string = '\u200b';
   // The hidden input's current text and the last value we diffed against.
-  @State private directInputText: string = '';
-  private directInputLast: string = '';
+  @State private directInputText: string = '\u200b';
+  private directInputLast: string = '\u200b';
   private directInputController: TextInputController = new TextInputController();
   // ID of the transparent full-surface TextInput used for direct input.
   private imeAnchorId: string = this.surfaceId + '_imeanchor';
@@ -133,6 +138,13 @@ export struct TerminalSurface {
           .borderWidth(0)
           .padding(0)
           .enableKeyboardOnFocus(true)
+          // Plain text only: no auto-capitalisation, no predictive/autofill
+          // popups, no selection menu — these would corrupt CJK and shell
+          // commands or pop UI over the terminal.
+          .type(InputType.Normal)
+          .enableAutoFill(false)
+          .selectionMenuHidden(true)
+          .enterKeyType(EnterKeyType.Send)
           .onChange((v: string) => { this.handleDirectInputChange(v); })
           .onSubmit(() => { this.handleDirectInputSubmit(); })
       }
@@ -612,13 +624,11 @@ export struct TerminalSurface {
   // React to the host-controlled directInput prop. Focus the hidden input so
   // the IME attaches; on disable, clear state and return focus to the terminal.
   private onDirectInputChange(): void {
+    this.directInputText = this.directInputSentinel;
+    this.directInputLast = this.directInputSentinel;
     if (this.directInput) {
-      this.directInputText = '';
-      this.directInputLast = '';
       this.focusDirectInput();
     } else {
-      this.directInputText = '';
-      this.directInputLast = '';
       this.requestTerminalFocus();
     }
   }
@@ -636,7 +646,8 @@ export struct TerminalSurface {
   // Diff the hidden input's new value against the previous one and forward the
   // change to the terminal: appended text is written verbatim (this is how
   // committed CJK arrives), removed text is sent as backspaces. The TextInput's
-  // own content is never shown — it is only a capture buffer.
+  // own content is never shown — it is only a capture buffer seeded with a
+  // zero-width sentinel so Backspace works even when the user's text is empty.
   private handleDirectInputChange(value: string): void {
     const prev = this.directInputLast;
     if (value === prev) {
@@ -657,20 +668,21 @@ export struct TerminalSurface {
       this.controller.write(added);
     }
     this.directInputLast = value;
-    // Keep the buffer from growing without bound. Once it is reasonably long
-    // and we are not mid-composition (value equals last), reset it to empty.
-    if (value.length > 64) {
-      this.directInputText = '';
-      this.directInputLast = '';
+    // Re-seed the sentinel when the user backspaced it away (value lost its
+    // leading sentinel) or when the buffer grew long. Setting both fields keeps
+    // the resulting onChange a no-op (value === last).
+    if (!value.startsWith(this.directInputSentinel) || value.length > 64) {
+      this.directInputText = this.directInputSentinel;
+      this.directInputLast = this.directInputSentinel;
     }
   }
 
   // Enter pressed in the hidden input: send a carriage return and reset the
-  // capture buffer so the next line starts fresh.
+  // capture buffer (back to the bare sentinel) so the next line starts fresh.
   private handleDirectInputSubmit(): void {
     this.controller.write('\r');
-    this.directInputText = '';
-    this.directInputLast = '';
+    this.directInputText = this.directInputSentinel;
+    this.directInputLast = this.directInputSentinel;
     this.focusDirectInput();
   }
 
