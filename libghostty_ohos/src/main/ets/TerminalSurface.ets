@@ -181,17 +181,19 @@ export struct TerminalSurface {
       .tabIndex(-1)
       .width('100%')
       .height('100%')
-      // Present driver. The native (TEXTURE) content fully covers this background,
-      // so flipping the LSB of the colour is invisible, but it marks the
-      // XComponent render node dirty. On the next ArkUI frame the node is
-      // re-recorded, which re-samples the latest native texture buffer — the same
-      // re-latch that scrolling triggers, but driven on demand by the present
-      // poll (presentTick is only bumped when native actually produced a frame).
-      // The mark MUST be on the XComponent node itself, not a sibling: a sibling's
-      // dirty rect never re-records this node, so its newest buffer is never
-      // composited. opacity is avoided here because <1 pushes the surface into an
-      // offscreen cache and freezes native updates.
-      .backgroundColor(this.presentTick % 2 === 0 ? this.surfaceColor : '#0B0D11')
+      .backgroundColor(this.surfaceColor)
+      // Present driver. Diagnostics proved the JS chain is fine (native raises the
+      // present flag, the poll consumes it and presentTick bumps) yet the screen
+      // never updated when this was a backgroundColor toggle. The reason: ArkUI
+      // does partial-region composition, and a background colour change hidden
+      // behind the opaque native content is treated as no visible change, so the
+      // dirty region never covers the XComponent's pixels and RS never re-latches
+      // the child surface buffer. Scrolling works because it changes the node's
+      // transform, which dirties the whole node region and forces RS to recomposite
+      // the surface layer (re-reading the newest native buffer). So we drive the
+      // present with a sub-pixel translate toggle — the same lever as scrolling,
+      // imperceptible on screen, but it guarantees the node region is recomposited.
+      .translate({ x: 0, y: this.presentTick % 2 === 0 ? 0 : 0.5 })
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 
