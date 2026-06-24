@@ -1494,6 +1494,14 @@ public:
         SetupRenderTsfn(env);
     }
 
+    // Consume the "a new buffer was produced" flag. Called from the JS present
+    // poll: when true, the ArkUI side forces a frame so the compositor presents
+    // the latest SURFACE buffer. Returns true at most once per produced frame,
+    // so an idle terminal triggers no ArkUI frames (and no vsync-timeout storm).
+    bool ConsumePresentNeeded() {
+        return m_presentNeeded.exchange(false, std::memory_order_acq_rel);
+    }
+
     const std::string& GetRendererError() const {
         return m_rendererError;
     }
@@ -1674,14 +1682,6 @@ private:
         // queued before the JS poll can observe it.
         DrawFrameLocked();
         m_presentNeeded.store(true, std::memory_order_release);
-    }
-
-    // Consume the "a new buffer was produced" flag. Called from the JS present
-    // poll: when true, the ArkUI side forces a frame so the compositor presents
-    // the latest SURFACE buffer. Returns true at most once per produced frame,
-    // so an idle terminal triggers no ArkUI frames (and no vsync-timeout storm).
-    bool ConsumePresentNeeded() {
-        return m_presentNeeded.exchange(false, std::memory_order_acq_rel);
     }
 
     // Create the threadsafe function used to schedule draws on the UI thread.
