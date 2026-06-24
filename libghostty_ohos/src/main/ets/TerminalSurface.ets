@@ -66,19 +66,17 @@ export struct TerminalSurface {
   // Bumped by the host page each time the app returns to foreground so we can
   // restore focus to the hidden input (the system clears focus on background).
   @Prop @Watch('onForegroundSignal') foregroundSignal: number = 0;
-  // A pad of zero-width-space sentinels kept at the start of the hidden input.
-  // Backspacing past the user's own text eats into this pad; each removed
-  // sentinel produces an onChange we map to a terminal backspace, so the user
-  // can keep deleting previously-committed / pre-existing terminal text (e.g.
-  // words typed before direct-input was turned on). A multi-char pad — rather
-  // than a single sentinel — lets several rapid backspaces register reliably
-  // without waiting for the @State re-seed to round-trip; we top it back up
-  // after every change so the pad never runs dry.
-  private readonly directInputPadSize: number = 16;
-  private readonly directInputSentinel: string = '\u200b'.repeat(16);
+  // Single zero-width-space sentinel at the front of the hidden input. It gives
+  // the virtual-keyboard Backspace one character to delete when the user has
+  // typed nothing; the deletion fires onChange which we map to a terminal
+  // backspace, then immediately re-seed. One char is sufficient because the
+  // @State re-seed commits before a second backspace can land. Using 16+
+  // sentinels was found to confuse some HarmonyOS IMEs into buffering all
+  // subsequent keystrokes and flushing them all at once ("burst" bug).
+  private readonly directInputSentinel: string = '\u200b';
   // The hidden input's current text and the last value we diffed against.
-  @State private directInputText: string = '\u200b'.repeat(16);
-  private directInputLast: string = '\u200b'.repeat(16);
+  @State private directInputText: string = '\u200b';
+  private directInputLast: string = '\u200b';
   private directInputController: TextInputController = new TextInputController();
   // ID of the transparent full-surface TextInput used for direct input.
   private imeAnchorId: string = this.surfaceId + '_imeanchor';
@@ -702,30 +700,17 @@ export struct TerminalSurface {
     if (added.length > 0) {
       this.controller.write(added);
     }
-    // Keep the @State text in sync with what the widget now actually holds.
-    // CRITICAL: if we don't, any unrelated re-render re-applies the stale
-    // @State value to the TextInput, silently wiping the just-typed character
-    // (looks like the first char of every entry is "swallowed") and leaving
-    // directInputLast out of step so the next Backspace diffs as two deletions.
-    let lead = 0;
-    while (lead < value.length && value.charCodeAt(lead) === 0x200b) {
-      lead++;
-    }
-    const userText = value.substring(lead);
-    if (lead < this.directInputPadSize) {
-      // The user backspaced into the sentinel pad — refill it so further
-      // backspaces keep producing terminal backspaces (userText is empty here,
-      // since the pad sits to the left of any typed text).
+    // Always sync @State to what the widget now actually holds. Without this,
+    // any unrelated re-render re-applies the stale @State value, wiping the
+    // just-typed character (swallowed first char) and desyncing directInputLast
+    // so the next Backspace diffs as a double-deletion.
+    this.directInputLast = value;
+    this.directInputText = value;
+    // Re-seed when the sentinel was consumed (Backspace emptied the buffer) or
+    // the buffer grew long enough to potentially confuse the IME.
+    if (!value.startsWith(this.directInputSentinel) || value.length > 48) {
       this.directInputText = this.directInputSentinel;
       this.directInputLast = this.directInputSentinel;
-    } else if (userText.length > 64) {
-      // Buffer grew long; trim it but keep the pad intact.
-      const reseeded = this.directInputSentinel + userText.substring(userText.length - 64);
-      this.directInputText = reseeded;
-      this.directInputLast = reseeded;
-    } else {
-      this.directInputText = value;
-      this.directInputLast = value;
     }
   }
 
