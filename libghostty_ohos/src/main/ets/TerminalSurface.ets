@@ -697,21 +697,30 @@ export struct TerminalSurface {
     if (added.length > 0) {
       this.controller.write(added);
     }
-    this.directInputLast = value;
-    // Count how many leading sentinels survive in the new value. As the user
-    // backspaces past their own text they consume sentinels from the right edge
-    // of the pad, so this shrinks. Top the pad back up to its full size (and
-    // strip any long trailing content) so there is always headroom for the next
-    // backspaces. Setting both fields keeps the follow-up onChange a no-op.
+    // Keep the @State text in sync with what the widget now actually holds.
+    // CRITICAL: if we don't, any unrelated re-render re-applies the stale
+    // @State value to the TextInput, silently wiping the just-typed character
+    // (looks like the first char of every entry is "swallowed") and leaving
+    // directInputLast out of step so the next Backspace diffs as two deletions.
     let lead = 0;
     while (lead < value.length && value.charCodeAt(lead) === 0x200b) {
       lead++;
     }
     const userText = value.substring(lead);
-    if (lead < this.directInputPadSize || userText.length > 64) {
-      const reseeded = this.directInputSentinel + userText.substring(Math.max(0, userText.length - 64));
+    if (lead < this.directInputPadSize) {
+      // The user backspaced into the sentinel pad — refill it so further
+      // backspaces keep producing terminal backspaces (userText is empty here,
+      // since the pad sits to the left of any typed text).
+      this.directInputText = this.directInputSentinel;
+      this.directInputLast = this.directInputSentinel;
+    } else if (userText.length > 64) {
+      // Buffer grew long; trim it but keep the pad intact.
+      const reseeded = this.directInputSentinel + userText.substring(userText.length - 64);
       this.directInputText = reseeded;
       this.directInputLast = reseeded;
+    } else {
+      this.directInputText = value;
+      this.directInputLast = value;
     }
   }
 
