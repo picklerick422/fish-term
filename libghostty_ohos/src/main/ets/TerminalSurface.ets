@@ -112,13 +112,15 @@ export struct TerminalSurface {
   private buildTerminalXComponent() {
     XComponent({
       id: this.surfaceId,
-      // TEXTURE: diagnostics proved native OH_NativeVSync request+callback both
-      // fire yet a SURFACE layer is never composited on this device — the surface
-      // is composited as part of the ArkUI window tree, not as an independent RS
-      // layer, so only a real ArkUI window frame that dirties THIS node presents
-      // it. As a TEXTURE the native buffer is the node's own drawn content, so
-      // dirtying the node makes ArkUI re-sample and recomposite it.
-      type: XComponentType.TEXTURE,
+      // SURFACE mode: on this device the XComponent surface is composited as part
+      // of the ArkUI window tree (not an independent RS hardware layer). Whenever
+      // ArkUI commits a new frame, RS composites all pending surface buffers —
+      // including ours. So we just need to force an ArkUI frame after each native
+      // render, which is what the presentTick + offset trick does. TEXTURE mode
+      // doesn't work because re-triggering an ArkUI frame doesn't automatically
+      // re-acquire the GPU texture from the BufferQueue (that requires a
+      // FrameAvailable notification that this device doesn't deliver reliably).
+      type: XComponentType.SURFACE,
       libraryname: 'libghostty_ohos'
     })
       .onLoad((nativeContext?: Object) => {
