@@ -14,6 +14,7 @@ find_library(ace-lib ace_ndk.z)
 find_library(napi-lib ace_napi.z)
 find_library(rawfile-lib rawfile.z)
 find_library(native-window-lib native_window)
+find_library(native-vsync-lib native_vsync)
 find_library(native-buffer-lib native_buffer)
 find_library(native-fence-lib native_fence)
 find_library(native-drawing-lib native_drawing)
@@ -68,5 +69,6 @@ target_link_libraries(libghostty_ohos PUBLIC
     ${native-buffer-lib}
     ${native-fence-lib}
     ${native-window-lib}
+    ${native-vsync-lib}
     ${inputmethod-lib}
 )

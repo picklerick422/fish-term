@@ -10,6 +10,7 @@
 #include <inputmethod/inputmethod_text_config_capi.h>
 #include <inputmethod/inputmethod_text_editor_proxy_capi.h>
 #include <rawfile/raw_file_manager.h>
+#include <native_vsync/native_vsync.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -1626,9 +1627,60 @@ private:
         m_renderCv.notify_one();
     }
 
+    // Draw + flush the current terminal state. Invoked either directly (vsync
+    // unavailable) or from the vsync callback below.
+    void DrawFrameLocked() {
+        std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+        if (m_renderer && m_terminal && m_surfaceReady) {
+            m_terminal->drawFrame();
+        }
+    }
+
+    static void OnVsyncStatic(long long /*timestamp*/, void* data) {
+        if (data != nullptr) {
+            static_cast<TerminalHost*>(data)->OnVsync();
+        }
+    }
+
+    void OnVsync() {
+        DrawFrameLocked();
+        std::lock_guard<std::mutex> lock(m_vsyncMutex);
+        m_vsyncDone = true;
+        m_vsyncCv.notify_one();
+    }
+
+    // Request a vsync-aligned frame and block (briefly) until the callback has
+    // flushed it. Falls back to a direct draw if vsync is unavailable or the
+    // callback does not arrive in time, so the render thread can never hang.
+    void PresentFrameOnVsync() {
+        if (m_vsync == nullptr) {
+            DrawFrameLocked();
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_vsyncMutex);
+            m_vsyncDone = false;
+        }
+        if (OH_NativeVSync_RequestFrame(m_vsync, &TerminalHost::OnVsyncStatic, this) != 0) {
+            DrawFrameLocked();
+            return;
+        }
+        std::unique_lock<std::mutex> lock(m_vsyncMutex);
+        if (!m_vsyncCv.wait_for(lock, std::chrono::milliseconds(64), [this]() { return m_vsyncDone; })) {
+            // Vsync callback did not arrive; draw directly so we never stall.
+            lock.unlock();
+            DrawFrameLocked();
+        }
+    }
+
     void StartRenderLoop() {
         if (m_renderThreadRunning) {
             return;
+        }
+
+        if (m_vsync == nullptr) {
+            static constexpr char kVsyncName[] = "ghostty_term";
+            m_vsync = OH_NativeVSync_Create(kVsyncName, sizeof(kVsyncName) - 1);
         }
 
         m_renderThreadRunning = true;
@@ -1680,9 +1732,9 @@ private:
                 m_renderDirty = false;
                 lock.unlock();
 
-                {
+                if (shouldResize) {
                     std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-                    if (m_renderer && shouldResize) {
+                    if (m_renderer) {
                         m_renderer->resize(resizeWidth, resizeHeight);
                         if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
                             int cols = 80;
@@ -1692,15 +1744,23 @@ private:
                             m_terminal->resetViewScroll();
                         }
                     }
-                    if (shouldRender && m_renderer && m_terminal && m_surfaceReady) {
-                        m_terminal->drawFrame();
-                        // NOTE: do NOT push IME updates from the render thread.
-                        // NotifyImeStateLocked() does a synchronous cross-process
-                        // IME IPC; when a tab closes, OnSurfaceDestroyed joins this
-                        // render thread and would block on a slow/hung IME call,
-                        // freezing the UI (ANR). IME cursor rect is updated from
-                        // input events on the main thread instead.
-                    }
+                }
+
+                if (shouldRender) {
+                    // Present aligned to the display's vsync. A bare buffer flush
+                    // from this background thread is NOT composited by the Render
+                    // Service until some other UI activity (a touch/key event)
+                    // wakes the pipeline — which is why a typed character only
+                    // appeared on the next keystroke. Driving the flush from a
+                    // vsync callback guarantees RS latches the latest buffer each
+                    // refresh, independent of input.
+                    // NOTE: do NOT push IME updates from the render thread.
+                    // NotifyImeStateLocked() does a synchronous cross-process IME
+                    // IPC; when a tab closes, OnSurfaceDestroyed joins this render
+                    // thread and would block on a slow/hung IME call, freezing the
+                    // UI (ANR). IME cursor rect is updated from input events on the
+                    // main thread instead.
+                    PresentFrameOnVsync();
                 }
 
                 lock.lock();
@@ -1718,6 +1778,12 @@ private:
         m_renderCv.notify_all();
         if (m_renderThread.joinable()) {
             m_renderThread.join();
+        }
+        // Destroy vsync only after the render thread has fully stopped, so no
+        // PresentFrameOnVsync() call can still be waiting on a callback.
+        if (m_vsync != nullptr) {
+            OH_NativeVSync_Destroy(m_vsync);
+            m_vsync = nullptr;
         }
     }
 
@@ -2480,6 +2546,13 @@ private:
     // Remaining trailing redraws to push the latest buffer through the swapchain
     // after content stops changing. Only touched on the render thread.
     int m_trailingFrames = 0;
+    // Vsync handle used to present frames aligned with the display refresh so the
+    // Render Service composites background-thread flushes without needing a UI
+    // input event to wake the pipeline.
+    OH_NativeVSync* m_vsync = nullptr;
+    std::mutex m_vsyncMutex;
+    std::condition_variable m_vsyncCv;
+    bool m_vsyncDone = false;
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
