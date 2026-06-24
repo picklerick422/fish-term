@@ -197,15 +197,6 @@ export struct TerminalSurface {
     .height('100%')
     .padding(0)
     .backgroundColor(this.surfaceColor)
-    // If ArkUI moves focus to the Stack container itself (e.g. because Tab or
-    // an arrow key triggered component-tree navigation and the XComponent
-    // momentarily lost focus), kick it back to the XComponent immediately. This
-    // covers the "sometimes characters stop appearing" case in normal mode.
-    .onFocus(() => {
-      if (!this.directInput) {
-        this.requestTerminalFocus();
-      }
-    })
   }
 
   @Builder
@@ -500,14 +491,6 @@ export struct TerminalSurface {
 
   private requestTerminalFocus(): void {
     focusControl.requestFocus(this.surfaceId);
-    // ArkUI sometimes moves focus away in the same frame (e.g. when Tab or
-    // arrow keys are used for component-tree navigation). Retry after one
-    // layout pass so we reclaim it reliably.
-    setTimeout(() => {
-      if (!this.directInput) {
-        focusControl.requestFocus(this.surfaceId);
-      }
-    }, 32);
   }
 
   // Host page bumped searchSignal — open (or refocus) the find overlay, but only
