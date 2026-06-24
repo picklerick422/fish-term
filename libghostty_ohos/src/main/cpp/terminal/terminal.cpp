@@ -388,6 +388,16 @@ void Terminal::resize(int cols, int rows) {
 }
 
 void Terminal::feedOutput(const char* data, size_t len) {
+    if (data && len > 0) {
+        std::string hex;
+        const size_t n = std::min<size_t>(len, 48);
+        char buf[4];
+        for (size_t i = 0; i < n; ++i) {
+            snprintf(buf, sizeof(buf), "%02X ", static_cast<unsigned char>(data[i]));
+            hex += buf;
+        }
+        OH_LOG_INFO(LOG_APP, "FT_PTY_OUT len=%{public}zu bytes=%{public}s", len, hex.c_str());
+    }
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (m_vt && data && len > 0) {
         ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(data), len);
@@ -402,6 +412,16 @@ void Terminal::emitInput(const char* data, size_t len)
 {
     if (!data || len == 0 || !m_inputCallback) {
         return;
+    }
+    {
+        std::string hex;
+        const size_t n = std::min<size_t>(len, 32);
+        char buf[4];
+        for (size_t i = 0; i < n; ++i) {
+            snprintf(buf, sizeof(buf), "%02X ", static_cast<unsigned char>(data[i]));
+            hex += buf;
+        }
+        OH_LOG_INFO(LOG_APP, "FT_PTY_IN len=%{public}zu bytes=%{public}s", len, hex.c_str());
     }
     m_inputCallback(std::string(data, len));
 }
@@ -1750,6 +1770,9 @@ void Terminal::drawFrame() {
             --cursorCol;
         }
     }
+    OH_LOG_INFO(LOG_APP,
+        "FT_DRAW frame=%{public}" PRIu64 " rows=%{public}d cols=%{public}d cursor=(%{public}d,%{public}d) vis=%{public}d hasVp=%{public}d",
+        frameId, m_rows, m_cols, cursorRow, cursorCol, cursorVisible ? 1 : 0, cursorHasViewport ? 1 : 0);
 
     for (int row = 0; row < m_rows && ghostty_render_state_row_iterator_next(m_rowIterator); ++row) {
         ghostty_render_state_row_get(m_rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &m_rowCells);
