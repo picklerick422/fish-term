@@ -122,15 +122,17 @@ export struct TerminalSurface {
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
-      // Transparent full-surface input for direct-input mode. It holds focus so
-      // the system IME attaches to it; committed text is diffed in onChange and
-      // written to the terminal. Invisible (transparent text/caret/background)
-      // so the user only sees the terminal's own cursor.
+      // Transparent 1-pixel-tall input anchored to the bottom of the terminal.
+      // Keeping it at the bottom means the system IME candidate panel pops up
+      // near the bottom of the screen (close to where a keyboard would appear)
+      // rather than at the top-left corner that a full-height overlay produces.
+      // Touch events pass through (HitTestMode.None) so taps still reach the
+      // terminal XComponent beneath it.
       if (this.directInput) {
         TextInput({ text: this.directInputText, controller: this.directInputController })
           .id(this.imeAnchorId)
           .width('100%')
-          .height('100%')
+          .height(1)
           .fontColor(Color.Transparent)
           .caretColor(Color.Transparent)
           .backgroundColor(Color.Transparent)
@@ -138,15 +140,29 @@ export struct TerminalSurface {
           .borderWidth(0)
           .padding(0)
           .enableKeyboardOnFocus(true)
-          // Plain text only: no auto-capitalisation, no predictive/autofill
-          // popups, no selection menu — these would corrupt CJK and shell
-          // commands or pop UI over the terminal.
           .type(InputType.Normal)
           .enableAutoFill(false)
           .selectionMenuHidden(true)
           .enterKeyType(EnterKeyType.Send)
+          .hitTestBehavior(HitTestMode.None)
           .onChange((v: string) => { this.handleDirectInputChange(v); })
           .onSubmit(() => { this.handleDirectInputSubmit(); })
+          .position({ x: 0, y: '100%' })
+          .translate({ y: -1 })
+      }
+      // Visual badge: shown in the top-right corner while direct-input is active
+      // so the user can tell at a glance that the system IME is attached.
+      if (this.directInput) {
+        Text('中')
+          .fontSize(11)
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Bold)
+          .backgroundColor('#CC2563EB')
+          .borderRadius(4)
+          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+          .position({ x: '100%', y: 0 })
+          .translate({ x: -40, y: 8 })
+          .hitTestBehavior(HitTestMode.None)
       }
       // IME bar: anchored to the bottom of the terminal. Toggled by the 中
       // button in the host page's tab strip (always visible there, never clipped).
