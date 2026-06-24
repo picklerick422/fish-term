@@ -10,7 +10,6 @@
 #include <inputmethod/inputmethod_text_config_capi.h>
 #include <inputmethod/inputmethod_text_editor_proxy_capi.h>
 #include <rawfile/raw_file_manager.h>
-#include <native_vsync/native_vsync.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -38,6 +37,8 @@
 
 namespace {
 class TerminalHost;
+// Per-vsync frame callback delivered by OH_NativeXComponent on the UI thread.
+void OnFrameCB(OH_NativeXComponent* component, uint64_t timestamp, uint64_t targetTimestamp);
 using ExampleDriverWriteInputFn = bool (*)(const char*, size_t);
 
 ExampleDriverWriteInputFn ResolveExampleDriverWriteInput()
@@ -103,10 +104,6 @@ bool IsNearOrigin(double left, double top)
 constexpr uint64_t LONG_PRESS_MS = 500;
 constexpr uint64_t MULTI_CLICK_MS = 400;
 constexpr float MOVE_THRESHOLD = 20.0f;
-constexpr auto CURSOR_BLINK_TICK = std::chrono::milliseconds(250);
-// Frame cadence for trailing redraws that flush the latest buffer through the
-// native-window swapchain after content stops changing (~60fps).
-constexpr auto RENDER_FRAME_TICK = std::chrono::milliseconds(16);
 // Number of trailing redraws to emit after a content change so the most recent
 // buffer is guaranteed presented even with a multi-buffer queue.
 constexpr int TRAILING_FLUSH_FRAMES = 2;
@@ -733,6 +730,75 @@ public:
         }
         CleanupSurfaceLocked();
         m_rendererReady = false;
+    }
+
+    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback on
+    // the UI thread. Rendering here — rather than from a private background
+    // thread or an independent OH_NativeVSync connection — is the key to
+    // reliable presentation. A bare NativeWindow flush from a background thread
+    // is NOT composited by the Render Service until some unrelated UI event
+    // wakes the pipeline, which is exactly why a typed character only appeared
+    // on the next keystroke ("hello world" shown as "hell world", "/" hidden
+    // until the following key). The XComponent frame callback runs inside
+    // ArkUI's own frame pipeline, so flushing from it makes every content change
+    // present on the very next refresh, independent of input.
+    void OnFrameTick(uint64_t timestampNs) {
+        bool doResize = false;
+        uint32_t resizeWidth = 0;
+        uint32_t resizeHeight = 0;
+        bool shouldRender = false;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            if (m_resizePending) {
+                doResize = true;
+                resizeWidth = m_pendingWidth;
+                resizeHeight = m_pendingHeight;
+                m_resizePending = false;
+            }
+
+            const bool content = m_renderDirty || doResize;
+            if (content) {
+                m_renderDirty = false;
+                // Schedule a couple of trailing redraws so the latest buffer is
+                // guaranteed cycled through a multi-buffer swapchain even after
+                // content stops changing.
+                m_trailingFrames = TRAILING_FLUSH_FRAMES;
+            }
+
+            bool blinkDue = false;
+            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
+                const uint64_t nowMs = timestampNs / 1000000ull;
+                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
+                    m_lastBlinkMs = nowMs;
+                    blinkDue = true;
+                }
+            }
+
+            const bool trailing = !content && m_trailingFrames > 0;
+            if (trailing) {
+                --m_trailingFrames;
+            }
+
+            shouldRender = content || blinkDue || trailing;
+        }
+
+        if (doResize) {
+            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+            if (m_renderer) {
+                m_renderer->resize(resizeWidth, resizeHeight);
+                if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
+                    int cols = 80;
+                    int rows = 24;
+                    ComputeTerminalSize(resizeWidth, resizeHeight, cols, rows);
+                    m_terminal->resize(cols, rows);
+                    m_terminal->resetViewScroll();
+                }
+            }
+        }
+
+        if (shouldRender) {
+            DrawFrameLocked();
+        }
     }
 
     bool DispatchKeyEvent(OH_NativeXComponent* component) {
@@ -1620,15 +1686,16 @@ private:
     }
 
     void RequestRender() {
-        {
-            std::lock_guard<std::mutex> lock(m_renderMutex);
-            m_renderDirty = true;
-        }
-        m_renderCv.notify_one();
+        // Just mark the frame dirty; the XComponent OnFrame callback (running on
+        // the UI thread, inside ArkUI's frame pipeline) picks it up on the next
+        // vsync and draws+flushes there so the Render Service composites it.
+        std::lock_guard<std::mutex> lock(m_renderMutex);
+        m_renderDirty = true;
     }
 
-    // Draw + flush the current terminal state. Invoked either directly (vsync
-    // unavailable) or from the vsync callback below.
+    // Draw + flush the current terminal state. Always invoked on the UI thread
+    // from OnFrameTick, so the flush is part of ArkUI's frame and presented on
+    // the next refresh.
     void DrawFrameLocked() {
         std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
         if (m_renderer && m_terminal && m_surfaceReady) {
@@ -1636,154 +1703,29 @@ private:
         }
     }
 
-    static void OnVsyncStatic(long long /*timestamp*/, void* data) {
-        if (data != nullptr) {
-            static_cast<TerminalHost*>(data)->OnVsync();
-        }
-    }
-
-    void OnVsync() {
-        DrawFrameLocked();
-        std::lock_guard<std::mutex> lock(m_vsyncMutex);
-        m_vsyncDone = true;
-        m_vsyncCv.notify_one();
-    }
-
-    // Request a vsync-aligned frame and block (briefly) until the callback has
-    // flushed it. Falls back to a direct draw if vsync is unavailable or the
-    // callback does not arrive in time, so the render thread can never hang.
-    void PresentFrameOnVsync() {
-        if (m_vsync == nullptr) {
-            DrawFrameLocked();
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(m_vsyncMutex);
-            m_vsyncDone = false;
-        }
-        if (OH_NativeVSync_RequestFrame(m_vsync, &TerminalHost::OnVsyncStatic, this) != 0) {
-            DrawFrameLocked();
-            return;
-        }
-        std::unique_lock<std::mutex> lock(m_vsyncMutex);
-        if (!m_vsyncCv.wait_for(lock, std::chrono::milliseconds(64), [this]() { return m_vsyncDone; })) {
-            // Vsync callback did not arrive; draw directly so we never stall.
-            lock.unlock();
-            DrawFrameLocked();
-        }
-    }
-
+    // Register for per-vsync frame callbacks from the XComponent. Idempotent and
+    // only touched on the UI thread (surface lifecycle callbacks + OnFrame all
+    // run there), so no locking is needed around the registration flag.
     void StartRenderLoop() {
-        if (m_renderThreadRunning) {
+        if (m_frameCallbackRegistered || m_component == nullptr) {
+            RequestRender();
             return;
         }
-
-        if (m_vsync == nullptr) {
-            static constexpr char kVsyncName[] = "ghostty_term";
-            m_vsync = OH_NativeVSync_Create(kVsyncName, sizeof(kVsyncName) - 1);
+        if (OH_NativeXComponent_RegisterOnFrameCallback(m_component, OnFrameCB) == 0) {
+            m_frameCallbackRegistered = true;
         }
-
-        m_renderThreadRunning = true;
-        m_renderThread = std::thread([this]() {
-            std::unique_lock<std::mutex> lock(m_renderMutex);
-            while (m_renderThreadRunning) {
-                const bool animateCursor = m_renderer && m_renderer->cursorBlinkEnabled();
-                // After content changes we schedule a few "trailing" redraws spaced
-                // at frame cadence. The OHOS native-window buffer queue presents the
-                // most recently flushed buffer one (or more) vsync later; when input
-                // stops and cursor blink is off (e.g. Claude Code's TUI hides/steadies
-                // the cursor) the render thread would otherwise block forever, leaving
-                // the previous buffer latched on the compositor — the final character
-                // never appears ("hello world" shown as "hell world"). The trailing
-                // redraws push the latest buffer through the swapchain so the final
-                // state is always presented.
-                if (animateCursor) {
-                    m_renderCv.wait_for(lock, CURSOR_BLINK_TICK, [this]() {
-                        return !m_renderThreadRunning || m_renderDirty || m_resizePending;
-                    });
-                } else if (m_trailingFrames > 0) {
-                    m_renderCv.wait_for(lock, RENDER_FRAME_TICK, [this]() {
-                        return !m_renderThreadRunning || m_renderDirty || m_resizePending;
-                    });
-                } else {
-                    m_renderCv.wait(lock, [this]() {
-                        return !m_renderThreadRunning || m_renderDirty || m_resizePending;
-                    });
-                }
-
-                if (!m_renderThreadRunning) {
-                    break;
-                }
-
-                const bool shouldResize = m_resizePending;
-                const uint32_t resizeWidth = m_pendingWidth;
-                const uint32_t resizeHeight = m_pendingHeight;
-                const bool hadContent = m_renderDirty || shouldResize;
-                const bool trailing = !hadContent && m_trailingFrames > 0;
-                const bool shouldRender = hadContent || animateCursor || trailing;
-                // Fresh content resets the trailing-flush countdown; a trailing tick
-                // decrements it until the swapchain has cycled the latest buffer out.
-                if (hadContent) {
-                    m_trailingFrames = TRAILING_FLUSH_FRAMES;
-                } else if (trailing) {
-                    --m_trailingFrames;
-                }
-                m_resizePending = false;
-                m_renderDirty = false;
-                lock.unlock();
-
-                if (shouldResize) {
-                    std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-                    if (m_renderer) {
-                        m_renderer->resize(resizeWidth, resizeHeight);
-                        if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
-                            int cols = 80;
-                            int rows = 24;
-                            ComputeTerminalSize(resizeWidth, resizeHeight, cols, rows);
-                            m_terminal->resize(cols, rows);
-                            m_terminal->resetViewScroll();
-                        }
-                    }
-                }
-
-                if (shouldRender) {
-                    // Present aligned to the display's vsync. A bare buffer flush
-                    // from this background thread is NOT composited by the Render
-                    // Service until some other UI activity (a touch/key event)
-                    // wakes the pipeline — which is why a typed character only
-                    // appeared on the next keystroke. Driving the flush from a
-                    // vsync callback guarantees RS latches the latest buffer each
-                    // refresh, independent of input.
-                    // NOTE: do NOT push IME updates from the render thread.
-                    // NotifyImeStateLocked() does a synchronous cross-process IME
-                    // IPC; when a tab closes, OnSurfaceDestroyed joins this render
-                    // thread and would block on a slow/hung IME call, freezing the
-                    // UI (ANR). IME cursor rect is updated from input events on the
-                    // main thread instead.
-                    PresentFrameOnVsync();
-                }
-
-                lock.lock();
-            }
-        });
+        RequestRender();
     }
 
     void StopRenderLoop() {
         {
             std::lock_guard<std::mutex> lock(m_renderMutex);
-            m_renderThreadRunning = false;
             m_renderDirty = false;
             m_resizePending = false;
         }
-        m_renderCv.notify_all();
-        if (m_renderThread.joinable()) {
-            m_renderThread.join();
-        }
-        // Destroy vsync only after the render thread has fully stopped, so no
-        // PresentFrameOnVsync() call can still be waiting on a callback.
-        if (m_vsync != nullptr) {
-            OH_NativeVSync_Destroy(m_vsync);
-            m_vsync = nullptr;
+        if (m_frameCallbackRegistered && m_component != nullptr) {
+            OH_NativeXComponent_UnregisterOnFrameCallback(m_component);
+            m_frameCallbackRegistered = false;
         }
     }
 
@@ -2537,22 +2479,21 @@ private:
     uint64_t m_lastImeReattachMs = 0;
     static constexpr uint64_t IME_REATTACH_COOLDOWN_MS = 400;
 
-    std::thread m_renderThread;
+    // m_renderMutex guards the frame-request flags below, which are set from the
+    // terminal's background read thread (RequestRender) and consumed on the UI
+    // thread (OnFrameTick).
     std::mutex m_renderMutex;
     std::condition_variable m_renderCv;
     std::mutex m_surfaceMutex;
-    bool m_renderThreadRunning = false;
     bool m_renderDirty = false;
     // Remaining trailing redraws to push the latest buffer through the swapchain
-    // after content stops changing. Only touched on the render thread.
+    // after content stops changing.
     int m_trailingFrames = 0;
-    // Vsync handle used to present frames aligned with the display refresh so the
-    // Render Service composites background-thread flushes without needing a UI
-    // input event to wake the pipeline.
-    OH_NativeVSync* m_vsync = nullptr;
-    std::mutex m_vsyncMutex;
-    std::condition_variable m_vsyncCv;
-    bool m_vsyncDone = false;
+    // True while we hold an OH_NativeXComponent_RegisterOnFrameCallback
+    // registration. Only touched on the UI thread.
+    bool m_frameCallbackRegistered = false;
+    // Wall-clock (ms, from the OnFrame timestamp) of the last cursor-blink redraw.
+    uint64_t m_lastBlinkMs = 0;
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
@@ -2611,6 +2552,13 @@ void OnSurfaceDestroyedCB(OH_NativeXComponent* component, void* window) {
     (void)window;
     if (TerminalHost* host = FindHost(component)) {
         host->OnSurfaceDestroyed();
+    }
+}
+
+void OnFrameCB(OH_NativeXComponent* component, uint64_t timestamp, uint64_t targetTimestamp) {
+    (void)targetTimestamp;
+    if (TerminalHost* host = FindHost(component)) {
+        host->OnFrameTick(timestamp);
     }
 }
 
