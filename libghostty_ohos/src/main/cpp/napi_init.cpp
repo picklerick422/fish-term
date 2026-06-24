@@ -102,6 +102,12 @@ bool IsNearOrigin(double left, double top)
 constexpr uint64_t LONG_PRESS_MS = 500;
 constexpr uint64_t MULTI_CLICK_MS = 400;
 constexpr float MOVE_THRESHOLD = 20.0f;
+// Number of back-to-back FlushBuffer calls per content change. The SURFACE
+// XComponent's NativeWindow is a multi-buffer queue (typically triple); flushing
+// the latest frame into every slot forces the queue to cycle so the Render
+// Service presents the new content on the next refresh instead of holding the
+// previously latched buffer until the next input event.
+constexpr int kPresentFlushCycles = 3;
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_TAB =
     static_cast<OH_NativeXComponent_KeyCode>(15);
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_1 =
@@ -1666,7 +1672,24 @@ private:
             }
         }
 
-        DrawFrameLocked();
+        // The XComponent is an XComponentType.SURFACE whose NativeWindow is a
+        // multi-buffer queue. A single FlushBuffer enqueues the new content but
+        // the Render Service keeps presenting the previously latched buffer; the
+        // freshly flushed one is not acquired until the queue advances — which,
+        // with on-demand drawing, only happens on the NEXT content change (the
+        // next keystroke). That is the "type a char, it shows only on the next
+        // key" lag.
+        //
+        // Flushing the same content several times back-to-back fills every slot
+        // of the buffer queue with the latest frame, forcing the queue to cycle
+        // so the Render Service acquires and presents a content-bearing buffer
+        // immediately instead of waiting for the next input event. We do this on
+        // the UI thread (this TSFN callback), which is what makes the flush
+        // actually composite — background-thread flushes were never composited,
+        // which is why the earlier trailing-redraw attempt failed.
+        for (int i = 0; i < kPresentFlushCycles; ++i) {
+            DrawFrameLocked();
+        }
     }
 
     // Create the threadsafe function used to schedule draws on the UI thread.
