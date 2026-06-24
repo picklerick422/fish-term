@@ -726,11 +726,15 @@ export struct TerminalSurface {
   // which the IME uses to compose and pick CJK candidates) returns false and
   // flows through to the IME untouched.
   private handleDirectInputPreIme(event: KeyEvent): boolean {
+    const getState = event.getModifierKeyState;
+    if (!getState) {
+      return false;
+    }
     let ctrl = false;
     let shift = false;
     try {
-      ctrl = event.getModifierKeyState(['Ctrl']);
-      shift = event.getModifierKeyState(['Shift']);
+      ctrl = getState.call(event, ['Ctrl']);
+      shift = getState.call(event, ['Shift']);
     } catch (e) {
       return false;
     }
