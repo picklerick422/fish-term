@@ -1,5 +1,4 @@
 import { common } from '@kit.AbilityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl';
 import { display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -113,13 +112,12 @@ export struct TerminalSurface {
   private buildTerminalXComponent() {
     XComponent({
       id: this.surfaceId,
-      // TEXTURE (not SURFACE): on this device RS never composites a bare SURFACE
-      // layer's flush on its own (it withholds independent vsync from the
-      // standalone surface), which froze the cursor blink and lagged the first
-      // typed char by one keystroke. As a TEXTURE the native buffer is sampled
-      // into ArkUI's own render tree, so every flush's buffer-available wakes the
-      // main-window frame pipeline (which does get vsync) and is composited.
-      type: XComponentType.TEXTURE,
+      // SURFACE: the native side drives presentation directly by requesting a
+      // system vsync after each flush (OH_NativeVSync), so RS composites this
+      // standalone surface layer without any ArkUI frame. No JS present poll or
+      // node-dirty trick is involved — those could never re-latch the surface on
+      // this device because it emits no idle vsync for ArkUI to ride either.
+      type: XComponentType.SURFACE,
       libraryname: 'libghostty_ohos'
     })
       .onLoad((nativeContext?: Object) => {
@@ -182,18 +180,6 @@ export struct TerminalSurface {
       .width('100%')
       .height('100%')
       .backgroundColor(this.surfaceColor)
-      // Present driver. Diagnostics proved the JS chain is fine (native raises the
-      // present flag, the poll consumes it and presentTick bumps) yet the screen
-      // never updated when this was a backgroundColor toggle. The reason: ArkUI
-      // does partial-region composition, and a background colour change hidden
-      // behind the opaque native content is treated as no visible change, so the
-      // dirty region never covers the XComponent's pixels and RS never re-latches
-      // the child surface buffer. Scrolling works because it changes the node's
-      // transform, which dirties the whole node region and forces RS to recomposite
-      // the surface layer (re-reading the newest native buffer). So we drive the
-      // present with a sub-pixel translate toggle — the same lever as scrolling,
-      // imperceptible on screen, but it guarantees the node region is recomposited.
-      .translate({ x: 0, y: this.presentTick % 2 === 0 ? 0 : 0.5 })
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 
@@ -372,36 +358,12 @@ export struct TerminalSurface {
     this.fallbackTimer = -1;
   }
 
+  // Presentation is driven natively (OH_NativeVSync after each flush); the JS
+  // poll is no longer needed. Kept as no-ops so existing call sites stay valid.
   private startPresentPolling(): void {
-    if (this.presentTimer >= 0) {
-      return;
-    }
-    // ~60fps poll. Only bumps presentTick when the native side actually produced
-    // a new frame, so an idle terminal submits zero ArkUI frames.
-    let pollCount = 0;
-    let presentCount = 0;
-    this.presentTimer = setInterval(() => {
-      pollCount++;
-      if (this.controller.consumePresentNeeded()) {
-        presentCount++;
-        this.presentTick = (this.presentTick + 1) & 0xffff;
-        hilog.info(0x0, 'fishpresent',
-          'present needed -> tick=%{public}d presentCount=%{public}d poll=%{public}d',
-          this.presentTick, presentCount, pollCount);
-      }
-      if (pollCount % 120 === 0) {
-        hilog.info(0x0, 'fishpresent', 'poll alive poll=%{public}d presents=%{public}d',
-          pollCount, presentCount);
-      }
-    }, 16) as number;
   }
 
   private stopPresentPolling(): void {
-    if (this.presentTimer < 0) {
-      return;
-    }
-    clearInterval(this.presentTimer);
-    this.presentTimer = -1;
   }
 
   private syncFallbackScreen(): void {

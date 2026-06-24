@@ -10,6 +10,7 @@
 #include <inputmethod/inputmethod_text_config_capi.h>
 #include <inputmethod/inputmethod_text_editor_proxy_capi.h>
 #include <rawfile/raw_file_manager.h>
+#include <native_vsync/native_vsync.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -613,6 +614,9 @@ public:
             m_surfaceReady = true;
             m_rendererReady = true;
             m_rendererError.clear();
+            if (m_vsync == nullptr) {
+                m_vsync = OH_NativeVSync_Create("fishterm", 8);
+            }
             LoadFontsIfPossibleLocked();
             TryInitializeTerminalLocked();
             if (m_terminal) {
@@ -1674,15 +1678,25 @@ private:
             }
         }
 
-        // Produce the new buffer. Presentation is decoupled: this device does
-        // not composite a bare SURFACE flush on its own (no independent vsync),
-        // so we raise m_presentNeeded and let the ArkUI side (a dirty-gated
-        // present poll) submit a frame, which makes the compositor latch this
-        // buffer. Setting the flag AFTER the flush guarantees the buffer is
-        // queued before the JS poll can observe it.
+        // Produce the new buffer, then kick the system vsync. This device emits
+        // no vsync while the window is idle, so the just-flushed SURFACE buffer
+        // would sit in the BufferQueue uncomposited until some unrelated event
+        // (scroll, IME) produced a vsync — exactly the first-char-lag and frozen
+        // cursor-blink symptoms. Requesting a frame makes the vsync generator
+        // emit one pulse; the Render Service consumes it and composites our
+        // queued buffer. Request AFTER the flush so the buffer is already queued
+        // when the pulse arrives.
         DrawFrameLocked();
         m_presentNeeded.store(true, std::memory_order_release);
+        if (m_vsync != nullptr) {
+            OH_NativeVSync_RequestFrame(m_vsync, &TerminalHost::OnVSyncPresent, this);
+        }
     }
+
+    // Vsync callback. No work is needed here: the act of requesting the frame
+    // already made the generator emit the pulse that wakes the Render Service to
+    // composite our queued buffer. Kept as a valid target for RequestFrame.
+    static void OnVSyncPresent(long long /*timestamp*/, void* /*data*/) {}
 
     // Create the threadsafe function used to schedule draws on the UI thread.
     // Must be called from the JS/UI thread (e.g. from Init).
@@ -1868,6 +1882,11 @@ private:
             m_renderer->cleanup();
             delete m_renderer;
             m_renderer = nullptr;
+        }
+
+        if (m_vsync != nullptr) {
+            OH_NativeVSync_Destroy(m_vsync);
+            m_vsync = nullptr;
         }
     }
 
@@ -2494,6 +2513,12 @@ private:
     uint64_t m_lastClickTimeMs = 0;
 
     OHNativeWindow* m_nativeWindow = nullptr;
+    // System vsync receiver. This device generates no vsync while the window is
+    // idle, so a bare NativeWindow flush is never composited (cursor blink and
+    // typed chars only appeared when scrolling/IME happened to produce a vsync).
+    // After every flush we ask the vsync generator for one pulse; the Render
+    // Service consumes that pulse and composites our already-queued SURFACE buffer.
+    OH_NativeVSync* m_vsync = nullptr;
     uint32_t m_windowWidth = 0;
     uint32_t m_windowHeight = 0;
     int32_t m_windowId = -1;
