@@ -42,45 +42,6 @@ export struct TerminalSurface {
   @State private hoverSearchPrev: boolean = false;
   @State private hoverSearchNext: boolean = false;
   @State private hoverSearchClose: boolean = false;
-  // IME input bar: toggled from the host page's tab strip (the 中 button).
-  // When true the bar appears at the bottom of the terminal and holds focus
-  // so the system IME pipeline can attach. XComponent SURFACE does not
-  // participate in ArkUI's IME pipeline on its own.
-  @Prop @Watch('onShowImeBarChange') showImeBar: boolean = false;
-  // Called back when the user closes the bar from inside (✕ button).
-  onImeBarClose: (() => void) | null = null;
-  @State private imeBarText: string = '';
-  @State private hoverImeSend: boolean = false;
-  @State private hoverImeClose: boolean = false;
-  private imeBarId: string = this.surfaceId + '_imebar';
-  private imeBarController: TextInputController = new TextInputController();
-
-  // Direct input mode (experimental, "native"): a fully transparent TextInput
-  // covers the terminal and holds focus. Because it is a real ArkUI editable
-  // component, the system IME pipeline attaches to it automatically — no manual
-  // inputMethod.attach() (which fails with 12800003 "edit box is not focused"
-  // since XComponent SURFACE has no ArkUI focus). Committed text (incl. composed
-  // CJK) arrives via onChange and is diffed and written straight to the
-  // terminal; the user sees only the terminal's own cursor.
-  @Prop @Watch('onDirectInputChange') directInput: boolean = false;
-  // Bumped by the host page each time the app returns to foreground so we can
-  // restore focus to the hidden input (the system clears focus on background).
-  @Prop @Watch('onForegroundSignal') foregroundSignal: number = 0;
-  // Single zero-width-space sentinel at the front of the hidden input. It gives
-  // the virtual-keyboard Backspace one character to delete when the user has
-  // typed nothing; the deletion fires onChange which we map to a terminal
-  // backspace, then immediately re-seed. One char is sufficient because the
-  // @State re-seed commits before a second backspace can land. Using 16+
-  // sentinels was found to confuse some HarmonyOS IMEs into buffering all
-  // subsequent keystrokes and flushing them all at once ("burst" bug).
-  private readonly directInputSentinel: string = '\u200b';
-  // The hidden input's current text and the last value we diffed against.
-  @State private directInputText: string = '\u200b';
-  private directInputLast: string = '\u200b';
-  private directInputController: TextInputController = new TextInputController();
-  // ID of the transparent full-surface TextInput used for direct input.
-  private imeAnchorId: string = this.surfaceId + '_imeanchor';
-
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     // Pre-request READ_PASTEBOARD so the permission dialog (if any) appears
@@ -124,68 +85,6 @@ export struct TerminalSurface {
       this.buildTerminalXComponent();
       if (this.useTextFallback) {
         this.buildTextFallback();
-      }
-      // Transparent full-surface input for direct-input mode. It holds focus so
-      // the system IME attaches to it; committed text is diffed in onChange and
-      // written to the terminal. Invisible (transparent text/caret/background)
-      // so the user only sees the terminal's own cursor.
-      if (this.directInput) {
-        TextInput({ text: this.directInputText, controller: this.directInputController })
-          .id(this.imeAnchorId)
-          .width('100%')
-          .height('100%')
-          .fontColor(Color.Transparent)
-          .caretColor(Color.Transparent)
-          .backgroundColor(Color.Transparent)
-          .placeholderColor(Color.Transparent)
-          .borderWidth(0)
-          .padding(0)
-          .enableKeyboardOnFocus(true)
-          // Plain text only: no auto-capitalisation, no predictive/autofill
-          // popups, no selection menu — these would corrupt CJK and shell
-          // commands or pop UI over the terminal.
-          .type(InputType.Normal)
-          .enableAutoFill(false)
-          .selectionMenuHidden(true)
-          .enterKeyType(EnterKeyType.Send)
-          // NOTE: the overlay must stay hit-testable. A tap landing on this
-          // transparent TextInput is what gives it real (user-initiated) focus
-          // and raises the system IME; HitTestMode.None made taps pass through
-          // to the XComponent, so the IME never came up and CJK input died.
-          // Scroll / drag-select therefore don't reach the terminal while
-          // direct-input is on — the user turns direct-input off for those.
-          // Intercept hardware-keyboard control combos (Ctrl-C, Shift-Tab,
-          // arrows, etc.) BEFORE the IME sees them and forward them to the
-          // terminal, so shell/Claude-Code shortcuts work without first having
-          // to blur the input. Plain text keys return false and flow to the IME.
-          .onKeyPreIme((event: KeyEvent): boolean => this.handleDirectInputPreIme(event))
-          .onChange((v: string) => { this.handleDirectInputChange(v); })
-          .onSubmit(() => { this.handleDirectInputSubmit(); })
-      }
-      // Visual badge: shown in the top-right corner while direct-input is active
-      // so the user can tell at a glance that the system IME is attached.
-      if (this.directInput) {
-        Text('中')
-          .fontSize(11)
-          .fontColor(Color.White)
-          .fontWeight(FontWeight.Bold)
-          .backgroundColor('#CC2563EB')
-          .borderRadius(4)
-          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
-          .position({ x: '100%', y: 0 })
-          .translate({ x: -40, y: 8 })
-          .hitTestBehavior(HitTestMode.None)
-      }
-      // IME bar: anchored to the bottom of the terminal. Toggled by the 中
-      // button in the host page's tab strip (always visible there, never clipped).
-      if (this.showImeBar) {
-        Column() {
-          Blank().layoutWeight(1)
-          this.buildImeBar()
-        }
-        .width('100%')
-        .height('100%')
-        .hitTestBehavior(HitTestMode.Default)
       }
       if (this.searchVisible) {
         this.buildSearchOverlay();
@@ -244,15 +143,11 @@ export struct TerminalSurface {
         if (this.searchVisible) {
           this.searchInputController.stopEditing();
         }
-        // In direct-input mode keep focus on the transparent TextInput (not the
-        // XComponent) so the IME stays attached; a tap re-engages composition.
-        if (this.directInput) {
-          focusControl.requestFocus(this.imeAnchorId);
-          return;
-        }
         // Give focus to the XComponent so native key events (arrow keys, control
         // sequences, function keys) are handled by the ghostty engine directly.
-        // IME input is captured separately by the IME bar (buildImeBar).
+        // Soft-keyboard / CJK input is driven natively: the native layer attaches
+        // the system IME (OH_InputMethodController) and raises it on tap, so a
+        // single XComponent owns keyboard, IME, scrolling, selection and paste.
         this.requestTerminalFocus();
       })
       .focusable(true)
@@ -263,84 +158,10 @@ export struct TerminalSurface {
       // cause ArkUI to move focus away to the next focusable widget and stop
       // delivering subsequent keystrokes to the native engine.
       .tabIndex(-1)
-      .onFocus(() => {
-        // In direct-input mode the transparent TextInput must hold focus, not
-        // the XComponent. If focus lands here (e.g. after a sheet closes),
-        // bounce it back to the hidden input so IME composition keeps working.
-        if (this.directInput && this.isActiveTab) {
-          this.focusDirectInput();
-        }
-      })
       .width('100%')
       .height('100%')
       .backgroundColor(this.surfaceColor)
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
-  }
-
-  // Floating IME input bar at the bottom of the terminal surface.
-  // Toggled by the host page's "中" button in the tab strip (not clipped).
-  @Builder
-  private buildImeBar() {
-    Row({ space: 8 }) {
-      TextInput({ text: this.imeBarText, placeholder: '输入中文后点 ↵ 发送…', controller: this.imeBarController })
-        .id(this.imeBarId)
-        .layoutWeight(1)
-        .height(40)
-        .fontSize(14)
-        .fontColor('#F4F7FB')
-        .placeholderColor('#8A94A6')
-        .backgroundColor('#0E1318')
-        .caretColor('#3DD6C4')
-        .borderRadius(8)
-        .borderWidth(1)
-        .borderColor('#1E2630')
-        .padding({ left: 10, right: 10 })
-        .onChange((v: string) => { this.imeBarText = v; })
-        .onSubmit(() => { this.sendImeBar(); })
-
-      // Send ↵
-      Row() {
-        Text('↵')
-          .fontSize(16)
-          .fontColor(this.hoverImeSend ? '#0B0D10' : '#3DD6C4')
-          .animation({ duration: 100, curve: Curve.EaseOut })
-      }
-      .width(40)
-      .height(40)
-      .justifyContent(FlexAlign.Center)
-      .borderRadius(8)
-      .backgroundColor(this.hoverImeSend ? '#3DD6C4' : '#1A3DD6C4')
-      .border({ width: 1, color: '#2A3DD6C4' })
-      .animation({ duration: 100, curve: Curve.EaseOut })
-      .onHover((h: boolean) => { this.hoverImeSend = h; })
-      .onClick(() => { this.sendImeBar(); })
-
-      // Close ✕ — returns focus to terminal
-      Row() {
-        Text('✕')
-          .fontSize(13)
-          .fontColor(this.hoverImeClose ? '#FF6B6B' : '#8A94A6')
-          .animation({ duration: 100, curve: Curve.EaseOut })
-      }
-      .width(36)
-      .height(40)
-      .justifyContent(FlexAlign.Center)
-      .borderRadius(8)
-      .backgroundColor(this.hoverImeClose ? '#17FF6B6B' : Color.Transparent)
-      .animation({ duration: 100, curve: Curve.EaseOut })
-      .onHover((h: boolean) => { this.hoverImeClose = h; })
-      .onClick(() => {
-        this.imeBarText = '';
-        if (this.onImeBarClose) {
-          this.onImeBarClose();
-        }
-        this.requestTerminalFocus();
-      })
-    }
-    .width('100%')
-    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor('#E6111621')
-    .border({ width: { top: 1 }, color: '#1E2630' })
   }
 
   @Builder
@@ -635,150 +456,10 @@ export struct TerminalSurface {
     return `-/${this.searchTotal}`;
   }
 
-  // When this surface becomes the active tab, restore focus to the hidden
-  // input so direct typing resumes; when it goes inactive, drop focus.
+  // Host toggles which tab is active. Input (keyboard + IME) is handled
+  // entirely by the native layer attached to the focused XComponent, so there
+  // is nothing to do here beyond letting ArkUI re-evaluate focus naturally.
   private onIsActiveTabChange(): void {
-    if (!this.directInput) {
-      return;
-    }
-    if (this.isActiveTab) {
-      this.focusDirectInput();
-    }
-  }
-
-  // After the app returns to foreground the system clears focus, so re-request
-  // it on the hidden input to bring the IME back without any user interaction.
-  private onForegroundSignal(): void {
-    if (this.directInput && this.isActiveTab) {
-      this.focusDirectInput();
-    }
-  }
-
-  // React to the host-controlled directInput prop. Focus the hidden input so
-  // the IME attaches; on disable, clear state and return focus to the terminal.
-  private onDirectInputChange(): void {
-    this.directInputText = this.directInputSentinel;
-    this.directInputLast = this.directInputSentinel;
-    if (this.directInput) {
-      this.focusDirectInput();
-    } else {
-      this.requestTerminalFocus();
-    }
-  }
-
-  // Request focus on the transparent direct-input TextInput. Deferred so the
-  // component exists in the tree (it is conditionally rendered on directInput).
-  private focusDirectInput(): void {
-    setTimeout(() => {
-      if (this.directInput && this.isActiveTab) {
-        focusControl.requestFocus(this.imeAnchorId);
-      }
-    }, 50);
-  }
-
-  // Diff the hidden input's new value against the previous one and forward the
-  // change to the terminal: appended text is written verbatim (this is how
-  // committed CJK arrives), removed text is sent as backspaces. The TextInput's
-  // own content is never shown — it is only a capture buffer seeded with a
-  // zero-width sentinel so Backspace works even when the user's text is empty.
-  private handleDirectInputChange(value: string): void {
-    const prev = this.directInputLast;
-    if (value === prev) {
-      return;
-    }
-    // Common-prefix diff.
-    let common = 0;
-    const max = Math.min(value.length, prev.length);
-    while (common < max && value.charCodeAt(common) === prev.charCodeAt(common)) {
-      common++;
-    }
-    const removed = prev.length - common;
-    for (let i = 0; i < removed; i++) {
-      this.controller.write('\x7f'); // backspace for each removed char
-    }
-    const added = value.substring(common);
-    if (added.length > 0) {
-      this.controller.write(added);
-    }
-    // Always sync @State to what the widget now actually holds. Without this,
-    // any unrelated re-render re-applies the stale @State value, wiping the
-    // just-typed character (swallowed first char) and desyncing directInputLast
-    // so the next Backspace diffs as a double-deletion.
-    this.directInputLast = value;
-    this.directInputText = value;
-    // Re-seed when the sentinel was consumed (Backspace emptied the buffer) or
-    // the buffer grew long enough to potentially confuse the IME.
-    if (!value.startsWith(this.directInputSentinel) || value.length > 48) {
-      this.directInputText = this.directInputSentinel;
-      this.directInputLast = this.directInputSentinel;
-    }
-  }
-
-  // Enter pressed in the hidden input: send a carriage return and reset the
-  // capture buffer (back to the bare sentinel) so the next line starts fresh.
-  private handleDirectInputSubmit(): void {
-    this.controller.write('\r');
-    this.directInputText = this.directInputSentinel;
-    this.directInputLast = this.directInputSentinel;
-    this.focusDirectInput();
-  }
-
-  // Intercept hardware-keyboard events before the IME consumes them. We only
-  // claim control combos the IME never needs — Ctrl+<letter> and Shift+Tab —
-  // and forward them to the terminal as the matching control bytes so shell /
-  // Claude-Code shortcuts (Ctrl-C, Ctrl-D, Shift-Tab, …) work while the hidden
-  // input keeps focus. Everything else (plain letters, arrows, space, digits —
-  // which the IME uses to compose and pick CJK candidates) returns false and
-  // flows through to the IME untouched.
-  private handleDirectInputPreIme(event: KeyEvent): boolean {
-    let ctrl = false;
-    let shift = false;
-    try {
-      ctrl = event.getModifierKeyState?.(['Ctrl']) ?? false;
-      shift = event.getModifierKeyState?.(['Shift']) ?? false;
-    } catch (e) {
-      return false;
-    }
-    const code = event.keyCode;
-    // Ctrl + A..Z  ->  control bytes 0x01..0x1A
-    const isLetter = code >= 2017 && code <= 2042;
-    const isTab = code === 2049;
-    const handled = (ctrl && isLetter) || (shift && isTab);
-    if (!handled) {
-      return false;
-    }
-    // Act once, on key-down; swallow the matching key-up too.
-    if (event.type === KeyType.Down) {
-      if (ctrl && isLetter) {
-        this.controller.write(String.fromCharCode(code - 2017 + 1));
-      } else if (shift && isTab) {
-        this.controller.write('\x1b[Z');
-      }
-    }
-    return true;
-  }
-
-  // React to the host-controlled showImeBar prop changing.
-  private onShowImeBarChange(): void {
-    if (this.showImeBar) {
-      setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 50);
-    } else {
-      this.imeBarText = '';
-      this.requestTerminalFocus();
-    }
-  }
-
-  // Send the IME bar's text to the terminal and clear for the next entry.
-  // Does NOT append '\r' so the user controls when to submit a shell command
-  // (they can tap the physical Enter key after closing the bar, or type '\n'
-  // directly in the bar if needed).
-  private sendImeBar(): void {
-    const text = this.imeBarText.trim();
-    if (text.length > 0) {
-      this.controller.write(text);
-    }
-    this.imeBarText = '';
-    setTimeout(() => { focusControl.requestFocus(this.imeBarId); }, 0);
   }
 
   private openSearch(initialQuery: string): void {

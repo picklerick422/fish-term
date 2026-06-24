@@ -89,14 +89,6 @@ struct Index {
   // Drives the native horizontal slide between guide pages.
   private guideTabs: TabsController = new TabsController();
   // Tab drag-reorder via horizontal PanGesture (live reorder, stays on baseline).
-  // IME input bar toggle — shared across all tabs (only active tab's surface
-  // shows the bar, but the button lives in the tab strip so it's always visible).
-  @State private showImeBar: boolean = false;
-  @State private hoverIme: boolean = false;
-  // Experimental "direct input": attaches the system IME straight to the
-  // terminal so committed CJK text is typed directly (no input bar).
-  @State private directInput: boolean = false;
-  @State private foregroundSignal: number = 0;
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
   @State private dragSwaps: number = 0;
@@ -114,8 +106,6 @@ struct Index {
       this.runtimes.forEach((rt: TerminalRuntime) => {
         rt.session?.onForeground();
       });
-      // Bump so active TerminalSurface re-attaches the IME if direct mode is on.
-      this.foregroundSignal = this.foregroundSignal + 1;
     });
   }
 
@@ -578,10 +568,6 @@ struct Index {
       surfaceColor: this.themeBg,
       isActiveTab: id === this.activeId,
       searchSignal: this.searchSignal,
-      showImeBar: id === this.activeId && this.showImeBar,
-      directInput: id === this.activeId && this.directInput,
-      foregroundSignal: this.foregroundSignal,
-      onImeBarClose: () => { this.showImeBar = false; },
       onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },
       onOpenShortcuts: () => { this.settingsInitialTab = 2; this.showSettings = true; },
       onOpenConnections: () => { this.openNewConnection(); }
@@ -680,35 +666,6 @@ struct Index {
       .scrollBar(BarState.Off)
       .layoutWeight(1)
       .align(Alignment.Start)
-
-      // IME input bar toggle (中) — opens a TextInput at the bottom of the
-      // terminal so the system input method can compose CJK text. The button
-      // lives in the tab strip (never clipped by the terminal card's corner
-      // radius) and is only meaningful when at least one tab is open.
-      if (this.tabs.length > 0) {
-        Row() {
-          Row() {
-            Text('中')
-              .fontSize(12)
-              .fontColor((this.showImeBar || this.directInput) ? '#3DD6C4'
-                : (this.hoverIme ? '#F4F7FB' : '#B8BEC9'))
-              .animation({ duration: 100, curve: Curve.EaseOut })
-          }
-          .width(30)
-          .height(28)
-          .justifyContent(FlexAlign.Center)
-          .borderRadius(7)
-          .backgroundColor((this.showImeBar || this.directInput) ? '#1A3DD6C4'
-            : (this.hoverIme ? '#1FFFFFFF' : Color.Transparent))
-          .animation({ duration: 120, curve: Curve.EaseOut })
-        }
-        .width(40)
-        .height(40)
-        .justifyContent(FlexAlign.Center)
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverIme = h; })
-        .bindMenu(this.buildImeMenu())
-      }
 
       // Guide help button — line-art circled "?" matching the system controls
       Row() {
@@ -848,35 +805,6 @@ struct Index {
       }
     }
     return { id: -1, title: '', state: DriverState.Idle, statusText: '空闲' };
-  }
-
-  // Menu for the 中 (input method) button: pick between the experimental
-  // direct-input mode (system IME attached straight to the terminal) and the
-  // always-reliable input bar. Selecting a mode turns the other off.
-  @Builder
-  private buildImeMenu() {
-    Menu() {
-      MenuItem({
-        content: this.directInput ? '✓ 直接输入（实验）' : '直接输入（实验）'
-      })
-        .onClick(() => {
-          this.directInput = !this.directInput;
-          if (this.directInput) {
-            this.showImeBar = false;
-          } else {
-            this.focusActiveTerminal();
-          }
-        })
-      MenuItem({
-        content: this.showImeBar ? '✓ 输入条' : '输入条'
-      })
-        .onClick(() => {
-          this.showImeBar = !this.showImeBar;
-          if (this.showImeBar) {
-            this.directInput = false;
-          }
-        })
-    }
   }
 
   // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
