@@ -77,6 +77,14 @@ export struct TerminalSurface {
   // showTextInput will fail and we immediately re-attach, so the user never
   // has to re-toggle the menu.
   private imeHeartbeat: number = -1;
+  // Guards against concurrent attach() calls from the heartbeat while a
+  // previous requestFocus+setTimeout is still pending.
+  private imeAttaching: boolean = false;
+  // ID of the invisible 1×1 Button that holds ArkUI focus while direct-input
+  // mode is on. IME attach() requires a focused ArkUI component in the window;
+  // XComponent SURFACE does not participate in ArkUI's focus system so this
+  // anchor is the only way to satisfy that requirement.
+  private imeAnchorId: string = this.surfaceId + '_imeanchor';
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -122,6 +130,19 @@ export struct TerminalSurface {
       this.buildTerminalXComponent();
       if (this.useTextFallback) {
         this.buildTextFallback();
+      }
+      // Invisible 1×1 focus anchor for direct-input mode. IME attach() needs a
+      // focused ArkUI component; XComponent SURFACE has none, so we park focus
+      // here before every attach() call (see attachDirectInput).
+      if (this.directInput) {
+        Button('')
+          .id(this.imeAnchorId)
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .focusable(true)
+          .focusOnTouch(false)
+          .zIndex(-1)
       }
       // IME bar: anchored to the bottom of the terminal. Toggled by the 中
       // button in the host page's tab strip (always visible there, never clipped).
@@ -191,15 +212,18 @@ export struct TerminalSurface {
         if (this.searchVisible) {
           this.searchInputController.stopEditing();
         }
-        // In direct-input mode the system IME is attached to the terminal; do
-        // NOT steal focus back to the XComponent or we break the IME binding
-        // and the candidate bar disappears. Instead re-show the IME so a tap
-        // re-engages composition.
+        // In direct-input mode keep focus on the invisible anchor Button (not
+        // the XComponent) so the IME attachment stays valid, then re-show the
+        // keyboard so a tap re-engages composition after any dismissal.
         if (this.directInput) {
+          focusControl.requestFocus(this.imeAnchorId);
           if (this.imeCtrl && this.imeAttached) {
             this.imeCtrl.showTextInput().catch((err: Object) => {
               console.error('IME showTextInput failed: ' + JSON.stringify(err));
             });
+          } else if (!this.imeAttached && !this.imeAttaching) {
+            // IME was lost; re-attach now that focus is parked on the anchor.
+            this.attachDirectInput();
           }
           return;
         }
@@ -627,96 +651,101 @@ export struct TerminalSurface {
   }
 
   private attachDirectInput(): void {
-    if (this.imeAttached) {
+    if (this.imeAttached || this.imeAttaching) {
       return;
     }
-    try {
-      const ctrl = inputMethod.getController();
-      this.imeCtrl = ctrl;
-      // NONE enter key so Enter is delivered via sendFunctionKey, not as a
-      // newline insert; TEXT type gives normal CJK composition.
-      const textConfig: inputMethod.TextConfig = {
-        inputAttribute: {
-          textInputType: inputMethod.TextInputType.TEXT,
-          enterKeyType: inputMethod.EnterKeyType.NONE
-        }
-      };
-      // showKeyboard=true is required to actually engage the input method —
-      // without it no candidate bar appears and composition never starts.
-      // On 2in1 the physical keyboard drives composition; the soft panel may
-      // or may not show depending on the device, but the IME pipeline is live.
-      ctrl.attach(true, textConfig).then(() => {
-        this.imeAttached = true;
-        // Explicitly show the text input so the IME candidate bar engages.
-        ctrl.showTextInput().catch((err: Object) => {
-          console.error('IME showTextInput failed: ' + JSON.stringify(err));
-        });
-        this.imeInsertCb = (text: string): void => {
-          if (text.length > 0) {
-            this.controller.write(text);
+    // IME attach() requires a focused ArkUI component in the window —
+    // error 12800003 "edit box is not focused" is thrown otherwise.
+    // XComponent SURFACE has no ArkUI focus, so we first park focus on the
+    // invisible anchor Button, then wait 150 ms for the focus request to
+    // settle before calling attach().
+    this.imeAttaching = true;
+    focusControl.requestFocus(this.imeAnchorId);
+    setTimeout(() => {
+      this.imeAttaching = false;
+      if (this.imeAttached || !this.directInput) {
+        return;
+      }
+      try {
+        const ctrl = inputMethod.getController();
+        this.imeCtrl = ctrl;
+        // NONE enter key so Enter is delivered via sendFunctionKey, not as a
+        // newline insert; TEXT type gives normal CJK composition.
+        const textConfig: inputMethod.TextConfig = {
+          inputAttribute: {
+            textInputType: inputMethod.TextInputType.TEXT,
+            enterKeyType: inputMethod.EnterKeyType.NONE
           }
         };
-        this.imeDeleteLeftCb = (len: number): void => {
-          for (let i = 0; i < len; i++) {
-            this.controller.write('\x7f'); // DEL / backspace
-          }
-        };
-        this.imeDeleteRightCb = (len: number): void => {
-          for (let i = 0; i < len; i++) {
-            this.controller.write('\x1b[3~'); // forward delete
-          }
-        };
-        this.imeFnKeyCb = (fk: inputMethod.FunctionKey): void => {
-          if (fk.enterKeyType !== undefined) {
-            this.controller.write('\r');
-          }
-        };
-        this.imeMoveCursorCb = (dir: inputMethod.Direction): void => {
-          switch (dir) {
-            case inputMethod.Direction.CURSOR_UP:
-              this.controller.write('\x1b[A');
-              break;
-            case inputMethod.Direction.CURSOR_DOWN:
-              this.controller.write('\x1b[B');
-              break;
-            case inputMethod.Direction.CURSOR_LEFT:
-              this.controller.write('\x1b[D');
-              break;
-            case inputMethod.Direction.CURSOR_RIGHT:
-              this.controller.write('\x1b[C');
-              break;
-            default:
-              break;
-          }
-        };
-        ctrl.on('insertText', this.imeInsertCb);
-        ctrl.on('deleteLeft', this.imeDeleteLeftCb);
-        ctrl.on('deleteRight', this.imeDeleteRightCb);
-        ctrl.on('sendFunctionKey', this.imeFnKeyCb);
-        ctrl.on('moveCursor', this.imeMoveCursorCb);
-        // Start heartbeat: every 1.5 s try to show the IME.  If the system has
-        // auto-detached it (background / tab switch / settings sheet / focus
-        // loss), showTextInput rejects and we do a full re-attach so typing
-        // Chinese resumes within 1.5 s without any user interaction.
-        if (this.imeHeartbeat >= 0) {
-          clearInterval(this.imeHeartbeat);
-        }
-        this.imeHeartbeat = setInterval(() => {
-          if (!this.directInput || !this.isActiveTab || !this.imeAttached) {
-            return;
-          }
-          this.imeCtrl?.showTextInput().catch(() => {
-            // The system detached our IME session; reset flag and re-attach.
-            this.imeAttached = false;
-            this.attachDirectInput();
+        ctrl.attach(true, textConfig).then(() => {
+          this.imeAttached = true;
+          ctrl.showTextInput().catch((err: Object) => {
+            console.error('IME showTextInput failed: ' + JSON.stringify(err));
           });
-        }, 1500) as number;
-      }).catch((err: Object) => {
-        console.error('IME attach failed: ' + JSON.stringify(err));
-      });
-    } catch (err) {
-      console.error('IME getController failed: ' + JSON.stringify(err));
-    }
+          this.imeInsertCb = (text: string): void => {
+            if (text.length > 0) {
+              this.controller.write(text);
+            }
+          };
+          this.imeDeleteLeftCb = (len: number): void => {
+            for (let i = 0; i < len; i++) {
+              this.controller.write('\x7f');
+            }
+          };
+          this.imeDeleteRightCb = (len: number): void => {
+            for (let i = 0; i < len; i++) {
+              this.controller.write('\x1b[3~');
+            }
+          };
+          this.imeFnKeyCb = (fk: inputMethod.FunctionKey): void => {
+            if (fk.enterKeyType !== undefined) {
+              this.controller.write('\r');
+            }
+          };
+          this.imeMoveCursorCb = (dir: inputMethod.Direction): void => {
+            switch (dir) {
+              case inputMethod.Direction.CURSOR_UP:
+                this.controller.write('\x1b[A');
+                break;
+              case inputMethod.Direction.CURSOR_DOWN:
+                this.controller.write('\x1b[B');
+                break;
+              case inputMethod.Direction.CURSOR_LEFT:
+                this.controller.write('\x1b[D');
+                break;
+              case inputMethod.Direction.CURSOR_RIGHT:
+                this.controller.write('\x1b[C');
+                break;
+              default:
+                break;
+            }
+          };
+          ctrl.on('insertText', this.imeInsertCb);
+          ctrl.on('deleteLeft', this.imeDeleteLeftCb);
+          ctrl.on('deleteRight', this.imeDeleteRightCb);
+          ctrl.on('sendFunctionKey', this.imeFnKeyCb);
+          ctrl.on('moveCursor', this.imeMoveCursorCb);
+          // Heartbeat: every 1.5 s call showTextInput. If the system has
+          // auto-detached the session, the call rejects and we re-attach.
+          if (this.imeHeartbeat >= 0) {
+            clearInterval(this.imeHeartbeat);
+          }
+          this.imeHeartbeat = setInterval(() => {
+            if (!this.directInput || !this.isActiveTab || !this.imeAttached) {
+              return;
+            }
+            this.imeCtrl?.showTextInput().catch(() => {
+              this.imeAttached = false;
+              this.attachDirectInput();
+            });
+          }, 1500) as number;
+        }).catch((err: Object) => {
+          console.error('IME attach failed: ' + JSON.stringify(err));
+        });
+      } catch (err) {
+        console.error('IME getController failed: ' + JSON.stringify(err));
+      }
+    }, 150);
   }
 
   private detachDirectInput(): void {
@@ -747,6 +776,7 @@ export struct TerminalSurface {
     this.imeFnKeyCb = null;
     this.imeMoveCursorCb = null;
     this.imeAttached = false;
+    this.imeAttaching = false;
     this.imeCtrl = null;
     this.requestTerminalFocus();
   }
