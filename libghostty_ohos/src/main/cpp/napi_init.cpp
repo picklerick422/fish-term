@@ -754,12 +754,6 @@ public:
         bool capsLock = false;
         OH_NativeXComponent_GetKeyEventCapsLockState(keyEvent, &capsLock);
 
-        if (m_wantsIme && !m_imeVisible) {
-            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-            ShowImeLocked(IME_REQUEST_REASON_OTHER);
-            NotifyImeStateLocked();
-        }
-
         // Ctrl+Shift+C = clipboard copy; Ctrl+Shift+V = clipboard paste.
         // These must be intercepted before BuildKeySequence, which would otherwise
         // treat Ctrl+letter as a terminal control character (ETX for Ctrl+C, etc.).
