@@ -1930,25 +1930,22 @@ private:
         return true;
     }
 
-    // Tear the IME attachment fully down (framework Detach + destroy the editor
-    // proxy) and build it again from scratch. Used to recover from a "not bound"
-    // (12800009) state where we still hold a proxy handle but the IMF never
-    // established (or has since dropped) the binding — typically because the
-    // initial attach at surface-create time happened before the window was a
-    // valid input client. We own the attachment here, so Detach is safe.
+    // Recover from a "not bound" (12800009) state where we still hold a proxy
+    // handle but the IMF never established (or has since dropped) the binding —
+    // typically because the initial attach at surface-create time happened
+    // before the window was a valid input client, or because returning from
+    // background invalidated it.
+    //
+    // CRITICAL: do NOT call OH_InputMethodController_Detach here. Detach is a
+    // synchronous cross-process IPC that blocks the MAIN thread when the IME
+    // service is in a bad state (e.g. just back from background) — that is the
+    // 3-second THREAD_BLOCK / APP_INPUT_BLOCK freeze. Instead drop our handle
+    // without detaching and re-Attach a fresh one (reusing the existing editor
+    // proxy); the new attachment supersedes the old binding. This mirrors the
+    // proven non-blocking path used when another tab steals the IME.
     void ReattachImeFromScratchLocked()
     {
-        if (m_imeInputMethodProxy != nullptr) {
-            if (g_activeImeHost.load() == this) {
-                OH_InputMethodController_Detach(m_imeInputMethodProxy);
-            }
-            m_imeInputMethodProxy = nullptr;
-        }
-        if (m_imeTextEditorProxy != nullptr) {
-            UnregisterImeHost(m_imeTextEditorProxy);
-            OH_TextEditorProxy_Destroy(m_imeTextEditorProxy);
-            m_imeTextEditorProxy = nullptr;
-        }
+        m_imeInputMethodProxy = nullptr;
         AttachImeLocked();
     }
 
