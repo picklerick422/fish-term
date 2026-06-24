@@ -2039,7 +2039,11 @@ private:
 
     void InsertImeText(const char16_t* text, size_t length)
     {
-        if (m_terminal == nullptr || text == nullptr || length == 0) {
+        // Only accept IME text when the soft keyboard is actually visible.
+        // Physical keyboard input goes through DispatchKeyEvent instead.
+        // This also acts as a safety net during the window between the HIDE
+        // callback and the background Detach completing.
+        if (!m_imeVisible || m_terminal == nullptr || text == nullptr || length == 0) {
             return;
         }
         const std::string utf8 = Utf16ToUtf8(text, length);
@@ -2050,7 +2054,7 @@ private:
 
     void DeleteImeForward(int32_t length)
     {
-        if (m_terminal == nullptr || length <= 0) {
+        if (!m_imeVisible || m_terminal == nullptr || length <= 0) {
             return;
         }
         for (int32_t i = 0; i < length; ++i) {
@@ -2061,7 +2065,7 @@ private:
 
     void DeleteImeBackward(int32_t length)
     {
-        if (m_terminal == nullptr || length <= 0) {
+        if (!m_imeVisible || m_terminal == nullptr || length <= 0) {
             return;
         }
         for (int32_t i = 0; i < length; ++i) {
@@ -2072,13 +2076,59 @@ private:
 
     void HandleImeKeyboardStatus(InputMethod_KeyboardStatus keyboardStatus)
     {
-        std::lock_guard<std::mutex> lock(m_surfaceMutex);
-        m_imeVisible = keyboardStatus == IME_KEYBOARD_STATUS_SHOW;
+        const bool nowVisible = keyboardStatus == IME_KEYBOARD_STATUS_SHOW;
+        {
+            std::lock_guard<std::mutex> lock(m_surfaceMutex);
+            m_imeVisible = nowVisible;
+        }
+
+        if (nowVisible) {
+            return;
+        }
+
+        // Keyboard dismissed: detach the IME so that physical keyboard events
+        // bypass the IME pipeline entirely and go directly to DispatchKeyEvent.
+        // Steps:
+        //   1. Immediately unregister the editor proxy → FindImeHost returns null
+        //      → no further InsertText/Delete/etc. callbacks reach this host.
+        //   2. Null our proxy references (non-blocking).
+        //   3. Perform the actual framework Detach on a background thread
+        //      (it is a blocking cross-process IPC; must not block the callback).
+        // On the next tap/click, ShowImeLocked will reattach from scratch.
+        InputMethod_InputMethodProxy* proxyToDrop = nullptr;
+        InputMethod_TextEditorProxy* editorToDrop = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(m_surfaceMutex);
+            proxyToDrop = m_imeInputMethodProxy;
+            editorToDrop = m_imeTextEditorProxy;
+            m_imeInputMethodProxy = nullptr;
+            m_imeTextEditorProxy = nullptr;
+            m_wantsIme = false;
+        }
+        TerminalHost* expected = this;
+        g_activeImeHost.compare_exchange_strong(expected, nullptr);
+
+        // Unregister immediately so FindImeHost(editorToDrop) returns null from
+        // now on — no new IME callbacks will dispatch to this TerminalHost.
+        if (editorToDrop != nullptr) {
+            UnregisterImeHost(editorToDrop);
+        }
+
+        if (proxyToDrop != nullptr || editorToDrop != nullptr) {
+            std::thread([proxyToDrop, editorToDrop]() {
+                if (proxyToDrop != nullptr) {
+                    OH_InputMethodController_Detach(proxyToDrop);
+                }
+                if (editorToDrop != nullptr) {
+                    OH_TextEditorProxy_Destroy(editorToDrop);
+                }
+            }).detach();
+        }
     }
 
     void HandleImeEnterKey(InputMethod_EnterKeyType)
     {
-        if (m_terminal == nullptr) {
+        if (!m_imeVisible || m_terminal == nullptr) {
             return;
         }
         static constexpr char kEnter[] = "\r";
@@ -2087,7 +2137,7 @@ private:
 
     void HandleImeMoveCursor(InputMethod_Direction direction)
     {
-        if (m_terminal == nullptr) {
+        if (!m_imeVisible || m_terminal == nullptr) {
             return;
         }
 
