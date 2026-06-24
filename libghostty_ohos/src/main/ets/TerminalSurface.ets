@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl';
 import { display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -375,9 +376,20 @@ export struct TerminalSurface {
     }
     // ~60fps poll. Only bumps presentTick when the native side actually produced
     // a new frame, so an idle terminal submits zero ArkUI frames.
+    let pollCount = 0;
+    let presentCount = 0;
     this.presentTimer = setInterval(() => {
+      pollCount++;
       if (this.controller.consumePresentNeeded()) {
+        presentCount++;
         this.presentTick = (this.presentTick + 1) & 0xffff;
+        hilog.info(0x0, 'fishpresent',
+          'present needed -> tick=%{public}d presentCount=%{public}d poll=%{public}d',
+          this.presentTick, presentCount, pollCount);
+      }
+      if (pollCount % 120 === 0) {
+        hilog.info(0x0, 'fishpresent', 'poll alive poll=%{public}d presents=%{public}d',
+          pollCount, presentCount);
       }
     }, 16) as number;
   }
