@@ -1793,11 +1793,14 @@ private:
                 EmitInput(data);
             });
             m_terminal->start();
-            AttachImeLocked();
-            NotifyImeStateLocked();
+            // Do NOT attach the IME here. An attached-but-hidden IME grabs the
+            // FIRST physical keystroke and routes it through InsertText instead
+            // of DispatchKeyEvent, which is the "first character not displayed"
+            // bug. The IME is attached lazily in ShowImeLocked when the user
+            // taps to request the soft keyboard; physical-keyboard input then
+            // always goes straight to DispatchKeyEvent.
         } else if (m_renderer) {
             m_terminal->setRenderer(m_renderer);
-            AttachImeLocked();
         }
     }
 
