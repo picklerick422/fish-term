@@ -2094,9 +2094,9 @@ private:
             return;
         }
 
-        OH_TextConfig_SetInputType(config, IME_TEXT_INPUT_TYPE_TEXT);
+        OH_TextConfig_SetInputType(config, IME_TEXT_INPUT_TYPE_NONE);
         OH_TextConfig_SetEnterKeyType(config, IME_ENTER_KEY_NEWLINE);
-        OH_TextConfig_SetPreviewTextSupport(config, true);
+        OH_TextConfig_SetPreviewTextSupport(config, false);
 
         std::u16string text;
         int32_t cursorIndex = 0;
