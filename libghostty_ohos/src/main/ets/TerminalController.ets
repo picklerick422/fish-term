@@ -74,6 +74,14 @@ export class TerminalController {
   private copyRequestListener: (() => void) | null = null;
   private pasteRequestListener: (() => void) | null = null;
   private inputPollTimer: number = -1;
+  // Invoked right after output is fed (and the native side has drawn+flushed).
+  // The host surface uses it to bump an @State so ArkUI runs a frame and
+  // composites the XComponent's SURFACE layer. On devices/windows where the
+  // XComponent receives no independent vsync, a bare NativeWindow flush is not
+  // presented until some unrelated UI event; this synthetic repaint pulse is
+  // what makes terminal output (e.g. the echo of a physical-keyboard keystroke)
+  // appear immediately instead of one keystroke late.
+  private repaintListener: (() => void) | null = null;
   private trackedWindow: window.Window | null = null;
   private windowRectListener: ((options: window.RectChangeOptions) => void) | null = null;
   private lastReportedSize: TerminalSize = { cols: 0, rows: 0 };
@@ -244,6 +252,16 @@ export class TerminalController {
       return;
     }
     this.native.feedOutput(data);
+    // The native feedOutput above already drew+flushed the new content. Poke the
+    // host surface so ArkUI runs a frame and the compositor presents that buffer
+    // now, rather than waiting for the next input event.
+    if (this.repaintListener) {
+      this.repaintListener();
+    }
+  }
+
+  setRepaintListener(listener: (() => void) | null): void {
+    this.repaintListener = listener;
   }
 
   resize(cols: number, rows: number): void {

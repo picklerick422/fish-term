@@ -30,6 +30,10 @@ export struct TerminalSurface {
   private contextMenuScreenContent: string = '';
   private contextMenuCanPaste: boolean = false;
 
+  // Bumped on every terminal output flush to force ArkUI to recomposite the
+  // XComponent's SURFACE layer (see TerminalController.repaintListener). Drives
+  // an imperceptible opacity change so the change is never optimized away.
+  @State private repaintTick: number = 0;
   @State private appliedFontSize: number = DEFAULT_TERMINAL_CONFIG.fontSize;
   @State private useTextFallback: boolean = false;
   @State private fallbackContent: string = '';
@@ -69,6 +73,11 @@ export struct TerminalSurface {
     this.controller.setPasteRequestListener(() => {
       this.pasteFromClipboard();
     });
+    this.controller.setRepaintListener(() => {
+      // Wrap so the value always changes; ArkUI re-renders the XComponent and
+      // the compositor latches the latest native surface buffer.
+      this.repaintTick = (this.repaintTick + 1) & 0xffff;
+    });
     this.appliedFontSize = this.controller.getConfig().fontSize;
   }
 
@@ -78,6 +87,7 @@ export struct TerminalSurface {
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
     this.controller.setPasteRequestListener(null);
+    this.controller.setRepaintListener(null);
   }
 
   build() {
@@ -160,6 +170,12 @@ export struct TerminalSurface {
       .tabIndex(-1)
       .width('100%')
       .height('100%')
+      // Reading repaintTick here ties the XComponent's composited output to the
+      // tick that TerminalController bumps after every output flush. The value
+      // alternates by 1/2000 (imperceptible) only to guarantee ArkUI does not
+      // optimize the unchanged frame away, forcing the compositor to present the
+      // freshly flushed native surface buffer immediately.
+      .opacity(1.0 - (this.repaintTick % 2) * 0.0005)
       .backgroundColor(this.surfaceColor)
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
