@@ -2,7 +2,6 @@ import { common } from '@kit.AbilityKit';
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl';
 import { display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { inputMethod } from '@kit.IMEKit';
 import { TerminalController } from './TerminalController';
 import { DEFAULT_TERMINAL_CONFIG, TerminalConfig, TerminalLinkListener, TerminalSearchStatus } from './TerminalTypes';
 
@@ -56,34 +55,22 @@ export struct TerminalSurface {
   private imeBarId: string = this.surfaceId + '_imebar';
   private imeBarController: TextInputController = new TextInputController();
 
-  // Direct input mode (experimental, "native"): attach the system input
-  // method controller directly so committed text (incl. composed CJK) is
-  // delivered via the insertText callback and written straight to the
-  // terminal — no intermediate bar. The IME composition panel floats over
-  // the terminal; only confirmed text is forwarded (composing pinyin is not).
+  // Direct input mode (experimental, "native"): a fully transparent TextInput
+  // covers the terminal and holds focus. Because it is a real ArkUI editable
+  // component, the system IME pipeline attaches to it automatically — no manual
+  // inputMethod.attach() (which fails with 12800003 "edit box is not focused"
+  // since XComponent SURFACE has no ArkUI focus). Committed text (incl. composed
+  // CJK) arrives via onChange and is diffed and written straight to the
+  // terminal; the user sees only the terminal's own cursor.
   @Prop @Watch('onDirectInputChange') directInput: boolean = false;
   // Bumped by the host page each time the app returns to foreground so we can
-  // re-attach the IME (the system auto-detaches it when the app is backgrounded).
+  // restore focus to the hidden input (the system clears focus on background).
   @Prop @Watch('onForegroundSignal') foregroundSignal: number = 0;
-  private imeAttached: boolean = false;
-  private imeCtrl: inputMethod.InputMethodController | null = null;
-  private imeInsertCb: ((text: string) => void) | null = null;
-  private imeDeleteLeftCb: ((len: number) => void) | null = null;
-  private imeDeleteRightCb: ((len: number) => void) | null = null;
-  private imeFnKeyCb: ((fk: inputMethod.FunctionKey) => void) | null = null;
-  private imeMoveCursorCb: ((dir: inputMethod.Direction) => void) | null = null;
-  // Heartbeat timer: periodically calls showTextInput to keep the IME alive.
-  // If the system has auto-detached (focus loss, background, tab switch, etc.)
-  // showTextInput will fail and we immediately re-attach, so the user never
-  // has to re-toggle the menu.
-  private imeHeartbeat: number = -1;
-  // Guards against concurrent attach() calls from the heartbeat while a
-  // previous requestFocus+setTimeout is still pending.
-  private imeAttaching: boolean = false;
-  // ID of the invisible 1×1 Button that holds ArkUI focus while direct-input
-  // mode is on. IME attach() requires a focused ArkUI component in the window;
-  // XComponent SURFACE does not participate in ArkUI's focus system so this
-  // anchor is the only way to satisfy that requirement.
+  // The hidden input's current text and the last value we diffed against.
+  @State private directInputText: string = '';
+  private directInputLast: string = '';
+  private directInputController: TextInputController = new TextInputController();
+  // ID of the transparent full-surface TextInput used for direct input.
   private imeAnchorId: string = this.surfaceId + '_imeanchor';
 
   aboutToAppear(): void {
@@ -118,7 +105,6 @@ export struct TerminalSurface {
 
   aboutToDisappear(): void {
     this.stopFallbackPolling();
-    this.detachDirectInput();
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
@@ -131,18 +117,24 @@ export struct TerminalSurface {
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
-      // Invisible 1×1 focus anchor for direct-input mode. IME attach() needs a
-      // focused ArkUI component; XComponent SURFACE has none, so we park focus
-      // here before every attach() call (see attachDirectInput).
+      // Transparent full-surface input for direct-input mode. It holds focus so
+      // the system IME attaches to it; committed text is diffed in onChange and
+      // written to the terminal. Invisible (transparent text/caret/background)
+      // so the user only sees the terminal's own cursor.
       if (this.directInput) {
-        Button('')
+        TextInput({ text: this.directInputText, controller: this.directInputController })
           .id(this.imeAnchorId)
-          .width(1)
-          .height(1)
-          .opacity(0)
-          .focusable(true)
-          .focusOnTouch(false)
-          .zIndex(-1)
+          .width('100%')
+          .height('100%')
+          .fontColor(Color.Transparent)
+          .caretColor(Color.Transparent)
+          .backgroundColor(Color.Transparent)
+          .placeholderColor(Color.Transparent)
+          .borderWidth(0)
+          .padding(0)
+          .enableKeyboardOnFocus(true)
+          .onChange((v: string) => { this.handleDirectInputChange(v); })
+          .onSubmit(() => { this.handleDirectInputSubmit(); })
       }
       // IME bar: anchored to the bottom of the terminal. Toggled by the 中
       // button in the host page's tab strip (always visible there, never clipped).
@@ -212,19 +204,10 @@ export struct TerminalSurface {
         if (this.searchVisible) {
           this.searchInputController.stopEditing();
         }
-        // In direct-input mode keep focus on the invisible anchor Button (not
-        // the XComponent) so the IME attachment stays valid, then re-show the
-        // keyboard so a tap re-engages composition after any dismissal.
+        // In direct-input mode keep focus on the transparent TextInput (not the
+        // XComponent) so the IME stays attached; a tap re-engages composition.
         if (this.directInput) {
           focusControl.requestFocus(this.imeAnchorId);
-          if (this.imeCtrl && this.imeAttached) {
-            this.imeCtrl.showTextInput().catch((err: Object) => {
-              console.error('IME showTextInput failed: ' + JSON.stringify(err));
-            });
-          } else if (!this.imeAttached && !this.imeAttaching) {
-            // IME was lost; re-attach now that focus is parked on the anchor.
-            this.attachDirectInput();
-          }
           return;
         }
         // Give focus to the XComponent so native key events (arrow keys, control
@@ -236,13 +219,11 @@ export struct TerminalSurface {
       .focusOnTouch(true)
       .defaultFocus(true)
       .onFocus(() => {
-        // The system auto-detaches the IME on any focus loss (settings sheet,
-        // app background, tab switch, window blur…). Whenever this surface
-        // regains focus while direct-input mode is on, re-attach so the user
-        // never has to re-toggle the menu to keep typing Chinese.
+        // In direct-input mode the transparent TextInput must hold focus, not
+        // the XComponent. If focus lands here (e.g. after a sheet closes),
+        // bounce it back to the hidden input so IME composition keeps working.
         if (this.directInput && this.isActiveTab) {
-          this.imeAttached = false;
-          this.attachDirectInput();
+          this.focusDirectInput();
         }
       })
       .width('100%')
@@ -609,176 +590,88 @@ export struct TerminalSurface {
     return `-/${this.searchTotal}`;
   }
 
-  // Re-attach when this surface becomes the active tab while direct mode is on.
+  // When this surface becomes the active tab, restore focus to the hidden
+  // input so direct typing resumes; when it goes inactive, drop focus.
   private onIsActiveTabChange(): void {
     if (!this.directInput) {
       return;
     }
     if (this.isActiveTab) {
-      this.imeAttached = false; // force fresh attach
-      this.attachDirectInput();
-    } else {
-      this.detachDirectInput();
+      this.focusDirectInput();
     }
   }
 
-  // Re-attach after app returns to foreground (system auto-detaches on background).
-  // Force a clean cycle: fully detach the (now-stale) session, then re-attach
-  // after a short delay so the window has regained focus first — attaching too
-  // early, before the window is focusable again, is silently ignored by the
-  // system and leaves the IME dead until the user re-toggles the menu.
+  // After the app returns to foreground the system clears focus, so re-request
+  // it on the hidden input to bring the IME back without any user interaction.
   private onForegroundSignal(): void {
-    if (!this.directInput || !this.isActiveTab) {
-      return;
+    if (this.directInput && this.isActiveTab) {
+      this.focusDirectInput();
     }
-    this.detachDirectInput();
-    setTimeout(() => {
-      if (this.directInput && this.isActiveTab) {
-        this.imeAttached = false;
-        this.attachDirectInput();
-      }
-    }, 300);
   }
 
-  // React to the host-controlled directInput prop. Attach/detach the system
-  // input method controller so committed text flows straight to the terminal.
+  // React to the host-controlled directInput prop. Focus the hidden input so
+  // the IME attaches; on disable, clear state and return focus to the terminal.
   private onDirectInputChange(): void {
     if (this.directInput) {
-      this.attachDirectInput();
+      this.directInputText = '';
+      this.directInputLast = '';
+      this.focusDirectInput();
     } else {
-      this.detachDirectInput();
+      this.directInputText = '';
+      this.directInputLast = '';
+      this.requestTerminalFocus();
     }
   }
 
-  private attachDirectInput(): void {
-    if (this.imeAttached || this.imeAttaching) {
-      return;
-    }
-    // IME attach() requires a focused ArkUI component in the window —
-    // error 12800003 "edit box is not focused" is thrown otherwise.
-    // XComponent SURFACE has no ArkUI focus, so we first park focus on the
-    // invisible anchor Button, then wait 150 ms for the focus request to
-    // settle before calling attach().
-    this.imeAttaching = true;
-    focusControl.requestFocus(this.imeAnchorId);
+  // Request focus on the transparent direct-input TextInput. Deferred so the
+  // component exists in the tree (it is conditionally rendered on directInput).
+  private focusDirectInput(): void {
     setTimeout(() => {
-      this.imeAttaching = false;
-      if (this.imeAttached || !this.directInput) {
-        return;
+      if (this.directInput && this.isActiveTab) {
+        focusControl.requestFocus(this.imeAnchorId);
       }
-      try {
-        const ctrl = inputMethod.getController();
-        this.imeCtrl = ctrl;
-        // NONE enter key so Enter is delivered via sendFunctionKey, not as a
-        // newline insert; TEXT type gives normal CJK composition.
-        const textConfig: inputMethod.TextConfig = {
-          inputAttribute: {
-            textInputType: inputMethod.TextInputType.TEXT,
-            enterKeyType: inputMethod.EnterKeyType.NONE
-          }
-        };
-        ctrl.attach(true, textConfig).then(() => {
-          this.imeAttached = true;
-          ctrl.showTextInput().catch((err: Object) => {
-            console.error('IME showTextInput failed: ' + JSON.stringify(err));
-          });
-          this.imeInsertCb = (text: string): void => {
-            if (text.length > 0) {
-              this.controller.write(text);
-            }
-          };
-          this.imeDeleteLeftCb = (len: number): void => {
-            for (let i = 0; i < len; i++) {
-              this.controller.write('\x7f');
-            }
-          };
-          this.imeDeleteRightCb = (len: number): void => {
-            for (let i = 0; i < len; i++) {
-              this.controller.write('\x1b[3~');
-            }
-          };
-          this.imeFnKeyCb = (fk: inputMethod.FunctionKey): void => {
-            if (fk.enterKeyType !== undefined) {
-              this.controller.write('\r');
-            }
-          };
-          this.imeMoveCursorCb = (dir: inputMethod.Direction): void => {
-            switch (dir) {
-              case inputMethod.Direction.CURSOR_UP:
-                this.controller.write('\x1b[A');
-                break;
-              case inputMethod.Direction.CURSOR_DOWN:
-                this.controller.write('\x1b[B');
-                break;
-              case inputMethod.Direction.CURSOR_LEFT:
-                this.controller.write('\x1b[D');
-                break;
-              case inputMethod.Direction.CURSOR_RIGHT:
-                this.controller.write('\x1b[C');
-                break;
-              default:
-                break;
-            }
-          };
-          ctrl.on('insertText', this.imeInsertCb);
-          ctrl.on('deleteLeft', this.imeDeleteLeftCb);
-          ctrl.on('deleteRight', this.imeDeleteRightCb);
-          ctrl.on('sendFunctionKey', this.imeFnKeyCb);
-          ctrl.on('moveCursor', this.imeMoveCursorCb);
-          // Heartbeat: every 1.5 s call showTextInput. If the system has
-          // auto-detached the session, the call rejects and we re-attach.
-          if (this.imeHeartbeat >= 0) {
-            clearInterval(this.imeHeartbeat);
-          }
-          this.imeHeartbeat = setInterval(() => {
-            if (!this.directInput || !this.isActiveTab || !this.imeAttached) {
-              return;
-            }
-            this.imeCtrl?.showTextInput().catch(() => {
-              this.imeAttached = false;
-              this.attachDirectInput();
-            });
-          }, 1500) as number;
-        }).catch((err: Object) => {
-          console.error('IME attach failed: ' + JSON.stringify(err));
-        });
-      } catch (err) {
-        console.error('IME getController failed: ' + JSON.stringify(err));
-      }
-    }, 150);
+    }, 50);
   }
 
-  private detachDirectInput(): void {
-    const ctrl = this.imeCtrl;
-    if (!ctrl) {
-      this.imeAttached = false;
+  // Diff the hidden input's new value against the previous one and forward the
+  // change to the terminal: appended text is written verbatim (this is how
+  // committed CJK arrives), removed text is sent as backspaces. The TextInput's
+  // own content is never shown — it is only a capture buffer.
+  private handleDirectInputChange(value: string): void {
+    const prev = this.directInputLast;
+    if (value === prev) {
       return;
     }
-    try {
-      if (this.imeHeartbeat >= 0) {
-        clearInterval(this.imeHeartbeat);
-        this.imeHeartbeat = -1;
-      }
-      if (this.imeInsertCb) { ctrl.off('insertText', this.imeInsertCb); }
-      if (this.imeDeleteLeftCb) { ctrl.off('deleteLeft', this.imeDeleteLeftCb); }
-      if (this.imeDeleteRightCb) { ctrl.off('deleteRight', this.imeDeleteRightCb); }
-      if (this.imeFnKeyCb) { ctrl.off('sendFunctionKey', this.imeFnKeyCb); }
-      if (this.imeMoveCursorCb) { ctrl.off('moveCursor', this.imeMoveCursorCb); }
-      ctrl.detach().catch((err: Object) => {
-        console.error('IME detach failed: ' + JSON.stringify(err));
-      });
-    } catch (err) {
-      console.error('IME off/detach failed: ' + JSON.stringify(err));
+    // Common-prefix diff.
+    let common = 0;
+    const max = Math.min(value.length, prev.length);
+    while (common < max && value.charCodeAt(common) === prev.charCodeAt(common)) {
+      common++;
     }
-    this.imeInsertCb = null;
-    this.imeDeleteLeftCb = null;
-    this.imeDeleteRightCb = null;
-    this.imeFnKeyCb = null;
-    this.imeMoveCursorCb = null;
-    this.imeAttached = false;
-    this.imeAttaching = false;
-    this.imeCtrl = null;
-    this.requestTerminalFocus();
+    const removed = prev.length - common;
+    for (let i = 0; i < removed; i++) {
+      this.controller.write('\x7f'); // backspace for each removed char
+    }
+    const added = value.substring(common);
+    if (added.length > 0) {
+      this.controller.write(added);
+    }
+    this.directInputLast = value;
+    // Keep the buffer from growing without bound. Once it is reasonably long
+    // and we are not mid-composition (value equals last), reset it to empty.
+    if (value.length > 64) {
+      this.directInputText = '';
+      this.directInputLast = '';
+    }
+  }
+
+  // Enter pressed in the hidden input: send a carriage return and reset the
+  // capture buffer so the next line starts fresh.
+  private handleDirectInputSubmit(): void {
+    this.controller.write('\r');
+    this.directInputText = '';
+    this.directInputLast = '';
+    this.focusDirectInput();
   }
 
   // React to the host-controlled showImeBar prop changing.
