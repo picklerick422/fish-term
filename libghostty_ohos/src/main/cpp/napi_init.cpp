@@ -103,6 +103,12 @@ constexpr uint64_t LONG_PRESS_MS = 500;
 constexpr uint64_t MULTI_CLICK_MS = 400;
 constexpr float MOVE_THRESHOLD = 20.0f;
 constexpr auto CURSOR_BLINK_TICK = std::chrono::milliseconds(250);
+// Frame cadence for trailing redraws that flush the latest buffer through the
+// native-window swapchain after content stops changing (~60fps).
+constexpr auto RENDER_FRAME_TICK = std::chrono::milliseconds(16);
+// Number of trailing redraws to emit after a content change so the most recent
+// buffer is guaranteed presented even with a multi-buffer queue.
+constexpr int TRAILING_FLUSH_FRAMES = 2;
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_TAB =
     static_cast<OH_NativeXComponent_KeyCode>(15);
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_1 =
@@ -1630,8 +1636,21 @@ private:
             std::unique_lock<std::mutex> lock(m_renderMutex);
             while (m_renderThreadRunning) {
                 const bool animateCursor = m_renderer && m_renderer->cursorBlinkEnabled();
+                // After content changes we schedule a few "trailing" redraws spaced
+                // at frame cadence. The OHOS native-window buffer queue presents the
+                // most recently flushed buffer one (or more) vsync later; when input
+                // stops and cursor blink is off (e.g. Claude Code's TUI hides/steadies
+                // the cursor) the render thread would otherwise block forever, leaving
+                // the previous buffer latched on the compositor — the final character
+                // never appears ("hello world" shown as "hell world"). The trailing
+                // redraws push the latest buffer through the swapchain so the final
+                // state is always presented.
                 if (animateCursor) {
                     m_renderCv.wait_for(lock, CURSOR_BLINK_TICK, [this]() {
+                        return !m_renderThreadRunning || m_renderDirty || m_resizePending;
+                    });
+                } else if (m_trailingFrames > 0) {
+                    m_renderCv.wait_for(lock, RENDER_FRAME_TICK, [this]() {
                         return !m_renderThreadRunning || m_renderDirty || m_resizePending;
                     });
                 } else {
@@ -1647,7 +1666,16 @@ private:
                 const bool shouldResize = m_resizePending;
                 const uint32_t resizeWidth = m_pendingWidth;
                 const uint32_t resizeHeight = m_pendingHeight;
-                const bool shouldRender = m_renderDirty || shouldResize || animateCursor;
+                const bool hadContent = m_renderDirty || shouldResize;
+                const bool trailing = !hadContent && m_trailingFrames > 0;
+                const bool shouldRender = hadContent || animateCursor || trailing;
+                // Fresh content resets the trailing-flush countdown; a trailing tick
+                // decrements it until the swapchain has cycled the latest buffer out.
+                if (hadContent) {
+                    m_trailingFrames = TRAILING_FLUSH_FRAMES;
+                } else if (trailing) {
+                    --m_trailingFrames;
+                }
                 m_resizePending = false;
                 m_renderDirty = false;
                 lock.unlock();
@@ -2449,6 +2477,9 @@ private:
     std::mutex m_surfaceMutex;
     bool m_renderThreadRunning = false;
     bool m_renderDirty = false;
+    // Remaining trailing redraws to push the latest buffer through the swapchain
+    // after content stops changing. Only touched on the render thread.
+    int m_trailingFrames = 0;
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
