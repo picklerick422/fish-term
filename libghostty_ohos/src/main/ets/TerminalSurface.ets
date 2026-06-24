@@ -112,12 +112,13 @@ export struct TerminalSurface {
   private buildTerminalXComponent() {
     XComponent({
       id: this.surfaceId,
-      // SURFACE: the native side drives presentation directly by requesting a
-      // system vsync after each flush (OH_NativeVSync), so RS composites this
-      // standalone surface layer without any ArkUI frame. No JS present poll or
-      // node-dirty trick is involved — those could never re-latch the surface on
-      // this device because it emits no idle vsync for ArkUI to ride either.
-      type: XComponentType.SURFACE,
+      // TEXTURE: diagnostics proved native OH_NativeVSync request+callback both
+      // fire yet a SURFACE layer is never composited on this device — the surface
+      // is composited as part of the ArkUI window tree, not as an independent RS
+      // layer, so only a real ArkUI window frame that dirties THIS node presents
+      // it. As a TEXTURE the native buffer is the node's own drawn content, so
+      // dirtying the node makes ArkUI re-sample and recomposite it.
+      type: XComponentType.TEXTURE,
       libraryname: 'libghostty_ohos'
     })
       .onLoad((nativeContext?: Object) => {
@@ -180,6 +181,13 @@ export struct TerminalSurface {
       .width('100%')
       .height('100%')
       .backgroundColor(this.surfaceColor)
+      // Present driver. Every imperceptible trick (sibling text, bg colour,
+      // sub-pixel translate) was culled by ArkUI as "no visible change" and never
+      // dirtied this node, so the TEXTURE was never re-sampled. A 1px layout
+      // offset cannot be culled: it forces ArkUI to re-lay-out and recomposite
+      // this node, re-sampling the latest native buffer. Toggled only when native
+      // produced a frame (presentTick), so an idle terminal does not jitter.
+      .offset({ x: 0, y: this.presentTick % 2 === 0 ? 0 : 1 })
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 
@@ -358,12 +366,27 @@ export struct TerminalSurface {
     this.fallbackTimer = -1;
   }
 
-  // Presentation is driven natively (OH_NativeVSync after each flush); the JS
-  // poll is no longer needed. Kept as no-ops so existing call sites stay valid.
   private startPresentPolling(): void {
+    if (this.presentTimer >= 0) {
+      return;
+    }
+    // ~60fps dirty-gated poll. Only bumps presentTick when native produced a new
+    // frame. presentTick drives a 1px offset toggle on the XComponent node (see
+    // build), which is the only un-cullable way to dirty the node so ArkUI
+    // re-samples the TEXTURE and recomposites. Idle terminal bumps nothing.
+    this.presentTimer = setInterval(() => {
+      if (this.controller.consumePresentNeeded()) {
+        this.presentTick = (this.presentTick + 1) & 0xffff;
+      }
+    }, 16) as number;
   }
 
   private stopPresentPolling(): void {
+    if (this.presentTimer < 0) {
+      return;
+    }
+    clearInterval(this.presentTimer);
+    this.presentTimer = -1;
   }
 
   private syncFallbackScreen(): void {
