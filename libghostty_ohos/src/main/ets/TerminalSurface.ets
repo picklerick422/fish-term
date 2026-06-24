@@ -150,12 +150,12 @@ export struct TerminalSurface {
           .enableAutoFill(false)
           .selectionMenuHidden(true)
           .enterKeyType(EnterKeyType.Send)
-          // Pass ALL pointer events (scroll, tap, mouse-drag for selection,
-          // right-click) through to the XComponent underneath. The TextInput
-          // retains its programmatic focus (and thus IME attachment) regardless
-          // of hit-test behaviour — focus and pointer-event routing are
-          // independent in ArkUI.
-          .hitTestBehavior(HitTestMode.None)
+          // NOTE: the overlay must stay hit-testable. A tap landing on this
+          // transparent TextInput is what gives it real (user-initiated) focus
+          // and raises the system IME; HitTestMode.None made taps pass through
+          // to the XComponent, so the IME never came up and CJK input died.
+          // Scroll / drag-select therefore don't reach the terminal while
+          // direct-input is on — the user turns direct-input off for those.
           // Intercept hardware-keyboard control combos (Ctrl-C, Shift-Tab,
           // arrows, etc.) BEFORE the IME sees them and forward them to the
           // terminal, so shell/Claude-Code shortcuts work without first having
