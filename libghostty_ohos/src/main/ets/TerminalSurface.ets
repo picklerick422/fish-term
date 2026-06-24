@@ -95,16 +95,6 @@ export struct TerminalSurface {
   build() {
     Stack({ alignContent: Alignment.BottomStart }) {
       this.buildTerminalXComponent();
-      // Invisible 1px present-driver. Its text content flips with presentTick;
-      // re-rendering this sibling submits an ArkUI frame, and every ArkUI frame
-      // makes the compositor re-latch the XComponent SURFACE layer's newest
-      // buffer. The property is on this element, never on the XComponent, so the
-      // surface is never wrapped in an opacity/offscreen cache.
-      Text(this.presentTick % 2 === 0 ? ' ' : '​')
-        .width(1)
-        .height(1)
-        .opacity(0.01)
-        .hitTestBehavior(HitTestMode.None)
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
@@ -190,7 +180,17 @@ export struct TerminalSurface {
       .tabIndex(-1)
       .width('100%')
       .height('100%')
-      .backgroundColor(this.surfaceColor)
+      // Present driver. The native (TEXTURE) content fully covers this background,
+      // so flipping the LSB of the colour is invisible, but it marks the
+      // XComponent render node dirty. On the next ArkUI frame the node is
+      // re-recorded, which re-samples the latest native texture buffer — the same
+      // re-latch that scrolling triggers, but driven on demand by the present
+      // poll (presentTick is only bumped when native actually produced a frame).
+      // The mark MUST be on the XComponent node itself, not a sibling: a sibling's
+      // dirty rect never re-records this node, so its newest buffer is never
+      // composited. opacity is avoided here because <1 pushes the surface into an
+      // offscreen cache and freezes native updates.
+      .backgroundColor(this.presentTick % 2 === 0 ? this.surfaceColor : '#0B0D11')
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 
