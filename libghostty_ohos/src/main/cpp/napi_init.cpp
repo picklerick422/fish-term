@@ -1909,6 +1909,49 @@ private:
         g_activeImeHost.compare_exchange_strong(expected, nullptr);
     }
 
+    // Issue a single ShowTextInput against the current proxy. Returns true on
+    // success. The proxy/editor must already be attached.
+    bool ShowTextInputOnceLocked(InputMethod_RequestKeyboardReason reason)
+    {
+        if (m_imeInputMethodProxy == nullptr) {
+            return false;
+        }
+        InputMethod_AttachOptions* options =
+            OH_AttachOptions_CreateWithRequestKeyboardReason(true, reason);
+        if (options == nullptr) {
+            return false;
+        }
+        const InputMethod_ErrorCode rc = OH_InputMethodProxy_ShowTextInput(m_imeInputMethodProxy, options);
+        OH_AttachOptions_Destroy(options);
+        if (rc != IME_ERR_OK) {
+            OH_LOG_WARN(LOG_APP, "Failed to show IME: %{public}d", static_cast<int>(rc));
+            return false;
+        }
+        return true;
+    }
+
+    // Tear the IME attachment fully down (framework Detach + destroy the editor
+    // proxy) and build it again from scratch. Used to recover from a "not bound"
+    // (12800009) state where we still hold a proxy handle but the IMF never
+    // established (or has since dropped) the binding — typically because the
+    // initial attach at surface-create time happened before the window was a
+    // valid input client. We own the attachment here, so Detach is safe.
+    void ReattachImeFromScratchLocked()
+    {
+        if (m_imeInputMethodProxy != nullptr) {
+            if (g_activeImeHost.load() == this) {
+                OH_InputMethodController_Detach(m_imeInputMethodProxy);
+            }
+            m_imeInputMethodProxy = nullptr;
+        }
+        if (m_imeTextEditorProxy != nullptr) {
+            UnregisterImeHost(m_imeTextEditorProxy);
+            OH_TextEditorProxy_Destroy(m_imeTextEditorProxy);
+            m_imeTextEditorProxy = nullptr;
+        }
+        AttachImeLocked();
+    }
+
     void ShowImeLocked(InputMethod_RequestKeyboardReason reason)
     {
         m_wantsIme = true;
@@ -1926,17 +1969,24 @@ private:
             return;
         }
 
-        InputMethod_AttachOptions* options =
-            OH_AttachOptions_CreateWithRequestKeyboardReason(true, reason);
-        if (options == nullptr) {
+        if (ShowTextInputOnceLocked(reason)) {
+            m_imeVisible = true;
             return;
         }
-        const InputMethod_ErrorCode rc = OH_InputMethodProxy_ShowTextInput(m_imeInputMethodProxy, options);
-        OH_AttachOptions_Destroy(options);
-        if (rc == IME_ERR_OK) {
+
+        // ShowTextInput failed — the handle exists but the IMF reports the
+        // client is not bound (12800009). Recover by re-attaching from scratch,
+        // then retry once. This is rate-limited so a persistently failing bind
+        // (e.g. window genuinely not an input client) cannot turn every
+        // keystroke into a Detach/Attach storm.
+        const uint64_t now = getCurrentTimeMs();
+        if (now - m_lastImeReattachMs < IME_REATTACH_COOLDOWN_MS) {
+            return;
+        }
+        m_lastImeReattachMs = now;
+        ReattachImeFromScratchLocked();
+        if (ShowTextInputOnceLocked(reason)) {
             m_imeVisible = true;
-        } else {
-            OH_LOG_WARN(LOG_APP, "Failed to show IME: %{public}d", static_cast<int>(rc));
         }
     }
 
@@ -2396,6 +2446,11 @@ private:
     InputMethod_InputMethodProxy* m_imeInputMethodProxy = nullptr;
     bool m_imeVisible = false;
     bool m_wantsIme = false;
+    // Throttle for the "not bound" (12800009) self-healing re-attach so a
+    // persistently failing bind cannot turn every keystroke into a Detach/Attach
+    // storm. 0 means "never tried yet".
+    uint64_t m_lastImeReattachMs = 0;
+    static constexpr uint64_t IME_REATTACH_COOLDOWN_MS = 400;
 
     std::thread m_renderThread;
     std::mutex m_renderMutex;
