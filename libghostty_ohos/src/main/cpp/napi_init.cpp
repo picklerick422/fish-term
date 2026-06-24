@@ -1666,13 +1666,22 @@ private:
             }
         }
 
-        // Draw + flush the new content. Presentation of this buffer is forced by
-        // the ArkUI-side repaint pulse (TerminalController.repaintListener →
-        // TerminalSurface repaintTick), which makes the compositor latch the
-        // freshly flushed SURFACE buffer immediately instead of waiting for the
-        // next input event. (This device delivers no independent vsync to the
-        // XComponent, so a bare flush alone is not composited on its own.)
+        // Produce the new buffer. Presentation is decoupled: this device does
+        // not composite a bare SURFACE flush on its own (no independent vsync),
+        // so we raise m_presentNeeded and let the ArkUI side (a dirty-gated
+        // present poll) submit a frame, which makes the compositor latch this
+        // buffer. Setting the flag AFTER the flush guarantees the buffer is
+        // queued before the JS poll can observe it.
         DrawFrameLocked();
+        m_presentNeeded.store(true, std::memory_order_release);
+    }
+
+    // Consume the "a new buffer was produced" flag. Called from the JS present
+    // poll: when true, the ArkUI side forces a frame so the compositor presents
+    // the latest SURFACE buffer. Returns true at most once per produced frame,
+    // so an idle terminal triggers no ArkUI frames (and no vsync-timeout storm).
+    bool ConsumePresentNeeded() {
+        return m_presentNeeded.exchange(false, std::memory_order_acq_rel);
     }
 
     // Create the threadsafe function used to schedule draws on the UI thread.
@@ -2534,6 +2543,9 @@ private:
     // True when a draw has already been queued via m_renderTsfn; prevents
     // duplicate calls from flooding the queue before the UI thread drains them.
     std::atomic<bool> m_drawPending{false};
+    // Raised after each produced frame; consumed by the JS present poll which
+    // then forces an ArkUI frame so the compositor presents the latest buffer.
+    std::atomic<bool> m_presentNeeded{false};
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
@@ -3176,6 +3188,14 @@ static napi_value GetRendererError(napi_env env, napi_callback_info info) {
     return result;
 }
 
+static napi_value ConsumePresentNeeded(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    napi_value result;
+    napi_get_boolean(env, host ? host->ConsumePresentNeeded() : false, &result);
+    return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
     napi_value exportInstance = nullptr;
     OH_NativeXComponent* nativeXComponent = nullptr;
@@ -3252,6 +3272,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getThemeColors", nullptr, GetThemeColors, nullptr, nullptr, nullptr, napi_default, host},
         {"isRendererReady", nullptr, IsRendererReady, nullptr, nullptr, nullptr, napi_default, host},
         {"getRendererError", nullptr, GetRendererError, nullptr, nullptr, nullptr, napi_default, host},
+        {"consumePresentNeeded", nullptr, ConsumePresentNeeded, nullptr, nullptr, nullptr, napi_default, host},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
 

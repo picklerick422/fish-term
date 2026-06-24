@@ -26,10 +26,21 @@ export struct TerminalSurface {
   private context: common.UIAbilityContext | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private fallbackTimer: number = -1;
+  // Dirty-gated present poll. The native renderer composites a SURFACE buffer
+  // that this device will not present on its own (no independent vsync). Each
+  // tick asks the controller whether a new frame was produced; only then do we
+  // bump presentTick to force one ArkUI frame, which makes the compositor latch
+  // the buffer. When idle nothing is bumped, so no frames/vsync are requested.
+  private presentTimer: number = -1;
   private contextMenuSelectedText: string = '';
   private contextMenuScreenContent: string = '';
   private contextMenuCanPaste: boolean = false;
 
+  // Bumped by the present poll when the native side has a new frame. Bound to an
+  // invisible sibling element (NOT the XComponent) so re-rendering it submits an
+  // ArkUI frame that re-latches the surface, without pushing the surface into an
+  // opacity/offscreen cache.
+  @State private presentTick: number = 0;
   @State private appliedFontSize: number = DEFAULT_TERMINAL_CONFIG.fontSize;
   @State private useTextFallback: boolean = false;
   @State private fallbackContent: string = '';
@@ -74,6 +85,7 @@ export struct TerminalSurface {
 
   aboutToDisappear(): void {
     this.stopFallbackPolling();
+    this.stopPresentPolling();
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
@@ -83,6 +95,16 @@ export struct TerminalSurface {
   build() {
     Stack({ alignContent: Alignment.BottomStart }) {
       this.buildTerminalXComponent();
+      // Invisible 1px present-driver. Its text content flips with presentTick;
+      // re-rendering this sibling submits an ArkUI frame, and every ArkUI frame
+      // makes the compositor re-latch the XComponent SURFACE layer's newest
+      // buffer. The property is on this element, never on the XComponent, so the
+      // surface is never wrapped in an opacity/offscreen cache.
+      Text(this.presentTick % 2 === 0 ? ' ' : '​')
+        .width(1)
+        .height(1)
+        .opacity(0.01)
+        .hitTestBehavior(HitTestMode.None)
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
@@ -117,10 +139,12 @@ export struct TerminalSurface {
           this.startFallbackPolling();
         } else {
           this.stopFallbackPolling();
+          this.startPresentPolling();
         }
       })
       .onDestroy(() => {
         this.stopFallbackPolling();
+        this.stopPresentPolling();
         this.controller.unbindNative();
       })
       .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -337,6 +361,27 @@ export struct TerminalSurface {
 
     clearInterval(this.fallbackTimer);
     this.fallbackTimer = -1;
+  }
+
+  private startPresentPolling(): void {
+    if (this.presentTimer >= 0) {
+      return;
+    }
+    // ~60fps poll. Only bumps presentTick when the native side actually produced
+    // a new frame, so an idle terminal submits zero ArkUI frames.
+    this.presentTimer = setInterval(() => {
+      if (this.controller.consumePresentNeeded()) {
+        this.presentTick = (this.presentTick + 1) & 0xffff;
+      }
+    }, 16) as number;
+  }
+
+  private stopPresentPolling(): void {
+    if (this.presentTimer < 0) {
+      return;
+    }
+    clearInterval(this.presentTimer);
+    this.presentTimer = -1;
   }
 
   private syncFallbackScreen(): void {
