@@ -56,7 +56,6 @@ interface TerminalNativeBridge {
   getThemeColors: (themeName: string) => string[];
   isRendererReady: () => boolean;
   getRendererError: () => string;
-  consumePresentNeeded: () => boolean;
 }
 
 type TerminalConfigListener = (config: TerminalConfig, themeName: string) => void;
@@ -419,17 +418,6 @@ export class TerminalController {
       return '';
     }
     return this.native.getRendererError();
-  }
-
-  // True at most once per produced native frame. The host surface polls this
-  // and, when true, forces an ArkUI frame so the compositor presents the latest
-  // SURFACE buffer. Returns false when idle, so no ArkUI frames are requested
-  // when nothing changed (avoids the vsync-timeout storm on this device).
-  consumePresentNeeded(): boolean {
-    if (!this.native) {
-      return false;
-    }
-    return this.native.consumePresentNeeded();
   }
 
   private applyConfig(): void {

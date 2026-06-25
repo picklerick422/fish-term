@@ -10,7 +10,6 @@
 #include <inputmethod/inputmethod_text_config_capi.h>
 #include <inputmethod/inputmethod_text_editor_proxy_capi.h>
 #include <rawfile/raw_file_manager.h>
-#include <native_vsync/native_vsync.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -38,6 +37,8 @@
 
 namespace {
 class TerminalHost;
+// Per-vsync frame callback delivered by OH_NativeXComponent on the UI thread.
+void OnFrameCB(OH_NativeXComponent* component, uint64_t timestamp, uint64_t targetTimestamp);
 using ExampleDriverWriteInputFn = bool (*)(const char*, size_t);
 
 ExampleDriverWriteInputFn ResolveExampleDriverWriteInput()
@@ -103,6 +104,9 @@ bool IsNearOrigin(double left, double top)
 constexpr uint64_t LONG_PRESS_MS = 500;
 constexpr uint64_t MULTI_CLICK_MS = 400;
 constexpr float MOVE_THRESHOLD = 20.0f;
+// Trailing redraws after content stops changing to cycle the latest buffer
+// through the multi-buffer swapchain so the final state is always presented.
+constexpr int TRAILING_FLUSH_FRAMES = 2;
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_TAB =
     static_cast<OH_NativeXComponent_KeyCode>(15);
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_1 =
@@ -564,7 +568,6 @@ public:
         : m_component(component) {}
 
     ~TerminalHost() {
-        ClearRenderTsfn();
         ClearInputCallback();
         // Detach IME outside m_surfaceMutex (see OnSurfaceDestroyed) to avoid the
         // self-deadlock when the framework calls our editor callbacks during detach.
@@ -614,10 +617,6 @@ public:
             m_surfaceReady = true;
             m_rendererReady = true;
             m_rendererError.clear();
-            if (m_vsync == nullptr) {
-                m_vsync = OH_NativeVSync_Create("fishterm", 8);
-                OH_LOG_INFO(LOG_APP, "FT_VSYNC create -> %{public}p", m_vsync);
-            }
             LoadFontsIfPossibleLocked();
             TryInitializeTerminalLocked();
             if (m_terminal) {
@@ -1493,18 +1492,68 @@ public:
         return m_rendererReady;
     }
 
-    // Public entry point so Init (which lives outside the class) can create the
-    // render threadsafe function on the JS/UI thread.
-    void InitRenderTsfn(napi_env env) {
-        SetupRenderTsfn(env);
-    }
+    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback on
+    // the UI thread. Rendering here — rather than from a private background
+    // thread or an independent OH_NativeVSync connection — is the key to
+    // reliable presentation. A bare NativeWindow flush from a background thread
+    // is NOT composited by the Render Service until some unrelated UI event
+    // wakes the pipeline. The XComponent frame callback runs inside ArkUI's own
+    // frame pipeline, so flushing from it makes every content change present on
+    // the very next refresh, independent of input.
+    void OnFrameTick(uint64_t timestampNs) {
+        bool doResize = false;
+        uint32_t resizeWidth = 0;
+        uint32_t resizeHeight = 0;
+        bool shouldRender = false;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            if (m_resizePending) {
+                doResize = true;
+                resizeWidth = m_pendingWidth;
+                resizeHeight = m_pendingHeight;
+                m_resizePending = false;
+            }
 
-    // Consume the "a new buffer was produced" flag. Called from the JS present
-    // poll: when true, the ArkUI side forces a frame so the compositor presents
-    // the latest SURFACE buffer. Returns true at most once per produced frame,
-    // so an idle terminal triggers no ArkUI frames (and no vsync-timeout storm).
-    bool ConsumePresentNeeded() {
-        return m_presentNeeded.exchange(false, std::memory_order_acq_rel);
+            const bool content = m_renderDirty || doResize;
+            if (content) {
+                m_renderDirty = false;
+                m_trailingFrames = TRAILING_FLUSH_FRAMES;
+            }
+
+            bool blinkDue = false;
+            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
+                const uint64_t nowMs = timestampNs / 1000000ull;
+                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
+                    m_lastBlinkMs = nowMs;
+                    blinkDue = true;
+                }
+            }
+
+            const bool trailing = !content && m_trailingFrames > 0;
+            if (trailing) {
+                --m_trailingFrames;
+            }
+
+            shouldRender = content || blinkDue || trailing;
+        }
+
+        if (doResize) {
+            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+            if (m_renderer) {
+                m_renderer->resize(resizeWidth, resizeHeight);
+                if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
+                    int cols = 80;
+                    int rows = 24;
+                    ComputeTerminalSize(resizeWidth, resizeHeight, cols, rows);
+                    m_terminal->resize(cols, rows);
+                    m_terminal->resetViewScroll();
+                }
+            }
+        }
+
+        if (shouldRender) {
+            DrawFrameLocked();
+        }
     }
 
     const std::string& GetRendererError() const {
@@ -1622,126 +1671,17 @@ private:
         }
     }
 
-    // Schedule a draw on the JS/UI thread. Uses a NAPI threadsafe function so the
-    // call is safe from any thread (including the background PTY reader).
-    // A single draw is coalesced: if one is already queued, no second call is made.
+    // Mark the frame dirty. The XComponent OnFrame callback (running on the UI
+    // thread, inside ArkUI's frame pipeline) picks it up on the next vsync and
+    // draws+flushes there so RS composites it immediately.
     void RequestRender() {
-        if (m_renderTsfn == nullptr) {
-            return;
-        }
-        // Only schedule if no draw is already pending
-        bool expected = false;
-        if (m_drawPending.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-            napi_call_threadsafe_function(m_renderTsfn, nullptr, napi_tsfn_nonblocking);
-        }
+        std::lock_guard<std::mutex> lock(m_renderMutex);
+        m_renderDirty = true;
     }
 
-    // TSFN callback: invoked on the JS/UI thread when a draw has been requested.
-    // Drawing on the UI thread means the NativeWindow flush is part of the window's
-    // active render cycle, so the Render Service composites it at the next vsync
-    // without needing a separate vsync registration or a key-event to wake RS.
-    static void DrawCallJsCallback(napi_env /*env*/, napi_value /*func*/, void* context, void* /*data*/) {
-        if (auto* host = static_cast<TerminalHost*>(context)) {
-            host->OnUIThreadDraw();
-        }
-    }
-
-    void OnUIThreadDraw() {
-        // Clear the pending flag FIRST so that any content arriving while we draw
-        // will reschedule another frame rather than being silently dropped.
-        m_drawPending.store(false, std::memory_order_release);
-
-        // Handle pending resize
-        bool doResize = false;
-        uint32_t resizeW = 0;
-        uint32_t resizeH = 0;
-        {
-            std::lock_guard<std::mutex> lock(m_renderMutex);
-            if (m_resizePending) {
-                doResize = true;
-                resizeW = m_pendingWidth;
-                resizeH = m_pendingHeight;
-                m_resizePending = false;
-            }
-        }
-
-        if (doResize) {
-            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-            if (m_renderer) {
-                m_renderer->resize(resizeW, resizeH);
-                if (m_terminal && resizeW > 0 && resizeH > 0) {
-                    int cols = 80;
-                    int rows = 24;
-                    ComputeTerminalSize(resizeW, resizeH, cols, rows);
-                    m_terminal->resize(cols, rows);
-                    m_terminal->resetViewScroll();
-                }
-            }
-        }
-
-        // Produce the new buffer, then kick the system vsync. This device emits
-        // no vsync while the window is idle, so the just-flushed SURFACE buffer
-        // would sit in the BufferQueue uncomposited until some unrelated event
-        // (scroll, IME) produced a vsync — exactly the first-char-lag and frozen
-        // cursor-blink symptoms. Requesting a frame makes the vsync generator
-        // emit one pulse; the Render Service consumes it and composites our
-        // queued buffer. Request AFTER the flush so the buffer is already queued
-        // when the pulse arrives.
-        DrawFrameLocked();
-        m_presentNeeded.store(true, std::memory_order_release);
-        if (m_vsync != nullptr) {
-            const uint64_t n = ++m_vsyncReqCount;
-            if (n <= 5 || n % 60 == 0) {
-                OH_LOG_INFO(LOG_APP, "FT_VSYNC request #%{public}llu", (unsigned long long)n);
-            }
-            OH_NativeVSync_RequestFrame(m_vsync, &TerminalHost::OnVSyncPresent, this);
-        }
-    }
-
-    // Vsync callback. No work is needed here: the act of requesting the frame
-    // already made the generator emit the pulse that wakes the Render Service to
-    // composite our queued buffer. Kept as a valid target for RequestFrame.
-    static void OnVSyncPresent(long long /*timestamp*/, void* data) {
-        if (auto* host = static_cast<TerminalHost*>(data)) {
-            const uint64_t n = ++host->m_vsyncCbCount;
-            if (n <= 5 || n % 60 == 0) {
-                OH_LOG_INFO(LOG_APP, "FT_VSYNC callback #%{public}llu", (unsigned long long)n);
-            }
-        }
-    }
-
-    // Create the threadsafe function used to schedule draws on the UI thread.
-    // Must be called from the JS/UI thread (e.g. from Init).
-    void SetupRenderTsfn(napi_env env) {
-        if (m_renderTsfn != nullptr) {
-            return;
-        }
-        napi_value resourceName = nullptr;
-        napi_create_string_utf8(env, "terminalRender", NAPI_AUTO_LENGTH, &resourceName);
-        napi_create_threadsafe_function(
-            env,
-            nullptr,              // func: no JS function needed
-            nullptr,              // async_resource
-            resourceName,
-            0,                    // max_queue_size (0 = unlimited; our atomic ensures ≤1 pending)
-            1,                    // initial_thread_count
-            nullptr,              // thread_finalize_data
-            nullptr,              // thread_finalize_cb
-            this,                 // context passed to DrawCallJsCallback
-            DrawCallJsCallback,   // call_js_cb (replaces func call; runs on UI thread)
-            &m_renderTsfn);
-    }
-
-    void ClearRenderTsfn() {
-        m_drawPending.store(false);
-        napi_threadsafe_function tsfn = m_renderTsfn;
-        m_renderTsfn = nullptr;
-        if (tsfn != nullptr) {
-            napi_release_threadsafe_function(tsfn, napi_tsfn_abort);
-        }
-    }
-
-    // Draw + flush the current terminal state on whatever thread calls this.
+    // Draw + flush the current terminal state. Always invoked on the UI thread
+    // from OnFrameTick, so the flush is part of ArkUI's frame and presented on
+    // the next refresh.
     void DrawFrameLocked() {
         std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
         if (m_renderer && m_terminal && m_surfaceReady) {
@@ -1749,13 +1689,30 @@ private:
         }
     }
 
+    // Register for per-vsync frame callbacks from the XComponent. Idempotent.
+    // Only touched on the UI thread (surface lifecycle callbacks + OnFrame all
+    // run there), so no locking is needed around the registration flag.
     void StartRenderLoop() {
+        if (m_frameCallbackRegistered || m_component == nullptr) {
+            RequestRender();
+            return;
+        }
+        if (OH_NativeXComponent_RegisterOnFrameCallback(m_component, OnFrameCB) == 0) {
+            m_frameCallbackRegistered = true;
+        }
         RequestRender();
     }
 
     void StopRenderLoop() {
-        std::lock_guard<std::mutex> lock(m_renderMutex);
-        m_resizePending = false;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            m_renderDirty = false;
+            m_resizePending = false;
+        }
+        if (m_frameCallbackRegistered && m_component != nullptr) {
+            OH_NativeXComponent_UnregisterOnFrameCallback(m_component);
+            m_frameCallbackRegistered = false;
+        }
     }
 
     void ComputeTerminalSize(uint32_t width, uint32_t height, int& cols, int& rows) const {
@@ -1894,11 +1851,6 @@ private:
             m_renderer->cleanup();
             delete m_renderer;
             m_renderer = nullptr;
-        }
-
-        if (m_vsync != nullptr) {
-            OH_NativeVSync_Destroy(m_vsync);
-            m_vsync = nullptr;
         }
     }
 
@@ -2525,14 +2477,6 @@ private:
     uint64_t m_lastClickTimeMs = 0;
 
     OHNativeWindow* m_nativeWindow = nullptr;
-    // System vsync receiver. This device generates no vsync while the window is
-    // idle, so a bare NativeWindow flush is never composited (cursor blink and
-    // typed chars only appeared when scrolling/IME happened to produce a vsync).
-    // After every flush we ask the vsync generator for one pulse; the Render
-    // Service consumes that pulse and composites our already-queued SURFACE buffer.
-    OH_NativeVSync* m_vsync = nullptr;
-    std::atomic<uint64_t> m_vsyncReqCount{0};
-    std::atomic<uint64_t> m_vsyncCbCount{0};
     uint32_t m_windowWidth = 0;
     uint32_t m_windowHeight = 0;
     int32_t m_windowId = -1;
@@ -2574,17 +2518,20 @@ private:
     uint64_t m_lastImeReattachMs = 0;
     static constexpr uint64_t IME_REATTACH_COOLDOWN_MS = 400;
 
-    // m_renderMutex guards the resize-request flags below.
+    // m_renderMutex guards the frame-request flags below, which are set from the
+    // terminal's background read thread (RequestRender) and consumed on the UI
+    // thread (OnFrameTick).
     std::mutex m_renderMutex;
     std::mutex m_surfaceMutex;
-    // TSFN used to schedule draws on the JS/UI thread from any thread.
-    napi_threadsafe_function m_renderTsfn = nullptr;
-    // True when a draw has already been queued via m_renderTsfn; prevents
-    // duplicate calls from flooding the queue before the UI thread drains them.
-    std::atomic<bool> m_drawPending{false};
-    // Raised after each produced frame; consumed by the JS present poll which
-    // then forces an ArkUI frame so the compositor presents the latest buffer.
-    std::atomic<bool> m_presentNeeded{false};
+    bool m_renderDirty = false;
+    // Remaining trailing redraws to push the latest buffer through the swapchain
+    // after content stops changing.
+    int m_trailingFrames = 0;
+    // True while we hold an OH_NativeXComponent_RegisterOnFrameCallback
+    // registration. Only touched on the UI thread.
+    bool m_frameCallbackRegistered = false;
+    // Wall-clock (ms, from the OnFrame timestamp) of the last cursor-blink redraw.
+    uint64_t m_lastBlinkMs = 0;
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
@@ -2643,6 +2590,13 @@ void OnSurfaceDestroyedCB(OH_NativeXComponent* component, void* window) {
     (void)window;
     if (TerminalHost* host = FindHost(component)) {
         host->OnSurfaceDestroyed();
+    }
+}
+
+void OnFrameCB(OH_NativeXComponent* component, uint64_t timestamp, uint64_t targetTimestamp) {
+    (void)targetTimestamp;
+    if (TerminalHost* host = FindHost(component)) {
+        host->OnFrameTick(timestamp);
     }
 }
 
@@ -3227,14 +3181,6 @@ static napi_value GetRendererError(napi_env env, napi_callback_info info) {
     return result;
 }
 
-static napi_value ConsumePresentNeeded(napi_env env, napi_callback_info info) {
-    size_t argc = 0;
-    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
-    napi_value result;
-    napi_get_boolean(env, host ? host->ConsumePresentNeeded() : false, &result);
-    return result;
-}
-
 static napi_value Init(napi_env env, napi_value exports) {
     napi_value exportInstance = nullptr;
     OH_NativeXComponent* nativeXComponent = nullptr;
@@ -3311,13 +3257,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getThemeColors", nullptr, GetThemeColors, nullptr, nullptr, nullptr, napi_default, host},
         {"isRendererReady", nullptr, IsRendererReady, nullptr, nullptr, nullptr, napi_default, host},
         {"getRendererError", nullptr, GetRendererError, nullptr, nullptr, nullptr, napi_default, host},
-        {"consumePresentNeeded", nullptr, ConsumePresentNeeded, nullptr, nullptr, nullptr, napi_default, host},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
-
-    if (host) {
-        host->InitRenderTsfn(env);
-    }
 
     return exports;
 }
