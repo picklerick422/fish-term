@@ -388,6 +388,8 @@ void Terminal::resize(int cols, int rows) {
 }
 
 void Terminal::feedOutput(const char* data, size_t len) {
+    OH_LOG_INFO(LOG_APP, "FT_DIAG feedOutput len=%{public}zu first=0x%{public}X",
+                len, (data && len > 0) ? static_cast<unsigned>(static_cast<unsigned char>(data[0])) : 0u);
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (m_vt && data && len > 0) {
         ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(data), len);
@@ -1886,6 +1888,17 @@ void Terminal::drawFrame() {
         OH_LOG_ERROR(LOG_APP, "drawFrame frame=%{public}" PRIu64 " suspiciousCells=%{public}d size=%{public}dx%{public}d",
             frameId, suspiciousCells, m_cols, m_rows);
     }
+
+    // FT_DIAG: report the codepoint just left of the cursor (the most recently
+    // typed/echoed glyph) so we can tell whether the grid actually contains the
+    // new character at the moment this frame is drawn and flushed.
+    uint32_t cellLeftOfCursor = 0;
+    if (cursorRow >= 0 && cursorRow < m_rows && cursorCol > 0 && cursorCol <= m_cols) {
+        cellLeftOfCursor = cells[cursorRow * m_cols + (cursorCol - 1)].codepoint;
+    }
+    OH_LOG_INFO(LOG_APP,
+        "FT_DIAG drawFrame frame=%{public}" PRIu64 " cursor=(%{public}d,%{public}d) vis=%{public}d leftOfCursorCp=0x%{public}X",
+        frameId, cursorRow, cursorCol, cursorVisible ? 1 : 0, cellLeftOfCursor);
 
     m_renderer->setColors(m_theme.background, m_theme.foreground);
     m_renderer->setCursorColors(m_theme.cursorColor, m_theme.cursorText);
