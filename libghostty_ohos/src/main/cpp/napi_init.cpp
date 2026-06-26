@@ -10,6 +10,7 @@
 #include <inputmethod/inputmethod_text_config_capi.h>
 #include <inputmethod/inputmethod_text_editor_proxy_capi.h>
 #include <rawfile/raw_file_manager.h>
+#include <native_vsync/native_vsync.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -569,6 +570,7 @@ public:
 
     ~TerminalHost() {
         StopRenderLoop();
+        DestroyVsync();
         ClearInputCallback();
         // Detach IME outside m_surfaceMutex (see OnSurfaceDestroyed) to avoid the
         // self-deadlock when the framework calls our editor callbacks during detach.
@@ -709,6 +711,11 @@ public:
 
     void OnSurfaceDestroyed() {
         StopRenderLoop();
+        // Destroy vsync before locking m_surfaceMutex: OH_NativeVSync_Destroy
+        // may wait for an in-flight OnVsyncTick, which itself locks
+        // m_surfaceMutex — doing the Destroy while already holding that lock
+        // would deadlock.
+        DestroyVsync();
 
         // Tear down IME OUTSIDE m_surfaceMutex. OH_InputMethodController_Detach /
         // HideKeyboard can synchronously invoke our registered editor callbacks
@@ -732,29 +739,20 @@ public:
         m_rendererReady = false;
     }
 
-    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback on
-    // the UI thread. Rendering here — rather than from a private background
-    // thread or an independent OH_NativeVSync connection — is the key to
-    // reliable presentation. A bare NativeWindow flush from a background thread
-    // is NOT composited by the Render Service until some unrelated UI event
-    // wakes the pipeline, which is exactly why a typed character only appeared
-    // on the next keystroke ("hello world" shown as "hell world", "/" hidden
-    // until the following key). The XComponent frame callback runs inside
-    // ArkUI's own frame pipeline, so flushing from it makes every content change
-    // present on the very next refresh, independent of input.
-    void OnFrameTick(uint64_t timestampNs) {
-        // Throttled heartbeat: confirms the XComponent frame callback is firing.
-        if ((++m_frameTickCount % 120) == 1) {
+    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback.
+    // We only handle resize here; actual rendering (content + blink + trailing)
+    // is driven by OH_NativeVSync (OnVsyncTick) so that RS composites our
+    // buffer even when ArkUI's own frame pipeline is idle (e.g. external keyboard
+    // with no touch events). Flushing from OnFrameTick was unreliable because
+    // ArkUI pauses vsync requests when idle, leaving our buffers unscanned.
+    void OnFrameTick(uint64_t /*timestampNs*/) {
+        if ((++m_frameTickCount % 300) == 1) {
             OH_LOG_INFO(LOG_APP, "FT_DIAG OnFrameTick alive count=%{public}llu",
                         static_cast<unsigned long long>(m_frameTickCount));
         }
         bool doResize = false;
         uint32_t resizeWidth = 0;
         uint32_t resizeHeight = 0;
-        bool shouldRender = false;
-        bool content = false;
-        bool blinkRender = false;
-        bool trailingRender = false;
         {
             std::lock_guard<std::mutex> lock(m_renderMutex);
             if (m_resizePending) {
@@ -763,35 +761,7 @@ public:
                 resizeHeight = m_pendingHeight;
                 m_resizePending = false;
             }
-
-            content = m_renderDirty || doResize;
-            if (content) {
-                m_renderDirty = false;
-                // Schedule a couple of trailing redraws so the latest buffer is
-                // guaranteed cycled through a multi-buffer swapchain even after
-                // content stops changing.
-                m_trailingFrames = TRAILING_FLUSH_FRAMES;
-            }
-
-            bool blinkDue = false;
-            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
-                const uint64_t nowMs = timestampNs / 1000000ull;
-                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
-                    m_lastBlinkMs = nowMs;
-                    blinkDue = true;
-                }
-            }
-
-            const bool trailing = !content && m_trailingFrames > 0;
-            if (trailing) {
-                --m_trailingFrames;
-            }
-
-            shouldRender = content || blinkDue || trailing;
-            blinkRender = blinkDue;
-            trailingRender = trailing;
         }
-
         if (doResize) {
             std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
             if (m_renderer) {
@@ -804,12 +774,92 @@ public:
                     m_terminal->resetViewScroll();
                 }
             }
+            RequestVsyncFrame();
+        }
+    }
+
+    // OH_NativeVSync frame callback: drives all rendering (content, blink,
+    // trailing) independently of ArkUI's frame pipeline. Because it is tied to
+    // the display's hardware vsync, RS composites every buffer we flush here,
+    // ensuring typed characters appear on the very next refresh without waiting
+    // for an ArkUI wake event.
+    static void OnVsyncFrameCB(long long timestamp, void* data) {
+        auto* self = static_cast<TerminalHost*>(data);
+        self->m_vsyncPending.store(false, std::memory_order_release);
+        self->OnVsyncTick(static_cast<uint64_t>(timestamp));
+    }
+
+    void OnVsyncTick(uint64_t timestampNs) {
+        // Phase 1: consume render flags under m_renderMutex.
+        bool shouldRender = false;
+        bool needMoreFrames = false;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            const bool content = m_renderDirty;
+            if (content) {
+                m_renderDirty = false;
+                m_trailingFrames = TRAILING_FLUSH_FRAMES;
+                shouldRender = true;
+            }
+            const bool trailing = !content && m_trailingFrames > 0;
+            if (trailing) {
+                --m_trailingFrames;
+                shouldRender = true;
+                if (m_trailingFrames > 0) {
+                    needMoreFrames = true;
+                }
+            }
+            if (m_renderDirty) {
+                needMoreFrames = true;
+            }
         }
 
-        if (shouldRender) {
-            OH_LOG_INFO(LOG_APP, "FT_DIAG OnFrameTick render content=%{public}d blink=%{public}d trailing=%{public}d",
-                        content ? 1 : 0, blinkRender ? 1 : 0, trailingRender ? 1 : 0);
-            DrawFrameLocked();
+        // Phase 2: blink check + draw under m_surfaceMutex (m_renderer access
+        // must be guarded by m_surfaceMutex, not m_renderMutex).
+        {
+            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
+                const uint64_t nowMs = timestampNs / 1000000ull;
+                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
+                    m_lastBlinkMs = nowMs;
+                    shouldRender = true;
+                }
+                needMoreFrames = true;
+            }
+            if (shouldRender && m_renderer && m_terminal && m_surfaceReady) {
+                m_terminal->drawFrame();
+            }
+        }
+
+        if (needMoreFrames) {
+            RequestVsyncFrame();
+        }
+    }
+
+    void RequestVsyncFrame() {
+        if (!m_nativeVSync) {
+            return;
+        }
+        bool expected = false;
+        if (m_vsyncPending.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            OH_NativeVSync_RequestFrame(m_nativeVSync, OnVsyncFrameCB, this);
+        }
+    }
+
+    void CreateVsync() {
+        if (!m_nativeVSync) {
+            m_nativeVSync = OH_NativeVSync_Create("fishterm_vsync", 16);
+        }
+    }
+
+    void DestroyVsync() {
+        if (m_nativeVSync) {
+            OH_NativeVSync* vsync = m_nativeVSync;
+            // Null first so OnVsyncTick→RequestVsyncFrame sees no handle.
+            m_nativeVSync = nullptr;
+            // Reset pending flag so CreateVsync can request again immediately.
+            m_vsyncPending.store(false, std::memory_order_release);
+            OH_NativeVSync_Destroy(vsync);
         }
     }
 
@@ -1703,11 +1753,11 @@ private:
     }
 
     void RequestRender() {
-        // Just mark the frame dirty; the XComponent OnFrame callback (running on
-        // the UI thread, inside ArkUI's frame pipeline) picks it up on the next
-        // vsync and draws+flushes there so the Render Service composites it.
-        std::lock_guard<std::mutex> lock(m_renderMutex);
-        m_renderDirty = true;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            m_renderDirty = true;
+        }
+        RequestVsyncFrame();
     }
 
     // Draw + flush the current terminal state. Always invoked on the UI thread
@@ -1720,18 +1770,17 @@ private:
         }
     }
 
-    // Register for per-vsync frame callbacks from the XComponent. Idempotent and
-    // only touched on the UI thread (surface lifecycle callbacks + OnFrame all
-    // run there), so no locking is needed around the registration flag.
+    // Register for XComponent frame callbacks (used only for resize detection).
+    // All rendering is driven by OH_NativeVSync (see RequestVsyncFrame /
+    // OnVsyncTick). Idempotent and only touched on the UI thread.
     void StartRenderLoop() {
-        if (m_frameCallbackRegistered || m_component == nullptr) {
-            RequestRender();
-            return;
+        if (!m_frameCallbackRegistered && m_component != nullptr) {
+            if (OH_NativeXComponent_RegisterOnFrameCallback(m_component, OnFrameCB) == 0) {
+                m_frameCallbackRegistered = true;
+            }
         }
-        if (OH_NativeXComponent_RegisterOnFrameCallback(m_component, OnFrameCB) == 0) {
-            m_frameCallbackRegistered = true;
-        }
-        RequestRender();
+        CreateVsync();
+        RequestVsyncFrame();
     }
 
     void StopRenderLoop() {
@@ -2598,6 +2647,12 @@ private:
     // m_renderMutex guards the frame-request flags below, which are set from the
     // terminal's background read thread (RequestRender) and consumed on the UI
     // thread (OnFrameTick).
+    // OH_NativeVSync handle for rendering independent of ArkUI's frame pipeline.
+    // Guarded by: created/destroyed only from surface lifecycle callbacks and
+    // destructor (all from the UI thread); m_vsyncPending is atomic.
+    OH_NativeVSync* m_nativeVSync = nullptr;
+    std::atomic<bool> m_vsyncPending{false};
+
     std::mutex m_renderMutex;
     std::condition_variable m_renderCv;
     std::mutex m_surfaceMutex;
@@ -2610,7 +2665,8 @@ private:
     bool m_frameCallbackRegistered = false;
     // Diagnostic heartbeat counter for the XComponent frame callback.
     uint64_t m_frameTickCount = 0;
-    // Wall-clock (ms, from the OnFrame timestamp) of the last cursor-blink redraw.
+    // Wall-clock (ms) of the last cursor-blink redraw. Accessed only from
+    // OnVsyncTick under m_surfaceMutex.
     uint64_t m_lastBlinkMs = 0;
     bool m_resizePending = false;
     uint32_t m_pendingWidth = 0;
