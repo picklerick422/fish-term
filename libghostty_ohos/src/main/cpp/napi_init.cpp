@@ -104,8 +104,8 @@ bool IsNearOrigin(double left, double top)
 constexpr uint64_t LONG_PRESS_MS = 500;
 constexpr uint64_t MULTI_CLICK_MS = 400;
 constexpr float MOVE_THRESHOLD = 20.0f;
-// Trailing redraws after content stops changing to cycle the latest buffer
-// through the multi-buffer swapchain so the final state is always presented.
+// Number of trailing redraws to emit after a content change so the most recent
+// buffer is guaranteed presented even with a multi-buffer queue.
 constexpr int TRAILING_FLUSH_FRAMES = 2;
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_TAB =
     static_cast<OH_NativeXComponent_KeyCode>(15);
@@ -568,6 +568,7 @@ public:
         : m_component(component) {}
 
     ~TerminalHost() {
+        StopRenderLoop();
         ClearInputCallback();
         // Detach IME outside m_surfaceMutex (see OnSurfaceDestroyed) to avoid the
         // self-deadlock when the framework calls our editor callbacks during detach.
@@ -647,8 +648,9 @@ public:
             m_pendingWidth = static_cast<uint32_t>(width);
             m_pendingHeight = static_cast<uint32_t>(height);
             m_resizePending = true;
+            m_renderDirty = true;
         }
-        RequestRender();
+        m_renderCv.notify_one();
     }
 
     void OnSurfaceShow(OH_NativeXComponent* component, void* window) {
@@ -694,9 +696,15 @@ public:
     }
 
     void OnSurfaceHide() {
-        std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-        m_surfaceReady = false;
-        HideImeLocked();
+        {
+            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+            m_surfaceReady = false;
+            HideImeLocked();
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            m_renderDirty = false;
+        }
     }
 
     void OnSurfaceDestroyed() {
@@ -722,6 +730,75 @@ public:
         }
         CleanupSurfaceLocked();
         m_rendererReady = false;
+    }
+
+    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback on
+    // the UI thread. Rendering here — rather than from a private background
+    // thread or an independent OH_NativeVSync connection — is the key to
+    // reliable presentation. A bare NativeWindow flush from a background thread
+    // is NOT composited by the Render Service until some unrelated UI event
+    // wakes the pipeline, which is exactly why a typed character only appeared
+    // on the next keystroke ("hello world" shown as "hell world", "/" hidden
+    // until the following key). The XComponent frame callback runs inside
+    // ArkUI's own frame pipeline, so flushing from it makes every content change
+    // present on the very next refresh, independent of input.
+    void OnFrameTick(uint64_t timestampNs) {
+        bool doResize = false;
+        uint32_t resizeWidth = 0;
+        uint32_t resizeHeight = 0;
+        bool shouldRender = false;
+        {
+            std::lock_guard<std::mutex> lock(m_renderMutex);
+            if (m_resizePending) {
+                doResize = true;
+                resizeWidth = m_pendingWidth;
+                resizeHeight = m_pendingHeight;
+                m_resizePending = false;
+            }
+
+            const bool content = m_renderDirty || doResize;
+            if (content) {
+                m_renderDirty = false;
+                // Schedule a couple of trailing redraws so the latest buffer is
+                // guaranteed cycled through a multi-buffer swapchain even after
+                // content stops changing.
+                m_trailingFrames = TRAILING_FLUSH_FRAMES;
+            }
+
+            bool blinkDue = false;
+            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
+                const uint64_t nowMs = timestampNs / 1000000ull;
+                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
+                    m_lastBlinkMs = nowMs;
+                    blinkDue = true;
+                }
+            }
+
+            const bool trailing = !content && m_trailingFrames > 0;
+            if (trailing) {
+                --m_trailingFrames;
+            }
+
+            shouldRender = content || blinkDue || trailing;
+        }
+
+        if (doResize) {
+            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+            if (m_renderer) {
+                m_renderer->resize(resizeWidth, resizeHeight);
+                if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
+                    int cols = 80;
+                    int rows = 24;
+                    ComputeTerminalSize(resizeWidth, resizeHeight, cols, rows);
+                    m_terminal->resize(cols, rows);
+                    m_terminal->resetViewScroll();
+                }
+            }
+        }
+
+        if (shouldRender) {
+            DrawFrameLocked();
+        }
     }
 
     bool DispatchKeyEvent(OH_NativeXComponent* component) {
@@ -1124,8 +1201,9 @@ public:
             m_pendingWidth = pendingWidth;
             m_pendingHeight = pendingHeight;
             m_resizePending = true;
+            m_renderDirty = true;
+            m_renderCv.notify_one();
         }
-        RequestRender();
     }
 
     void WriteInput(const std::string& data) {
@@ -1492,70 +1570,6 @@ public:
         return m_rendererReady;
     }
 
-    // Per-vsync tick delivered by OH_NativeXComponent_RegisterOnFrameCallback on
-    // the UI thread. Rendering here — rather than from a private background
-    // thread or an independent OH_NativeVSync connection — is the key to
-    // reliable presentation. A bare NativeWindow flush from a background thread
-    // is NOT composited by the Render Service until some unrelated UI event
-    // wakes the pipeline. The XComponent frame callback runs inside ArkUI's own
-    // frame pipeline, so flushing from it makes every content change present on
-    // the very next refresh, independent of input.
-    void OnFrameTick(uint64_t timestampNs) {
-        bool doResize = false;
-        uint32_t resizeWidth = 0;
-        uint32_t resizeHeight = 0;
-        bool shouldRender = false;
-        {
-            std::lock_guard<std::mutex> lock(m_renderMutex);
-            if (m_resizePending) {
-                doResize = true;
-                resizeWidth = m_pendingWidth;
-                resizeHeight = m_pendingHeight;
-                m_resizePending = false;
-            }
-
-            const bool content = m_renderDirty || doResize;
-            if (content) {
-                m_renderDirty = false;
-                m_trailingFrames = TRAILING_FLUSH_FRAMES;
-            }
-
-            bool blinkDue = false;
-            if (m_renderer && m_renderer->cursorBlinkEnabled()) {
-                const uint64_t nowMs = timestampNs / 1000000ull;
-                if (m_lastBlinkMs == 0 || nowMs - m_lastBlinkMs >= 250) {
-                    m_lastBlinkMs = nowMs;
-                    blinkDue = true;
-                }
-            }
-
-            const bool trailing = !content && m_trailingFrames > 0;
-            if (trailing) {
-                --m_trailingFrames;
-            }
-
-            shouldRender = content || blinkDue || trailing;
-        }
-
-        if (doResize) {
-            std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
-            if (m_renderer) {
-                m_renderer->resize(resizeWidth, resizeHeight);
-                if (m_terminal && resizeWidth > 0 && resizeHeight > 0) {
-                    int cols = 80;
-                    int rows = 24;
-                    ComputeTerminalSize(resizeWidth, resizeHeight, cols, rows);
-                    m_terminal->resize(cols, rows);
-                    m_terminal->resetViewScroll();
-                }
-            }
-        }
-
-        if (shouldRender) {
-            DrawFrameLocked();
-        }
-    }
-
     const std::string& GetRendererError() const {
         return m_rendererError;
     }
@@ -1671,10 +1685,10 @@ private:
         }
     }
 
-    // Mark the frame dirty. The XComponent OnFrame callback (running on the UI
-    // thread, inside ArkUI's frame pipeline) picks it up on the next vsync and
-    // draws+flushes there so RS composites it immediately.
     void RequestRender() {
+        // Just mark the frame dirty; the XComponent OnFrame callback (running on
+        // the UI thread, inside ArkUI's frame pipeline) picks it up on the next
+        // vsync and draws+flushes there so the Render Service composites it.
         std::lock_guard<std::mutex> lock(m_renderMutex);
         m_renderDirty = true;
     }
@@ -1689,8 +1703,8 @@ private:
         }
     }
 
-    // Register for per-vsync frame callbacks from the XComponent. Idempotent.
-    // Only touched on the UI thread (surface lifecycle callbacks + OnFrame all
+    // Register for per-vsync frame callbacks from the XComponent. Idempotent and
+    // only touched on the UI thread (surface lifecycle callbacks + OnFrame all
     // run there), so no locking is needed around the registration flag.
     void StartRenderLoop() {
         if (m_frameCallbackRegistered || m_component == nullptr) {
@@ -1791,14 +1805,11 @@ private:
                 EmitInput(data);
             });
             m_terminal->start();
-            // Do NOT attach the IME here. An attached-but-hidden IME grabs the
-            // FIRST physical keystroke and routes it through InsertText instead
-            // of DispatchKeyEvent, which is the "first character not displayed"
-            // bug. The IME is attached lazily in ShowImeLocked when the user
-            // taps to request the soft keyboard; physical-keyboard input then
-            // always goes straight to DispatchKeyEvent.
+            AttachImeLocked();
+            NotifyImeStateLocked();
         } else if (m_renderer) {
             m_terminal->setRenderer(m_renderer);
+            AttachImeLocked();
         }
     }
 
@@ -2040,15 +2051,9 @@ private:
 
     void InsertImeText(const char16_t* text, size_t length)
     {
-        // Accept IME text whenever we want the IME (m_wantsIme), not just after
-        // the SHOW callback fires (m_imeVisible). Between AttachImeLocked() and
-        // HandleImeKeyboardStatus(SHOW), the IME framework intercepts physical key
-        // events and routes them here — but m_imeVisible is still false during that
-        // keyboard animation window, which silently drops the first character. Using
-        // m_wantsIme (set synchronously in ShowImeLocked before Attach) fixes this.
-        // After keyboard dismiss, HandleImeKeyboardStatus(HIDE) sets m_wantsIme=false
-        // and calls UnregisterImeHost synchronously, so no spurious InsertText calls
-        // can reach us after the user has dismissed the keyboard.
+        // Guard with m_wantsIme: covers both the SHOW-animation window
+        // (Attach succeeded but SHOW callback hasn't fired yet) and the
+        // post-HIDE window before background Detach completes.
         if (!m_wantsIme || m_terminal == nullptr || text == nullptr || length == 0) {
             return;
         }
@@ -2093,14 +2098,13 @@ private:
         }
 
         // Keyboard dismissed: detach the IME so that physical keyboard events
-        // bypass the IME pipeline entirely and go directly to DispatchKeyEvent.
-        // Steps:
-        //   1. Immediately unregister the editor proxy → FindImeHost returns null
-        //      → no further InsertText/Delete/etc. callbacks reach this host.
-        //   2. Null our proxy references (non-blocking).
-        //   3. Perform the actual framework Detach on a background thread
-        //      (it is a blocking cross-process IPC; must not block the callback).
-        // On the next tap/click, ShowImeLocked will reattach from scratch.
+        // bypass the IME pipeline and go directly to DispatchKeyEvent.
+        // 1. Unregister the editor proxy immediately → FindImeHost returns null
+        //    → no further InsertText/Delete/etc. callbacks reach this host.
+        // 2. Null our proxy references and clear m_wantsIme (non-blocking).
+        // 3. Background-thread Detach (blocking cross-process IPC; must not
+        //    block the IME callback thread).
+        // On the next tap, ShowImeLocked will reattach from scratch.
         InputMethod_InputMethodProxy* proxyToDrop = nullptr;
         InputMethod_TextEditorProxy* editorToDrop = nullptr;
         {
@@ -2114,8 +2118,6 @@ private:
         TerminalHost* expected = this;
         g_activeImeHost.compare_exchange_strong(expected, nullptr);
 
-        // Unregister immediately so FindImeHost(editorToDrop) returns null from
-        // now on — no new IME callbacks will dispatch to this TerminalHost.
         if (editorToDrop != nullptr) {
             UnregisterImeHost(editorToDrop);
         }
@@ -2527,6 +2529,7 @@ private:
     // terminal's background read thread (RequestRender) and consumed on the UI
     // thread (OnFrameTick).
     std::mutex m_renderMutex;
+    std::condition_variable m_renderCv;
     std::mutex m_surfaceMutex;
     bool m_renderDirty = false;
     // Remaining trailing redraws to push the latest buffer through the swapchain
@@ -3264,7 +3267,6 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getRendererError", nullptr, GetRendererError, nullptr, nullptr, nullptr, napi_default, host},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
-
     return exports;
 }
 
