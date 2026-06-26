@@ -223,14 +223,21 @@ HarmonyOS UI 和 native 渲染问题需要在 DevEco + 设备上验证。
 
 ## 截图
 
-建议后续补充以下图片：
+### 未连接状态首页
 
-- 主界面连接表单截图。
-- 多标签终端运行截图。
-- 设置面板主题选择截图。
-- Claude Code / TUI 应用运行截图。
+![未连接状态首页](docs/images/登陆页面.jpg)
 
-如果你把图片放到仓库里，建议放在 `docs/images/`，然后在本节用相对路径引用。
+### 多标签终端
+
+![多标签终端](docs/images/多标签终端.jpg)
+
+### 主题设置
+
+![主题设置](docs/images/主题.jpg)
+
+### Claude Code 运行界面
+
+![Claude Code 运行界面](docs/images/claudecode界面.jpg)
 
 ## 第三方组件
 
