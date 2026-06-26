@@ -2114,6 +2114,7 @@ private:
             m_imeInputMethodProxy = nullptr;
             m_imeTextEditorProxy = nullptr;
             m_wantsIme = false;
+            m_imePreviewCodePoints = 0;
         }
         TerminalHost* expected = this;
         g_activeImeHost.compare_exchange_strong(expected, nullptr);
@@ -2221,13 +2222,62 @@ private:
         return 0;
     }
 
-    int32_t HandleImeSetPreviewText(const char16_t[], size_t, int32_t, int32_t)
+    // Returns the number of Unicode code points (terminal "characters") in a
+    // UTF-16 string, which equals the number of backspaces needed to erase it.
+    static size_t Utf16CodePointCount(const char16_t* text, size_t length)
     {
+        size_t count = 0;
+        for (size_t i = 0; i < length; ++i) {
+            const uint16_t c = static_cast<uint16_t>(text[i]);
+            // Skip low surrogates (they are the second half of a surrogate pair)
+            if (c >= 0xDC00 && c <= 0xDFFF) {
+                continue;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+    int32_t HandleImeSetPreviewText(const char16_t* text, size_t length, int32_t, int32_t)
+    {
+        // Some IMEs call SetPreviewText even when setPreviewTextSupport=false.
+        // Treat preview text as immediate terminal input so the user sees the
+        // character instantly. Track how many code points are in preview so we
+        // can erase them with backspaces when FinishPreview fires (after which
+        // InsertText sends the authoritative committed text).
+        if (!m_wantsIme || m_terminal == nullptr) {
+            m_imePreviewCodePoints = 0;
+            return 0;
+        }
+        // Erase any existing preview content.
+        if (m_imePreviewCodePoints > 0) {
+            static constexpr char kBackspace[] = "\x7f";
+            for (size_t i = 0; i < m_imePreviewCodePoints; ++i) {
+                m_terminal->writeInput(kBackspace, 1);
+            }
+            m_imePreviewCodePoints = 0;
+        }
+        if (text != nullptr && length > 0) {
+            const std::string utf8 = Utf16ToUtf8(text, length);
+            if (!utf8.empty()) {
+                m_terminal->writeInput(utf8.data(), utf8.size());
+                m_imePreviewCodePoints = Utf16CodePointCount(text, length);
+            }
+        }
         return 0;
     }
 
     void HandleImeFinishPreview()
     {
+        // Preview committed: erase what we displayed so InsertText can write
+        // the authoritative (possibly autocorrected) version.
+        if (m_imePreviewCodePoints > 0 && m_terminal != nullptr) {
+            static constexpr char kBackspace[] = "\x7f";
+            for (size_t i = 0; i < m_imePreviewCodePoints; ++i) {
+                m_terminal->writeInput(kBackspace, 1);
+            }
+            m_imePreviewCodePoints = 0;
+        }
     }
 
     void FillImeTextSlice(int32_t number, bool left, char16_t text[], size_t* length)
@@ -2519,6 +2569,7 @@ private:
     InputMethod_InputMethodProxy* m_imeInputMethodProxy = nullptr;
     bool m_imeVisible = false;
     bool m_wantsIme = false;
+    size_t m_imePreviewCodePoints = 0;
     // Throttle for the "not bound" (12800009) self-healing re-attach so a
     // persistently failing bind cannot turn every keystroke into a Detach/Attach
     // storm. 0 means "never tried yet".
