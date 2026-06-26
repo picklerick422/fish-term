@@ -2040,11 +2040,16 @@ private:
 
     void InsertImeText(const char16_t* text, size_t length)
     {
-        // Only accept IME text when the soft keyboard is actually visible.
-        // Physical keyboard input goes through DispatchKeyEvent instead.
-        // This also acts as a safety net during the window between the HIDE
-        // callback and the background Detach completing.
-        if (!m_imeVisible || m_terminal == nullptr || text == nullptr || length == 0) {
+        // Accept IME text whenever we want the IME (m_wantsIme), not just after
+        // the SHOW callback fires (m_imeVisible). Between AttachImeLocked() and
+        // HandleImeKeyboardStatus(SHOW), the IME framework intercepts physical key
+        // events and routes them here — but m_imeVisible is still false during that
+        // keyboard animation window, which silently drops the first character. Using
+        // m_wantsIme (set synchronously in ShowImeLocked before Attach) fixes this.
+        // After keyboard dismiss, HandleImeKeyboardStatus(HIDE) sets m_wantsIme=false
+        // and calls UnregisterImeHost synchronously, so no spurious InsertText calls
+        // can reach us after the user has dismissed the keyboard.
+        if (!m_wantsIme || m_terminal == nullptr || text == nullptr || length == 0) {
             return;
         }
         const std::string utf8 = Utf16ToUtf8(text, length);
@@ -2055,7 +2060,7 @@ private:
 
     void DeleteImeForward(int32_t length)
     {
-        if (!m_imeVisible || m_terminal == nullptr || length <= 0) {
+        if (!m_wantsIme || m_terminal == nullptr || length <= 0) {
             return;
         }
         for (int32_t i = 0; i < length; ++i) {
@@ -2066,7 +2071,7 @@ private:
 
     void DeleteImeBackward(int32_t length)
     {
-        if (!m_imeVisible || m_terminal == nullptr || length <= 0) {
+        if (!m_wantsIme || m_terminal == nullptr || length <= 0) {
             return;
         }
         for (int32_t i = 0; i < length; ++i) {
@@ -2129,7 +2134,7 @@ private:
 
     void HandleImeEnterKey(InputMethod_EnterKeyType)
     {
-        if (!m_imeVisible || m_terminal == nullptr) {
+        if (!m_wantsIme || m_terminal == nullptr) {
             return;
         }
         static constexpr char kEnter[] = "\r";
@@ -2138,7 +2143,7 @@ private:
 
     void HandleImeMoveCursor(InputMethod_Direction direction)
     {
-        if (!m_imeVisible || m_terminal == nullptr) {
+        if (!m_wantsIme || m_terminal == nullptr) {
             return;
         }
 
