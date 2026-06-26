@@ -1,88 +1,99 @@
 # fish-term
 
-**fish-term** is a HarmonyOS terminal app powered by [Ghostty](https://ghostty.org)'s VT terminal core. It ships both a reusable HAR library (`libghostty-ohos`) and a ready-to-run example app that connects to a remote shell over WebSocket, local PTY, or SSH.
+fish-term 是一个面向 HarmonyOS PC / 2in1 设备的终端应用。它使用 Ghostty 的 VT 终端核心负责转义序列解析与终端状态，用 HarmonyOS `XComponent` + Native Drawing 自绘终端画面，并通过 WebSocket 连接远端 `fish-agent` 后端来运行 shell。
 
-<img width="3120" height="2080" alt="fish-term screenshot" src="https://github.com/user-attachments/assets/42905cc8-2233-438d-a6e3-d461f7da06ce" />
+这个仓库同时包含两部分：
 
-## Features
+- `libghostty_ohos`：可复用的 HarmonyOS HAR 终端库，发布名为 `libghostty-ohos`。
+- `entry`：fish-term 应用本体，负责连接 UI、多标签、设置、持久化、WebSocket 传输和后台保活。
 
-- Full VT terminal rendering backed by `libghostty-vt` (Ghostty's terminal core)
-- ArkTS `TerminalSurface` component using HarmonyOS `XComponent` for native GPU rendering
-- Hardware keyboard, IME, clipboard, and touch input (tap-to-scroll, long-press selection)
-- 50+ bundled terminal color themes (Ghostty format)
-- Symbols Nerd Font Mono for glyph/icon fallback
-- WebSocket transport to a remote shell backend (`fish-agent`)
-- Local PTY shell driver
-- SSH transport (opt-in, compile-time flag)
-- Adjustable font size with persistent preference storage
-- Encrypted token storage via HarmonyOS Asset Store Kit
+> 当前应用主线是 `fish-agent` WebSocket 远程终端。本地 PTY 和 SSH 的 native 代码仍在仓库中保留，但入口 UI 暂未把它们作为主要连接方式接入。
 
-## Project Layout
+## 功能特性
 
-```
+- 基于 `libghostty-vt` 的 VT 终端解析与状态管理。
+- HarmonyOS 原生 `XComponent` 终端表面，Native Drawing 自绘渲染。
+- 面向 PC 的多标签终端界面，支持标签切换、关闭和拖拽排序。
+- WebSocket 连接 `fish-agent`，支持输入、输出、resize、心跳和自动重连。
+- UTF-8 streaming 解码，处理二进制 WebSocket 帧中的跨帧多字节字符。
+- 外接键盘、鼠标、触摸、IME、剪贴板、右键菜单、选择、搜索。
+- 主题选择，内置大量 Ghostty 格式主题。
+- 字号、光标样式、光标闪烁、scrollback 行数设置。
+- host / port / TLS / token 配置持久化，token 使用 HarmonyOS Asset Store Kit 加密存储。
+- 后台 `DATA_TRANSFER` 保活，降低应用切后台时 WebSocket 被挂起导致远端 PTY 退出的概率。
+- 内置 Symbols Nerd Font Mono 作为符号字形 fallback。
+
+## 当前架构
+
+```text
 fish-term/
-├── libghostty_ohos/          # Reusable HAR library (published as libghostty-ohos)
-│   ├── src/main/ets/         # ArkTS: TerminalSurface, TerminalController, TerminalTypes
-│   ├── src/main/cpp/         # Native N-API bridge + renderer + VT terminal wrapper
-│   └── src/main/resources/   # 50+ themes, Symbols Nerd Font Mono
-├── entry/                    # fish-term app (consumes the HAR)
+├── libghostty_ohos/                 # 可复用 HAR：终端组件、控制器、native 渲染与 VT 封装
 │   ├── src/main/ets/
-│   │   ├── pages/Index.ets              # Main page: connection form + terminal
-│   │   ├── transport/
-│   │   │   ├── FishWebSocketDriver.ets  # WebSocket transport to fish-agent backend
-│   │   │   ├── FishUrl.ets              # WebSocket URL builder
-│   │   │   ├── TerminalDriver.ets       # TerminalDriver interface + FishConnectConfig
-│   │   │   └── Utf8Framer.ets           # UTF-8 frame decoder for binary WS frames
-│   │   ├── session/TerminalSession.ets  # Session lifecycle management
-│   │   └── store/ConnectionStore.ets    # Persistent connection profiles + font size
-│   └── src/main/cpp/         # Native PTY and SSH drivers
-├── tools/
-│   ├── build-ghostty-vt-docker.sh  # Rebuilds libghostty_vt.a in Docker
-│   └── build-fish-ohos.sh          # Rebuilds bundled fish/starship/fastfetch HNP
-├── BUILD.md                  # Build prerequisites and DevEco Studio setup
-├── THIRD_PARTY_NOTICES.md    # License attribution
-└── LICENSE                   # MIT
+│   │   ├── TerminalSurface.ets       # ArkTS XComponent 终端表面
+│   │   ├── TerminalController.ets    # 终端控制器：输入、输出、配置、主题、搜索、选择等
+│   │   └── TerminalTypes.ets         # 公开类型与默认配置
+│   ├── src/main/cpp/
+│   │   ├── napi_init.cpp             # N-API / XComponent / 键鼠 / IME 桥接
+│   │   ├── terminal/                 # Ghostty VT 包装与终端状态转换
+│   │   └── renderer/                 # Native Drawing renderer
+│   ├── prebuilt/arm64-v8a/           # libghostty_vt.a 预构建产物
+│   └── src/main/resources/rawfile/   # 主题与字体资源
+├── entry/                            # fish-term 应用
+│   ├── src/main/ets/pages/
+│   │   ├── Index.ets                 # 主界面：表单、多标签、终端、引导
+│   │   └── SettingsPanel.ets         # 设置面板：主题、字号、光标、快捷键、关于
+│   ├── src/main/ets/session/         # TerminalRuntime / TerminalSession
+│   ├── src/main/ets/transport/       # WebSocket driver、URL、UTF-8 framer、backoff
+│   ├── src/main/ets/store/           # 连接配置、token、终端偏好持久化
+│   └── src/main/cpp/                 # 保留的本地 PTY / SSH native driver
+├── tools/                            # 构建 Ghostty VT、fish HNP、设备验证辅助脚本
+├── docs/                             # 调查记录、设计文档和阶段计划
+├── BUILD.md                          # DevEco 构建说明
+├── THIRD_PARTY_NOTICES.md            # 第三方组件说明
+└── LICENSE
 ```
 
-## The `libghostty-ohos` Library
+## 运行方式
 
-The HAR library is designed to be embedded in any HarmonyOS app. It provides:
+fish-term 需要连接一个兼容的 `fish-agent` WebSocket 后端。应用会按如下形式构造连接地址：
 
-| Export | Description |
-|--------|-------------|
-| `TerminalSurface` | ArkTS component backed by `XComponent`; owns native bind/unbind lifecycle |
-| `TerminalController` | Imperative control: input/output wiring, scroll, selection, theme, config |
-| `TerminalConfig` / `TerminalConfigPatch` | Configuration types |
-| `CursorPosition` / `CellMetrics` | Query types |
-| `DEFAULT_TERMINAL_CONFIG` / `DEFAULT_THEME_NAME` | Defaults |
+```text
+ws://<host>:<port>/ws?token=<token>&cols=<cols>&rows=<rows>
+```
 
-### Install
+开启 TLS 时使用 `wss://`。
+
+应用侧流程：
+
+1. 启动 fish-term。
+2. 在连接表单输入 `host`、`port`、`token`。
+3. 按需开启 `TLS (wss)` 和“记住 token”。
+4. 点击连接，应用会创建一个新终端标签页。
+5. 新建标签页会复用当前连接配置，打开独立 WebSocket 会话。
+
+连接断开后，WebSocket driver 会进入重连流程。需要注意：如果后端在 WebSocket 断开时销毁 PTY，那么重连会得到一个新的 shell，而不是续接原 shell。
+
+## libghostty-ohos 用法
+
+`libghostty_ohos` 是仓库内的本地模块；发布到 OHPM 时包名为 `libghostty-ohos`。
+
+在本仓库开发时，`entry/oh-package.json5` 使用本地依赖：
+
+```json5
+{
+  "dependencies": {
+    "libghostty_ohos": "file:../libghostty_ohos"
+  }
+}
+```
+
+外部应用使用发布包时可安装：
 
 ```sh
 ohpm install libghostty-ohos
 ```
 
-Or as a `oh-package.json5` dependency:
-
-```json5
-{
-  "dependencies": {
-    "libghostty-ohos": "^0.1.0"
-  }
-}
-```
-
-For local development:
-
-```json5
-{
-  "dependencies": {
-    "libghostty-ohos": "file:../libghostty_ohos"
-  }
-}
-```
-
-### Quick Start
+基本用法：
 
 ```ts
 import { TerminalController, TerminalSurface } from 'libghostty-ohos';
@@ -93,9 +104,16 @@ struct TerminalPage {
   private controller: TerminalController = new TerminalController();
 
   aboutToAppear(): void {
-    this.controller.updateConfig({ fontSize: 16, scrollbackLines: 20000 });
     this.controller.setTheme('Aizen_Dark');
+    this.controller.updateConfig({
+      fontSize: 16,
+      scrollbackLines: 20000,
+      cursorStyle: 0,
+      cursorBlink: true
+    });
+
     this.controller.setInputListener((data: string) => {
+      // 发送到你的 PTY / SSH / WebSocket driver
       this.driver.write(data);
     });
   }
@@ -115,23 +133,16 @@ struct TerminalPage {
 }
 ```
 
-### Usage Rules
+使用约定：
 
-- One `TerminalController` per terminal instance.
-- Never reuse the same `surfaceId` across simultaneously visible surfaces.
-- `TerminalSurface` owns the native lifecycle — do not call `bindNative()` / `unbindNative()` from app code.
-- Config is cached on the controller and applied when the surface binds.
-- `getThemeList()`, `isRendererReady()`, and `getRendererError()` are meaningful only after the surface is attached.
+- 每个终端实例使用一个独立的 `TerminalController`。
+- 同时可见的多个 `TerminalSurface` 必须使用不同的 `surfaceId`。
+- `TerminalSurface` 负责 native bind / unbind 生命周期，业务代码不要直接调用 `bindNative()` / `unbindNative()`。
+- `getThemeList()`、`getThemeColors()`、`isRendererReady()` 等依赖 native 的方法，需要 surface attach 后才有意义。
 
-### Multi-Terminal Composition
+## 传输层
 
-- **Tabs**: one controller per tab; mount/unmount the active `TerminalSurface`.
-- **Splits**: render multiple `TerminalSurface` instances side by side, each with a unique `surfaceId` and its own controller.
-- **Custom actions**: use `write()`, `feed()`, `scrollView()`, `clearSelection()`, `setTheme()`, `updateConfig()` directly.
-
-## Transport Drivers
-
-The app separates terminal rendering from I/O transport via the `TerminalDriver` interface:
+应用内使用 `TerminalDriver` 把终端渲染和 I/O 传输解耦：
 
 ```ts
 interface TerminalDriver {
@@ -144,66 +155,94 @@ interface TerminalDriver {
 }
 ```
 
-| Driver | Status | Description |
-|--------|--------|-------------|
-| `FishWebSocketDriver` | Enabled | WebSocket to fish-agent backend; auto-reconnect with backoff |
-| Local PTY (`ExampleShellDriver`) | Enabled | Direct local shell via PTY |
-| SSH | Opt-in | Password-based SSH; enable with `-DFISH_ENABLE_SSH=ON` at build time |
+当前实现状态：
 
-## Runtime Behavior
+| 传输 | 状态 | 说明 |
+| --- | --- | --- |
+| `FishWebSocketDriver` | 主线可用 | 连接 `fish-agent`，支持 binary I/O、JSON 控制帧、心跳和 backoff 重连 |
+| 本地 PTY native | 代码保留 | `entry/src/main/cpp/pty/` 和 `ExampleShellDriver.ets` 仍在，当前 UI 主线未接入 |
+| SSH native | 可选编译/代码保留 | 默认使用 stub；启用需准备 `libssh2` / `mbedtls` 并设置 `-DWAND_ENABLE_SSH=ON` |
 
-- Terminal starts when the surface binds.
-- User input (hardware keyboard, IME, paste, touch) routes through the controller to your driver.
-- Driver output is fed back via `controller.feed()`.
-- Touch drag scrolls; long-press enters selection mode.
+## 构建
 
-## Build From Source
+完整构建说明见 [BUILD.md](BUILD.md)。简要步骤如下。
 
-See [BUILD.md](BUILD.md) for the full prerequisite setup. Quick summary:
-
-**1. Build the native archive:**
-
-```sh
-./tools/build-ghostty-vt-docker.sh
-```
-
-This produces `libghostty_ohos/prebuilt/arm64-v8a/libghostty_vt.a`.
-
-**2. Install OHPM dependencies:**
+安装 OHPM 依赖：
 
 ```sh
 ohpm install
 ```
 
-**3. Build the app in DevEco Studio:**
+如需重新生成 Ghostty VT 静态库：
+
+```sh
+./tools/build-ghostty-vt-docker.sh
+```
+
+该脚本会生成：
+
+```text
+libghostty_ohos/prebuilt/arm64-v8a/libghostty_vt.a
+```
+
+使用 DevEco Studio / hvigor 构建应用：
 
 ```sh
 /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleApp -m project --no-daemon
 ```
 
-Target: HarmonyOS 6.0.0 / API Level 20 / arm64-v8a.
+目标环境：
 
-## Platform & Requirements
-
-| Requirement | Detail |
-|-------------|--------|
-| Target OS | HarmonyOS 6.0.0 (API Level 20) |
-| Architecture | arm64-v8a (real device required) |
+| 项目 | 要求 |
+| --- | --- |
+| HarmonyOS | 6.0.0 / API 20 |
+| ABI | `arm64-v8a` |
 | IDE | DevEco Studio |
-| Build tools | Hvigor, OHPM, CMake, HarmonyOS NDK |
-| Native archive | Zig 0.15.2 + Docker (for Ghostty rebuild) |
+| Native 工具链 | HarmonyOS NDK、CMake |
+| Ghostty VT 重建 | Docker + Zig |
 
-## Third-Party Components
+说明：
 
-| Component | License |
-|-----------|---------|
-| [Ghostty](https://ghostty.org) (`libghostty_vt.a`) | MIT |
-| simdutf | Apache-2.0 OR MIT |
-| Google Highway | Apache-2.0 OR BSD-3-Clause |
-| Symbols Nerd Font Mono | SIL OFL 1.1 |
+- 当前 `libghostty_vt.a` 只提供 `arm64-v8a`。
+- 真机/arm64 设备是主要验证环境。
+- 打包运行需要本地签名配置；仓库里的签名配置可能与个人 DevEco 环境相关。
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full attribution.
+## 本地验证
+
+仓库中有少量纯逻辑 Node 测试，覆盖字号、backoff、WebSocket URL 和 UTF-8 framing：
+
+```sh
+node --test tools/verify/
+```
+
+HarmonyOS UI 和 native 渲染问题需要在 DevEco + 设备上验证。
+
+## 近期重要问题记录
+
+- [首字符不显示 Bug 调查与修复](docs/首字符不显示-调查与修复.md)：记录了外接键盘输入时首字符空白的问题。最终根因是 OH_Drawing typography run 右边界裁剪，修复方式是逐 cell 绘制并给 glyph layout 留 overhang。
+
+## 截图
+
+建议后续补充以下图片：
+
+- 主界面连接表单截图。
+- 多标签终端运行截图。
+- 设置面板主题选择截图。
+- Claude Code / TUI 应用运行截图。
+
+如果你把图片放到仓库里，建议放在 `docs/images/`，然后在本节用相对路径引用。
+
+## 第三方组件
+
+| 组件 | 用途 | 许可 |
+| --- | --- | --- |
+| Ghostty / `libghostty-vt` | VT 终端核心 | MIT |
+| simdutf | Ghostty 构建依赖 | Apache-2.0 OR MIT |
+| Google Highway | Ghostty 构建依赖 | Apache-2.0 OR BSD-3-Clause |
+| Symbols Nerd Font Mono | 符号字形 fallback | 见字体元数据 |
+
+详细说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT，见 [LICENSE](LICENSE)。
