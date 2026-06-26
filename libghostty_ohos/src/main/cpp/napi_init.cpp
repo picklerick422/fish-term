@@ -743,10 +743,16 @@ public:
     // ArkUI's own frame pipeline, so flushing from it makes every content change
     // present on the very next refresh, independent of input.
     void OnFrameTick(uint64_t timestampNs) {
+        // Throttled heartbeat: confirms the XComponent frame callback is firing.
+        if ((++m_frameTickCount % 120) == 1) {
+            OH_LOG_INFO(LOG_APP, "FT_DIAG OnFrameTick alive count=%{public}llu",
+                        static_cast<unsigned long long>(m_frameTickCount));
+        }
         bool doResize = false;
         uint32_t resizeWidth = 0;
         uint32_t resizeHeight = 0;
         bool shouldRender = false;
+        bool content = false;
         {
             std::lock_guard<std::mutex> lock(m_renderMutex);
             if (m_resizePending) {
@@ -756,7 +762,7 @@ public:
                 m_resizePending = false;
             }
 
-            const bool content = m_renderDirty || doResize;
+            content = m_renderDirty || doResize;
             if (content) {
                 m_renderDirty = false;
                 // Schedule a couple of trailing redraws so the latest buffer is
@@ -797,11 +803,15 @@ public:
         }
 
         if (shouldRender) {
+            if (content) {
+                OH_LOG_INFO(LOG_APP, "FT_DIAG OnFrameTick render (content dirty)");
+            }
             DrawFrameLocked();
         }
     }
 
     bool DispatchKeyEvent(OH_NativeXComponent* component) {
+        OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent enter terminal=%{public}d", m_terminal != nullptr);
         if (!m_terminal) {
             return false;
         }
@@ -814,6 +824,7 @@ public:
         OH_NativeXComponent_KeyAction action = OH_NATIVEXCOMPONENT_KEY_ACTION_UNKNOWN;
         if (OH_NativeXComponent_GetKeyEventAction(keyEvent, &action) != OH_NATIVEXCOMPONENT_RESULT_SUCCESS ||
             action != OH_NATIVEXCOMPONENT_KEY_ACTION_DOWN) {
+            OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent action=%{public}d (not DOWN), ignoring", static_cast<int>(action));
             return false;
         }
 
@@ -821,6 +832,7 @@ public:
         if (OH_NativeXComponent_GetKeyEventCode(keyEvent, &code) != OH_NATIVEXCOMPONENT_RESULT_SUCCESS) {
             return false;
         }
+        OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent code=%{public}d", static_cast<int>(code));
 
         uint64_t modifiers = 0;
         OH_NativeXComponent_GetKeyEventModifierKeyStates(keyEvent, &modifiers);
@@ -845,8 +857,10 @@ public:
 
         std::string sequence;
         if (!BuildKeySequence(code, modifiers, capsLock, sequence) || sequence.empty()) {
+            OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent BuildKeySequence empty for code=%{public}d", static_cast<int>(code));
             return false;
         }
+        OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent writeInput seq[0]=%{public}d len=%{public}zu", static_cast<int>(sequence[0]), sequence.size());
 
         ExampleDriverWriteInputFn nativeSink = ResolveExampleDriverWriteInput();
         if (nativeSink != nullptr && nativeSink(sequence.data(), sequence.size())) {
@@ -2051,6 +2065,7 @@ private:
 
     void InsertImeText(const char16_t* text, size_t length)
     {
+        OH_LOG_INFO(LOG_APP, "FT_DIAG InsertImeText len=%{public}zu wantsIme=%{public}d", length, m_wantsIme);
         // Guard with m_wantsIme: covers both the SHOW-animation window
         // (Attach succeeded but SHOW callback hasn't fired yet) and the
         // post-HIDE window before background Detach completes.
@@ -2240,6 +2255,7 @@ private:
 
     int32_t HandleImeSetPreviewText(const char16_t* text, size_t length, int32_t, int32_t)
     {
+        OH_LOG_INFO(LOG_APP, "FT_DIAG SetPreviewText len=%{public}zu wantsIme=%{public}d", length, m_wantsIme);
         // Some IMEs call SetPreviewText even when setPreviewTextSupport=false.
         // Treat preview text as immediate terminal input so the user sees the
         // character instantly. Track how many code points are in preview so we
@@ -2589,6 +2605,8 @@ private:
     // True while we hold an OH_NativeXComponent_RegisterOnFrameCallback
     // registration. Only touched on the UI thread.
     bool m_frameCallbackRegistered = false;
+    // Diagnostic heartbeat counter for the XComponent frame callback.
+    uint64_t m_frameTickCount = 0;
     // Wall-clock (ms, from the OnFrame timestamp) of the last cursor-blink redraw.
     uint64_t m_lastBlinkMs = 0;
     bool m_resizePending = false;
