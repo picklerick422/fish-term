@@ -779,10 +779,9 @@ public:
     }
 
     // OH_NativeVSync frame callback: drives all rendering (content, blink,
-    // trailing) independently of ArkUI's frame pipeline. Because it is tied to
-    // the display's hardware vsync, RS composites every buffer we flush here,
-    // ensuring typed characters appear on the very next refresh without waiting
-    // for an ArkUI wake event.
+    // trailing) independently of ArkUI's frame pipeline. A flush from this
+    // callback only produces a new native buffer; ArkTS still has to dirty the
+    // XComponent node so ArkUI re-samples/latches it while the window is idle.
     static void OnVsyncFrameCB(long long timestamp, void* data) {
         auto* self = static_cast<TerminalHost*>(data);
         self->m_vsyncPending.store(false, std::memory_order_release);

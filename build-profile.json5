@@ -26,13 +26,13 @@
       {
         "name": "default",
         "material": {
-          "storePassword": "000000204836F401FE091B502EDC3D915F3DDA6E74342E3F372ED581CA2AEB55C2449F30E20F15F74B191BED6FA2E479",
-          "certpath": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termi6CNcBaWeONdNMzApq-R6ddr8EI0HC_VsmSgH9nxbLg.cer",
+          "storePassword": "0000002008A8C0910EC57A2C7639EEE061C0E9133894269D5BDB0466528D043977CC1793ACF29B102D68ABD4921B636B",
+          "certpath": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "000000204836F401FE091B502EDC3D915F3DDA6E74342E3F372ED581CA2AEB55C2449F30E20F15F74B191BED6FA2E479",
-          "profile": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termi6CNcBaWeONdNMzApq-R6ddr8EI0HC_VsmSgH9nxbLg.p7b",
+          "keyPassword": "0000002008A8C0910EC57A2C7639EEE061C0E9133894269D5BDB0466528D043977CC1793ACF29B102D68ABD4921B636B",
+          "profile": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termi6CNcBaWeONdNMzApq-R6ddr8EI0HC_VsmSgH9nxbLg.p12"
+          "storeFile": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.p12"
         },
         "type": "HarmonyOS"
       }

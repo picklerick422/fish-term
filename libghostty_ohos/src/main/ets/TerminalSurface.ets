@@ -27,10 +27,10 @@ export struct TerminalSurface {
   private searchInputController: TextInputController = new TextInputController();
   private fallbackTimer: number = -1;
   // Polls the native renderer for freshly flushed frames and bumps
-  // framePresentTick to force an ArkUI window frame. Without this, a buffer
-  // flushed from the native NativeVSync thread is not composited by
-  // RenderService while ArkUI is idle (external keyboard with no touch), so a
-  // typed character only appeared on the next keystroke.
+  // framePresentTick to dirty the XComponent node itself. Dirtying only a
+  // sibling ArkUI node submits a window frame, but it may not re-record the
+  // XComponent and therefore may not sample/latch the latest native buffer.
+  // The typed-character lag happens exactly in that gap.
   private framePresentTimer: number = -1;
   @State private framePresentTick: number = 0;
   private contextMenuSelectedText: string = '';
@@ -91,15 +91,6 @@ export struct TerminalSurface {
   build() {
     Stack({ alignContent: Alignment.BottomStart }) {
       this.buildTerminalXComponent();
-      // Invisible 1px node whose content tracks framePresentTick. Bumping the
-      // tick re-runs build and forces ArkUI to submit a window frame, which
-      // makes RenderService recomposite and present the latest native buffer.
-      Text(`${this.framePresentTick % 2}`)
-        .width(1)
-        .height(1)
-        .opacity(0.01)
-        .fontColor(this.surfaceColor)
-        .hitTestBehavior(HitTestMode.None)
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
@@ -117,12 +108,12 @@ export struct TerminalSurface {
   private buildTerminalXComponent() {
     XComponent({
       id: this.surfaceId,
-      // SURFACE mode: the native layer renders into the NativeWindow driven by
-      // OH_NativeVSync (content changes + 250ms cursor blink). Because an
-      // independent vsync flush is not composited by RenderService while ArkUI
-      // is idle, framePresentTick is bumped after each flush to force a window
-      // frame so the buffer is actually presented (see startFramePolling).
-      type: XComponentType.SURFACE,
+      // TEXTURE mode makes the native buffer part of ArkUI's render tree. When
+      // framePresentTick changes below, this XComponent node is dirtied and
+      // ArkUI re-samples the latest native texture buffer. In SURFACE mode, or
+      // when only a sibling node is dirtied, RenderService can keep showing the
+      // previous buffer until the next key/touch event wakes the window frame.
+      type: XComponentType.TEXTURE,
       libraryname: 'libghostty_ohos'
     })
       .onLoad((nativeContext?: Object) => {
@@ -185,7 +176,10 @@ export struct TerminalSurface {
       .tabIndex(-1)
       .width('100%')
       .height('100%')
-      .backgroundColor(this.surfaceColor)
+      // The native texture fully covers this background. Flipping one nearly
+      // identical color bit is visually invisible, but it marks the XComponent
+      // itself dirty so ArkUI records a frame that latches the newest buffer.
+      .backgroundColor(this.framePresentTick % 2 === 0 ? this.surfaceColor : '#0B0D11')
       .bindContextMenu(this.buildTerminalContextMenu(), ResponseType.RightClick)
   }
 

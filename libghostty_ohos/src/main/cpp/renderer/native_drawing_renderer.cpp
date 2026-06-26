@@ -110,18 +110,6 @@ bool IsBuiltinGeometryCodepoint(uint32_t codepoint)
     return (codepoint >= 0x2500 && codepoint <= 0x259F);
 }
 
-bool SameVisualTextStyle(const CellAttributes& lhs, const CellAttributes& rhs)
-{
-    return lhs.fg == rhs.fg &&
-        lhs.bg == rhs.bg &&
-        lhs.bold == rhs.bold &&
-        lhs.italic == rhs.italic &&
-        lhs.underline == rhs.underline &&
-        lhs.strikethrough == rhs.strikethrough &&
-        lhs.hidden == rhs.hidden &&
-        lhs.blink == rhs.blink;
-}
-
 bool EnsureDirectory(const std::string& path)
 {
     struct stat st {};
@@ -524,55 +512,15 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 continue;
             }
 
-            const int startCol = col;
-            int runCols = span;
-            std::string runText = firstText;
-            int nextCol = col + span;
-
-            while (nextCol < cols) {
-                const Cell& nextCell = cells[row * cols + nextCol];
-                if (nextCell.width == 3 || nextCell.width == 4) {
-                    break;
-                }
-                if (geometryMask[static_cast<size_t>(row * cols + nextCol)] != 0) {
-                    break;
-                }
-                // Never merge wide chars into a run: each wide (CJK) glyph must be
-                // laid out independently so the typography engine positions it at
-                // exactly 2*cellWidth rather than inheriting run-level spacing.
-                if (span == 2 || nextCell.width == 2) {
-                    break;
-                }
-
-                const uint8_t nextSpan = nextCell.width == 2 ? 2 : 1;
-                CellAttributes nextAttrs = nextCell.attrs;
-                nextAttrs.fg = nextCell.attrs.inverse ? nextCell.attrs.bg : nextCell.attrs.fg;
-                nextAttrs.bg = nextCell.attrs.inverse ? nextCell.attrs.fg : nextCell.attrs.bg;
-                nextAttrs.inverse = false;
-                const bool nextCursorHere = drawCursor && row == cursorRow && nextCol == cursorCol;
-                if (nextCursorHere && m_cursorStyle == 0) {
-                    std::swap(nextAttrs.fg, nextAttrs.bg);
-                }
-
-                const std::string nextText = cellText(nextCell);
-                if (nextAttrs.hidden || IsBlankText(nextText) || !SameVisualTextStyle(visualAttrs, nextAttrs)) {
-                    break;
-                }
-
-                runText += nextText;
-                runCols += nextSpan;
-                nextCol += nextSpan;
-            }
-
-            GlyphLayout* layout = getGlyphLayout(runText, visualAttrs, static_cast<uint8_t>(std::min(runCols, 255)));
+            GlyphLayout* layout = getGlyphLayout(firstText, visualAttrs, span);
             if (layout && layout->typography) {
-                const float left = startCol * cellWidth;
+                const float left = col * cellWidth;
                 const float top = row * cellHeight;
                 const float y = top + std::max(0.0f, (cellHeight - layout->height) * 0.5f);
                 OH_Drawing_TypographyPaint(layout->typography, m_canvas, left, y);
             }
 
-            col = nextCol;
+            col += span;
         }
     }
 }
@@ -781,7 +729,13 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
         return nullptr;
     }
 
-    const double maxWidth = std::max(1.0, static_cast<double>(m_cellWidth * span));
+    // OH_Drawing lays out and clips against this width. A terminal cell width
+    // measured from a probe glyph is not a strict upper bound for every glyph's
+    // advance/overhang, and an exact width can clip the rightmost glyph in a
+    // freshly typed run. Give layout a small overhang budget while keeping the
+    // paint origin snapped to the terminal cell.
+    const double overhang = std::max(2.0, static_cast<double>(m_fontSize * m_density) * 0.25);
+    const double maxWidth = std::max(1.0, static_cast<double>(m_cellWidth * span) + overhang);
     OH_Drawing_TypographyLayout(typography, maxWidth);
     const size_t unresolvedCount = OH_Drawing_TypographyGetUnresolvedGlyphsCount(typography);
     if (unresolvedCount > 0) {
