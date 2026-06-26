@@ -753,6 +753,8 @@ public:
         uint32_t resizeHeight = 0;
         bool shouldRender = false;
         bool content = false;
+        bool blinkRender = false;
+        bool trailingRender = false;
         {
             std::lock_guard<std::mutex> lock(m_renderMutex);
             if (m_resizePending) {
@@ -786,6 +788,8 @@ public:
             }
 
             shouldRender = content || blinkDue || trailing;
+            blinkRender = blinkDue;
+            trailingRender = trailing;
         }
 
         if (doResize) {
@@ -803,9 +807,8 @@ public:
         }
 
         if (shouldRender) {
-            if (content) {
-                OH_LOG_INFO(LOG_APP, "FT_DIAG OnFrameTick render (content dirty)");
-            }
+            OH_LOG_INFO(LOG_APP, "FT_DIAG OnFrameTick render content=%{public}d blink=%{public}d trailing=%{public}d",
+                        content ? 1 : 0, blinkRender ? 1 : 0, trailingRender ? 1 : 0);
             DrawFrameLocked();
         }
     }
