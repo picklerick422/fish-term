@@ -21,8 +21,15 @@
 #define LOG_TAG "NativeDrawingRenderer"
 
 namespace {
+// CPU_WRITE: we render into the mapped buffer on the CPU.
+// CPU_READ: lets the compositor read the pixels back.
+// MEM_DMA: allocate the buffer in DMA memory the Render Service can access
+// directly. A buffer tagged CPU_WRITE only would, on some devices, sit in
+// memory the compositor cannot scan out, so a freshly flushed frame is not
+// recomposited until an unrelated event (a key press waking ArkUI) forces a
+// pass — the "typed character only appears on the next keystroke" symptom.
 constexpr uint64_t kBufferUsage =
-    NATIVEBUFFER_USAGE_CPU_WRITE;
+    NATIVEBUFFER_USAGE_CPU_READ | NATIVEBUFFER_USAGE_CPU_WRITE | NATIVEBUFFER_USAGE_MEM_DMA;
 
 constexpr size_t kMaxGlyphCacheEntries = 4096;
 std::atomic<uint64_t> g_frameCounter {0};
