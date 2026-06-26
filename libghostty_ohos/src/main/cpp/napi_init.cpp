@@ -828,12 +828,19 @@ public:
             }
             if (shouldRender && m_renderer && m_terminal && m_surfaceReady) {
                 m_terminal->drawFrame();
+                // Signal ArkTS that a fresh buffer was flushed and the window
+                // needs recompositing (see m_framePresented).
+                m_framePresented.store(true, std::memory_order_release);
             }
         }
 
         if (needMoreFrames) {
             RequestVsyncFrame();
         }
+    }
+
+    bool DrainPendingFrame() {
+        return m_framePresented.exchange(false, std::memory_order_acq_rel);
     }
 
     void RequestVsyncFrame() {
@@ -2652,6 +2659,12 @@ private:
     // destructor (all from the UI thread); m_vsyncPending is atomic.
     OH_NativeVSync* m_nativeVSync = nullptr;
     std::atomic<bool> m_vsyncPending{false};
+    // Set true whenever OnVsyncTick flushes a new buffer. Drained by ArkTS
+    // (drainPendingFrame) to know a window recomposition is needed: an
+    // independent NativeVSync flush is NOT composited by RS while ArkUI's frame
+    // pipeline is idle (external keyboard, no touch). ArkTS bumps a @State to
+    // force a window frame, which makes RS latch our latest buffer.
+    std::atomic<bool> m_framePresented{false};
 
     std::mutex m_renderMutex;
     std::condition_variable m_renderCv;
@@ -2876,6 +2889,14 @@ static napi_value DrainPendingPasteRequest(napi_env env, napi_callback_info info
     TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
     napi_value result;
     napi_get_boolean(env, host ? host->DrainPendingPasteRequest() : false, &result);
+    return result;
+}
+
+static napi_value DrainPendingFrame(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    napi_value result;
+    napi_get_boolean(env, host ? host->DrainPendingFrame() : false, &result);
     return result;
 }
 
@@ -3362,6 +3383,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"drainPendingContextMenuRequest", nullptr, DrainPendingContextMenuRequest, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingCopyRequest", nullptr, DrainPendingCopyRequest, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingPasteRequest", nullptr, DrainPendingPasteRequest, nullptr, nullptr, nullptr, napi_default, host},
+        {"drainPendingFrame", nullptr, DrainPendingFrame, nullptr, nullptr, nullptr, napi_default, host},
         {"resizeTerminal", nullptr, ResizeTerminal, nullptr, nullptr, nullptr, napi_default, host},
         {"getScreenContent", nullptr, GetScreenContent, nullptr, nullptr, nullptr, napi_default, host},
         {"getCursorPosition", nullptr, GetCursorPosition, nullptr, nullptr, nullptr, napi_default, host},

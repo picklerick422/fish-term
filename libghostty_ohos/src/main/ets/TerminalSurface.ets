@@ -26,6 +26,13 @@ export struct TerminalSurface {
   private context: common.UIAbilityContext | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private fallbackTimer: number = -1;
+  // Polls the native renderer for freshly flushed frames and bumps
+  // framePresentTick to force an ArkUI window frame. Without this, a buffer
+  // flushed from the native NativeVSync thread is not composited by
+  // RenderService while ArkUI is idle (external keyboard with no touch), so a
+  // typed character only appeared on the next keystroke.
+  private framePresentTimer: number = -1;
+  @State private framePresentTick: number = 0;
   private contextMenuSelectedText: string = '';
   private contextMenuScreenContent: string = '';
   private contextMenuCanPaste: boolean = false;
@@ -74,6 +81,7 @@ export struct TerminalSurface {
 
   aboutToDisappear(): void {
     this.stopFallbackPolling();
+    this.stopFramePolling();
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
@@ -83,6 +91,15 @@ export struct TerminalSurface {
   build() {
     Stack({ alignContent: Alignment.BottomStart }) {
       this.buildTerminalXComponent();
+      // Invisible 1px node whose content tracks framePresentTick. Bumping the
+      // tick re-runs build and forces ArkUI to submit a window frame, which
+      // makes RenderService recomposite and present the latest native buffer.
+      Text(`${this.framePresentTick % 2}`)
+        .width(1)
+        .height(1)
+        .opacity(0.01)
+        .fontColor(this.surfaceColor)
+        .hitTestBehavior(HitTestMode.None)
       if (this.useTextFallback) {
         this.buildTextFallback();
       }
@@ -100,10 +117,11 @@ export struct TerminalSurface {
   private buildTerminalXComponent() {
     XComponent({
       id: this.surfaceId,
-      // SURFACE mode: the OH_NativeXComponent_RegisterOnFrameCallback fires on
-      // the UI thread inside ArkUI's frame pipeline, so flushing from OnFrameTick
-      // makes every content change present on the very next refresh, independent
-      // of input. Cursor blink is driven by a 250ms timer inside OnFrameTick.
+      // SURFACE mode: the native layer renders into the NativeWindow driven by
+      // OH_NativeVSync (content changes + 250ms cursor blink). Because an
+      // independent vsync flush is not composited by RenderService while ArkUI
+      // is idle, framePresentTick is bumped after each flush to force a window
+      // frame so the buffer is actually presented (see startFramePolling).
       type: XComponentType.SURFACE,
       libraryname: 'libghostty_ohos'
     })
@@ -119,12 +137,15 @@ export struct TerminalSurface {
         if (this.useTextFallback) {
           this.syncFallbackScreen();
           this.startFallbackPolling();
+          this.stopFramePolling();
         } else {
           this.stopFallbackPolling();
+          this.startFramePolling();
         }
       })
       .onDestroy(() => {
         this.stopFallbackPolling();
+        this.stopFramePolling();
         this.controller.unbindNative();
       })
       .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -341,6 +362,31 @@ export struct TerminalSurface {
 
     clearInterval(this.fallbackTimer);
     this.fallbackTimer = -1;
+  }
+
+  private startFramePolling(): void {
+    if (this.framePresentTimer >= 0) {
+      return;
+    }
+    // One tick per display refresh (~60fps). Each tick asks the native renderer
+    // whether it flushed a new buffer; if so, bump framePresentTick to drive an
+    // ArkUI window frame so RenderService presents it.
+    this.framePresentTimer = setInterval(() => {
+      if (!this.controller.isAttached()) {
+        return;
+      }
+      if (this.controller.drainPendingFrame()) {
+        this.framePresentTick = (this.framePresentTick + 1) % 1000000;
+      }
+    }, 16) as number;
+  }
+
+  private stopFramePolling(): void {
+    if (this.framePresentTimer < 0) {
+      return;
+    }
+    clearInterval(this.framePresentTimer);
+    this.framePresentTimer = -1;
   }
 
   private syncFallbackScreen(): void {

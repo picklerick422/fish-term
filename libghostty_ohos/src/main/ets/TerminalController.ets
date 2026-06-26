@@ -25,6 +25,7 @@ interface TerminalNativeBridge {
   drainPendingContextMenuRequest: () => string;
   drainPendingCopyRequest: () => boolean;
   drainPendingPasteRequest: () => boolean;
+  drainPendingFrame: () => boolean;
   resizeTerminal: (cols: number, rows: number) => void;
   getScreenContent: () => string;
   getCursorPosition: () => CursorPosition;
@@ -404,6 +405,17 @@ export class TerminalController {
       };
     }
     return this.native.getSearchStatus();
+  }
+
+  // True if the native renderer flushed a new buffer since the last call.
+  // The caller must then force an ArkUI window frame (e.g. bump a @State) so
+  // RenderService recomposites and presents the freshly flushed buffer — an
+  // independent NativeVSync flush alone is not presented while ArkUI is idle.
+  drainPendingFrame(): boolean {
+    if (!this.native) {
+      return false;
+    }
+    return this.native.drainPendingFrame();
   }
 
   isRendererReady(): boolean {
