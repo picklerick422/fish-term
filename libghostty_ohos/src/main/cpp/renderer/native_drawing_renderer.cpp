@@ -761,10 +761,10 @@ void NativeDrawingRenderer::computeRowMetrics(const std::vector<Cell>& cells, in
             if (m_isProportionalFont && !text.empty() && text.find_first_not_of(' ') != std::string::npos) {
                 GlyphLayout* layout = getGlyphLayout(text, probeCell.attrs, span);
                 if (layout && layout->width > 0.0f) {
-                    // Add a tiny amount of horizontal breathing room between
+                    // Add a small amount of horizontal breathing room between
                     // proportional glyphs so the terminal grid does not feel
                     // cramped; leave wide (CJK) glyphs at their natural width.
-                    const float extra = (span == 1) ? 1.0f : 0.0f;
+                    const float extra = (span == 1) ? 1.5f : 0.0f;
                     w = layout->width + extra;
                 }
             }
@@ -916,9 +916,12 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     OH_Drawing_TextStyleAddFontFeature(textStyle, "liga", 1);
     OH_Drawing_TextStyleAddFontFeature(textStyle, "clig", 1);
     OH_Drawing_TextStyleAddFontFeature(textStyle, "calt", 1);
-    const std::array<const char*, 4> fontFamilies = {
+    const std::array<const char*, 7> fontFamilies = {
         m_primaryFontFamily.c_str(),
         m_symbolFontFamily.c_str(),
+        "Noto Sans SC",
+        "Source Han Sans SC",
+        "HarmonyOS Sans",
         "monospace",
         "sans-serif"
     };
