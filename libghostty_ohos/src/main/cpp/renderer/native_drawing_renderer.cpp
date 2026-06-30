@@ -218,7 +218,7 @@ void NativeDrawingRenderer::cleanup()
     m_currentPixels = nullptr;
     m_currentConfig = {};
 
-    destroyGlyphCache();
+    clearGlyphCache();
 
     if (m_rect) {
         OH_Drawing_RectDestroy(m_rect);
@@ -258,34 +258,85 @@ bool NativeDrawingRenderer::loadFontAtlas(NativeResourceManager* resourceManager
         return true;
     }
 
-    // Fonts live in the process-wide shared collection, so only the first
-    // renderer needs to register them. Guard with a global once-flag + the
-    // collection mutex so concurrent tab setups don't race on RegisterFont.
     {
         std::lock_guard<std::mutex> lock(g_fontCollectionMutex);
         static bool s_fontsRegistered = false;
         if (!s_fontsRegistered) {
-            const char* monoFontPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";
-            if (access(monoFontPath, R_OK) == 0) {
-                uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, m_primaryFontFamily.c_str(), monoFontPath);
-                OH_LOG_INFO(LOG_APP, "Registered mono font rc=%u path=%{public}s", rc, monoFontPath);
+            auto registerBundledFont = [&](const char* rawfileName, const char* familyName, const char* destFilename) {
+                if (!resourceManager || filesDir.empty()) {
+                    OH_LOG_WARN(LOG_APP, "FT_FONT Cannot register %{public}s: resourceManager=%{public}p filesDir empty=%{public}d",
+                                familyName, resourceManager, (int)filesDir.empty());
+                    return;
+                }
+                const std::string fontDir = filesDir + "/fonts";
+                const std::string destPath = fontDir + "/" + destFilename;
+                const std::string rawPath = std::string("fonts/") + rawfileName;
+                if (EnsureDirectory(fontDir) &&
+                    ExtractRawFileToPath(resourceManager, rawPath, destPath)) {
+                    uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, familyName, destPath.c_str());
+                    OH_LOG_INFO(LOG_APP, "FT_FONT Registered %{public}s rc=%{public}u (0=success)", familyName, rc);
+                } else {
+                    OH_LOG_WARN(LOG_APP, "FT_FONT %{public}s not found in rawfile, skipping", familyName);
+                }
+            };
+
+            OH_LOG_INFO(LOG_APP, "FT_FONT filesDir='%{public}s'", filesDir.c_str());
+            registerBundledFont("JetBrainsMono-Regular.ttf", "JetBrains Mono", "JetBrainsMono-Regular.ttf");
+            registerBundledFont("FiraCode-Regular.ttf", "Fira Code", "FiraCode-Regular.ttf");
+            registerBundledFont("CascadiaCode-Regular.ttf", "Cascadia Code", "CascadiaCode-Regular.ttf");
+            registerBundledFont("SourceCodePro-Regular.ttf", "Source Code Pro", "SourceCodePro-Regular.ttf");
+            registerBundledFont("ClaudeSans-LET-Plain10.ttf", "Claude Sans LET Plain10", "ClaudeSans-LET-Plain10.ttf");
+
+            // 2. System Noto Sans Mono — always available on HarmonyOS
+            const char* sysMonoPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";
+            if (access(sysMonoPath, R_OK) == 0) {
+                uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, "Noto Sans Mono", sysMonoPath);
+                OH_LOG_INFO(LOG_APP, "Registered Noto Sans Mono rc=%u", rc);
             } else {
-                OH_LOG_WARN(LOG_APP, "Mono font path unavailable: %{public}s", monoFontPath);
+                OH_LOG_WARN(LOG_APP, "System mono font unavailable: %{public}s", sysMonoPath);
             }
 
+            // 3. UI fonts — Inter (sans) and Source Serif 4 (serif), bundled as rawfile
+            if (resourceManager && !filesDir.empty()) {
+                const std::string fontDir = filesDir + "/fonts";
+                const std::string interPath = fontDir + "/Inter-Regular.otf";
+                if (EnsureDirectory(fontDir) &&
+                    ExtractRawFileToPath(resourceManager, "fonts/Inter-Regular.otf", interPath)) {
+                    uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, "Inter", interPath.c_str());
+                    OH_LOG_INFO(LOG_APP, "Registered Inter rc=%u", rc);
+                } else {
+                    OH_LOG_WARN(LOG_APP, "Inter not found in rawfile, skipping");
+                }
+                const std::string sourceSerifPath = fontDir + "/SourceSerif4-Regular.otf";
+                if (EnsureDirectory(fontDir) &&
+                    ExtractRawFileToPath(resourceManager, "fonts/SourceSerif4-Regular.otf", sourceSerifPath)) {
+                    uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, "Source Serif 4", sourceSerifPath.c_str());
+                    OH_LOG_INFO(LOG_APP, "Registered Source Serif 4 rc=%u", rc);
+                } else {
+                    OH_LOG_WARN(LOG_APP, "Source Serif 4 not found in rawfile, skipping");
+                }
+            }
+
+            // 4. Nerd Font Symbols (already bundled for powerline / nerd glyphs)
             if (resourceManager && !filesDir.empty()) {
                 const std::string fontDir = filesDir + "/fonts";
                 const std::string symbolFontPath = fontDir + "/SymbolsNerdFontMono-Regular.ttf";
                 if (EnsureDirectory(fontDir) &&
                     ExtractRawFileToPath(resourceManager, "fonts/SymbolsNerdFontMono-Regular.ttf", symbolFontPath)) {
-                    uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection, m_symbolFontFamily.c_str(), symbolFontPath.c_str());
-                    OH_LOG_INFO(LOG_APP, "Registered symbol font rc=%u path=%{public}s", rc, symbolFontPath.c_str());
+                    uint32_t rc = OH_Drawing_RegisterFont(m_fontCollection,
+                        m_symbolFontFamily.c_str(), symbolFontPath.c_str());
+                    OH_LOG_INFO(LOG_APP, "Registered symbol font rc=%u", rc);
                 } else {
                     OH_LOG_WARN(LOG_APP, "Failed to extract bundled symbol font");
                 }
             }
+
             s_fontsRegistered = true;
         }
+    }
+
+    if (m_primaryFontFamily.empty()) {
+        m_primaryFontFamily = "Noto Sans Mono";
     }
 
     m_fontsConfigured = true;
@@ -406,6 +457,11 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
     if (!m_canvas || !m_currentPixels) {
         return;
     }
+
+    // Hold the cache lock for the entire render pass so that font-family
+    // changes (setFontFamily → clearGlyphCache) cannot free typography
+    // objects while the VSync thread is still painting with them.
+    std::lock_guard<std::recursive_mutex> cacheLock(m_glyphCacheMutex);
 
     const bool drawCursor = shouldRenderCursor(cursorVisible);
 
@@ -572,7 +628,7 @@ void NativeDrawingRenderer::updateCellDimensions()
     // density, so a font-size or density change must invalidate the cache.
     // Otherwise both the probe below and every subsequent glyph would return a
     // stale layout sized for the previous font, making font-size changes a no-op.
-    destroyGlyphCache();
+    clearGlyphCache();
 
     Cell probeCell;
     probeCell.codepoint = 'M';
@@ -625,8 +681,9 @@ bool NativeDrawingRenderer::ensureDrawingObjects()
     return m_canvas && m_brush && m_rect;
 }
 
-void NativeDrawingRenderer::destroyGlyphCache()
+void NativeDrawingRenderer::clearGlyphCache()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_glyphCacheMutex);
     for (auto& entry : m_glyphCache) {
         if (entry.second.typography) {
             OH_Drawing_DestroyTypography(entry.second.typography);
@@ -640,7 +697,7 @@ void NativeDrawingRenderer::trimGlyphCache()
     if (m_glyphCache.size() <= kMaxGlyphCacheEntries) {
         return;
     }
-    destroyGlyphCache();
+    clearGlyphCache();
 }
 
 NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
@@ -648,6 +705,7 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     const CellAttributes& attrs,
     uint8_t span)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_glyphCacheMutex);
     if (!m_fontCollection) {
         return nullptr;
     }
@@ -700,6 +758,15 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
         "monospace",
         "sans-serif"
     };
+    // Log the active font family once per renderer instance (first glyph only).
+    {
+        static std::atomic<int> s_fontLogCount{0};
+        if (s_fontLogCount.fetch_add(1) < 3) {
+            OH_LOG_INFO(LOG_APP, "FT_FONT getGlyphLayout primary='%{public}s' symbol='%{public}s' fontSize=%.1f density=%.2f",
+                        m_primaryFontFamily.c_str(), m_symbolFontFamily.c_str(),
+                        static_cast<double>(m_fontSize), static_cast<double>(m_density));
+        }
+    }
     const char* families[fontFamilies.size()];
     for (size_t i = 0; i < fontFamilies.size(); ++i) {
         families[i] = fontFamilies[i];

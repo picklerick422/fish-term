@@ -87,7 +87,6 @@ export struct SettingsPanel {
   private readonly dropdownEnter: TransitionEffect =
     TransitionEffect.OPACITY
       .combine(TransitionEffect.translate({ y: -8 }))
-      .combine(TransitionEffect.scale({ y: 0 }))
       .animation({ curve: curves.springMotion(0.6, 0.8) });
   private readonly dropdownExit: TransitionEffect =
     TransitionEffect.OPACITY
