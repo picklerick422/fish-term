@@ -93,6 +93,10 @@ export struct SettingsPanel {
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
+  private get previewFont(): string {
+    return this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
+  }
+
   aboutToAppear(): void {
     this.tab = this.initialTab;
     const all: string[] = this.controller.getThemeList();
@@ -431,20 +435,19 @@ export struct SettingsPanel {
   // rendered with the active theme colors and terminal font family.
   @Builder
   private buildThemePreview() {
-    const previewFont: string = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
     Column({ space: 4 }) {
       Row({ space: 6 }) {
         Text('user@fish')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).a2)
         Text('~/project')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).a3)
         Text('$ ls')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).fg)
       }
       .width('100%')
@@ -452,15 +455,15 @@ export struct SettingsPanel {
       Row({ space: 10 }) {
         Text('README.md')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).a1)
         Text('src')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).a2)
         Text('build.zig')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).a3)
       }
       .width('100%')
@@ -468,7 +471,7 @@ export struct SettingsPanel {
       Row({ space: 0 }) {
         Text('$ ')
           .fontSize(12)
-          .fontFamily(previewFont)
+          .fontFamily(this.previewFont)
           .fontColor(this.colorsFor(this.themeName).fg)
         // blinking-cursor stand-in
         Text(' ')
