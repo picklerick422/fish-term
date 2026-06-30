@@ -6,7 +6,7 @@ import {
   MIN_LINE_SPACING, MAX_LINE_SPACING, LINE_SPACING_STEP, DEFAULT_LINE_SPACING,
   FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS
 } from '../theme/FontScale';
-import { curves, InputType } from '@kit.ArkUI';
+import { curves } from '@kit.ArkUI';
 
 interface CursorOpt {
   label: string;
@@ -594,12 +594,15 @@ export struct SettingsPanel {
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.accent)
           .textAlign(TextAlign.Center)
-          .type(InputType.Number)
           .backgroundColor('#0D1520')
           .borderRadius(8)
           .padding({ left: 2, right: 2 })
           .caretColor(Palette.accent)
-          .onChange((value: string) => { this.fontSizeDraft = value; })
+          .onChange((value: string) => {
+            // Only allow digits so the field stays a valid font-size input.
+            const digits = value.replace(/[^0-9]/g, '');
+            this.fontSizeDraft = digits;
+          })
           .onBlur(() => { this.applyFontSizeDraft(); })
           .onSubmit(() => { this.applyFontSizeDraft(); })
 
