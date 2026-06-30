@@ -57,6 +57,7 @@ interface TerminalNativeBridge {
   getThemeColors: (themeName: string) => string[];
   isRendererReady: () => boolean;
   getRendererError: () => string;
+  focusTerminal: () => void;
 }
 
 type TerminalConfigListener = (config: TerminalConfig, themeName: string) => void;
@@ -93,6 +94,10 @@ export class TerminalController {
   }
 
   unbindNative(): void {
+    if (this.sizeNotifyTimer >= 0) {
+      clearTimeout(this.sizeNotifyTimer);
+      this.sizeNotifyTimer = -1;
+    }
     if (this.native) {
       this.native.setInputCallback(null);
     }
@@ -261,12 +266,75 @@ export class TerminalController {
     this.native.setSurfaceOrigin(left, top);
   }
 
+  // Update the native surface frame dimensions immediately (for responsive
+  // visual resize) without triggering a size-change notification to the driver.
+  // Used on the first onAreaChange event of a resize burst so the native
+  // renderer can start adapting while we wait for the resize to settle before
+  // sending SIGWINCH to the remote shell.
+  setSurfaceFrameImmediate(left: number, top: number, width: number, height: number): void {
+    if (!this.native) {
+      return;
+    }
+    this.native.setSurfaceFrame(left, top, width, height);
+  }
+
+  // Update native surface frame AND schedule a debounced size-change
+  // notification. Called from the trailing edge of a resize burst so the driver
+  // receives exactly one SIGWINCH at the final size.
   setSurfaceFrame(left: number, top: number, width: number, height: number): void {
     if (!this.native) {
       return;
     }
     this.native.setSurfaceFrame(left, top, width, height);
-    this.notifySizeChanged();
+    // Defer size-change notification so the native side has time to process the
+    // queued resize in OnFrameTick. Without this, getTerminalSize() returns the
+    // old grid dimensions and the listener never fires on the first event of a
+    // resize burst — it only fires on a later event, lagging behind the actual
+    // size change. We also debounce with a longer settle window so the remote
+    // shell receives a single SIGWINCH at the end of the resize, not a storm.
+    this.scheduleSizeNotify();
+  }
+
+  // Debounced size-change notification. Called after every surface frame update;
+  // coalesces rapid resize events so the driver only gets the final terminal
+  // size after the window stops changing.
+  private sizeNotifyTimer: number = -1;
+  private scheduleSizeNotify(): void {
+    // Fire after ~one frame (16 ms) so OnFrameTick has time to process the
+    // queued native resize. If the grid size hasn't changed yet (OnFrameTick
+    // hasn't run), we retry once after another frame. The tight timing keeps
+    // the local grid reflow and the remote SIGWINCH nearly simultaneous so
+    // the user perceives a single visual update instead of two flashes.
+    if (this.sizeNotifyTimer >= 0) {
+      clearTimeout(this.sizeNotifyTimer);
+    }
+    this.sizeNotifyTimer = setTimeout(() => {
+      this.sizeNotifyTimer = -1;
+      if (!this.tryNotifySize()) {
+        // Retry once: OnFrameTick may not have processed the queued resize yet.
+        this.sizeNotifyTimer = setTimeout(() => {
+          this.sizeNotifyTimer = -1;
+          this.tryNotifySize();
+        }, 16) as number;
+      }
+    }, 16) as number;
+  }
+
+  // Returns true if the size actually changed and was notified.
+  private tryNotifySize(): boolean {
+    if (!this.native || !this.sizeListener) {
+      return false;
+    }
+    const size = this.native.getTerminalSize();
+    if (size.cols <= 0 || size.rows <= 0) {
+      return false;
+    }
+    if (size.cols === this.lastReportedSize.cols && size.rows === this.lastReportedSize.rows) {
+      return false;
+    }
+    this.lastReportedSize = { cols: size.cols, rows: size.rows };
+    this.sizeListener(this.lastReportedSize);
+    return true;
   }
 
   scrollView(delta: number): void {
@@ -432,6 +500,22 @@ export class TerminalController {
     return this.native.getRendererError();
   }
 
+  // Focus this terminal like a tap: take over the process-wide IME attachment
+  // and raise the keyboard. Needed on tab switch / return-to-foreground because
+  // ArkUI focus alone does not move IME (soft-keyboard / CJK) input routing.
+  focusTerminal(): void {
+    if (!this.native) {
+      console.info('FT_DIAG focusTerminal: native is null, skipping');
+      return;
+    }
+    console.info('FT_DIAG focusTerminal: calling native.focusTerminal()');
+    try {
+      this.native.focusTerminal();
+    } catch (e) {
+      console.error('FT_DIAG focusTerminal: native call failed: ' + JSON.stringify(e));
+    }
+  }
+
   private applyConfig(): void {
     if (!this.native) {
       return;
@@ -574,17 +658,6 @@ export class TerminalController {
   }
 
   private notifySizeChanged(): void {
-    if (!this.native || !this.sizeListener) {
-      return;
-    }
-    const size = this.native.getTerminalSize();
-    if (size.cols <= 0 || size.rows <= 0) {
-      return;
-    }
-    if (size.cols === this.lastReportedSize.cols && size.rows === this.lastReportedSize.rows) {
-      return;
-    }
-    this.lastReportedSize = { cols: size.cols, rows: size.rows };
-    this.sizeListener(this.lastReportedSize);
+    this.tryNotifySize();
   }
 }

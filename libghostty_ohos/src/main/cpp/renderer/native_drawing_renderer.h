@@ -6,6 +6,8 @@
 #include <native_drawing/drawing_brush.h>
 #include <native_drawing/drawing_canvas.h>
 #include <native_drawing/drawing_font_collection.h>
+#include <native_drawing/drawing_path.h>
+#include <native_drawing/drawing_pen.h>
 #include <native_drawing/drawing_rect.h>
 #include <native_drawing/drawing_register_font.h>
 #include <native_drawing/drawing_text_typography.h>
@@ -78,6 +80,11 @@ private:
     void trimGlyphCache();
     GlyphLayout* getGlyphLayout(const std::string& text, const CellAttributes& attrs, uint8_t span);
     bool paintBuiltinGlyph(const Cell& cell, const CellAttributes& attrs, float left, float top, float width, float height);
+    bool paintPowerlineGlyph(uint32_t codepoint, const CellAttributes& attrs, float left, float top, float width, float height);
+    void fillTrianglePath(float ax, float ay, float bx, float by, float cx, float cy, uint32_t color);
+    void fillHalfEllipse(float left, float top, float width, float height, bool bulgeRight, uint32_t color);
+    void strokePolyline(const float* xs, const float* ys, int count, float thickness, uint32_t color);
+    void strokeHalfEllipse(float left, float top, float width, float height, bool bulgeRight, float thickness, uint32_t color);
     void paintCellBackground(float left, float top, float width, float height, uint32_t color);
     void paintCursor(float left, float top, float width, float height, uint32_t color);
     void paintBuiltinRect(float left, float top, float width, float height, uint32_t color);

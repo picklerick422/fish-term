@@ -891,25 +891,36 @@ public:
         if (OH_NativeXComponent_GetKeyEventCode(keyEvent, &code) != OH_NATIVEXCOMPONENT_RESULT_SUCCESS) {
             return false;
         }
-        OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent code=%{public}d", static_cast<int>(code));
 
         uint64_t modifiers = 0;
         OH_NativeXComponent_GetKeyEventModifierKeyStates(keyEvent, &modifiers);
         bool capsLock = false;
         OH_NativeXComponent_GetKeyEventCapsLockState(keyEvent, &capsLock);
 
+        // Determine the target terminal for this key event. ArkUI routes hardware
+        // keys to whichever XComponent holds its focus, which does NOT move on tab
+        // switch — focusControl.requestFocus does not reroute XComponent key
+        // dispatch. Forward to g_activeImeHost (the process-wide IME owner, set on
+        // tap / RequestImeFocus) so hardware keys always land in the same terminal
+        // as IME text. The active host's m_terminal is guaranteed alive because
+        // g_activeImeHost is cleared (DetachImeLocked) before m_terminal is deleted.
+        TerminalHost* targetHost = this;
+        TerminalHost* activeHost = g_activeImeHost.load(std::memory_order_acquire);
+        if (activeHost != nullptr && activeHost != this && activeHost->m_terminal != nullptr) {
+            targetHost = activeHost;
+        }
+
         // Ctrl+Shift+C = clipboard copy; Ctrl+Shift+V = clipboard paste.
-        // These must be intercepted before BuildKeySequence, which would otherwise
-        // treat Ctrl+letter as a terminal control character (ETX for Ctrl+C, etc.).
+        // Route to the target host (where the user is looking).
         if (IsCtrlPressed(modifiers) && IsShiftPressed(modifiers)) {
             if (code == LINUX_KEY_C || code == KEY_C) {
-                std::lock_guard<std::mutex> lock(m_inputMutex);
-                m_pendingCopyRequest = true;
+                std::lock_guard<std::mutex> lock(targetHost->m_inputMutex);
+                targetHost->m_pendingCopyRequest = true;
                 return true;
             }
             if (code == LINUX_KEY_V || code == KEY_V) {
-                std::lock_guard<std::mutex> lock(m_inputMutex);
-                m_pendingPasteRequest = true;
+                std::lock_guard<std::mutex> lock(targetHost->m_inputMutex);
+                targetHost->m_pendingPasteRequest = true;
                 return true;
             }
         }
@@ -919,14 +930,19 @@ public:
             OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent BuildKeySequence empty for code=%{public}d", static_cast<int>(code));
             return false;
         }
-        OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent writeInput seq[0]=%{public}d len=%{public}zu", static_cast<int>(sequence[0]), sequence.size());
+        if (targetHost != this) {
+            OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent forward seq[0]=%{public}d", static_cast<int>(sequence[0]));
+        } else {
+            OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent writeInput code=%{public}d seq[0]=%{public}d",
+                        static_cast<int>(code), static_cast<int>(sequence[0]));
+        }
 
         ExampleDriverWriteInputFn nativeSink = ResolveExampleDriverWriteInput();
         if (nativeSink != nullptr && nativeSink(sequence.data(), sequence.size())) {
             return true;
         }
 
-        m_terminal->writeInput(sequence.data(), sequence.size());
+        targetHost->m_terminal->writeInput(sequence.data(), sequence.size());
         return true;
     }
 
@@ -1647,6 +1663,34 @@ public:
         return m_rendererError;
     }
 
+    // Programmatically focus this terminal exactly like a tap does: take over the
+    // single process-wide IME attachment and raise the keyboard. ArkUI focus
+    // (focusControl.requestFocus) only routes hardware keys; soft-keyboard / CJK
+    // (IME) input follows g_activeImeHost, which moves ONLY when a host runs the
+    // ShowImeLocked path. So switching tabs / returning from background needs
+    // this, otherwise IME text keeps flowing to the previously tapped tab and the
+    // keyboard is not raised. Mirrors the OnSurfaceShow IME block.
+    void RequestImeFocus() {
+        std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
+        m_wantsIme = true;
+        // Move the single process-wide IME attachment to this terminal so
+        // InsertImeText / DeleteBackward etc. route here. Do NOT show the
+        // soft keyboard — raising it causes the IME to consume ALL hardware
+        // key events, and the IME drops digits, arrows, and control keys
+        // that the terminal needs via DispatchKeyEvent. The keyboard is
+        // raised only on explicit touch (DispatchTouchEvent → ShowImeLocked
+        // with TOUCH/MOUSE reason).
+        //
+        // This mirrors ShowImeLocked without the ShowTextInputOnceLocked call.
+        if (m_imeInputMethodProxy != nullptr && g_activeImeHost.load() != this) {
+            m_imeInputMethodProxy = nullptr;
+        }
+        if (m_imeInputMethodProxy == nullptr) {
+            AttachImeLocked();
+        }
+        NotifyImeStateLocked();
+    }
+
 private:
     static void HandleImeGetTextConfig(InputMethod_TextEditorProxy* proxy, InputMethod_TextConfig* config)
     {
@@ -2053,6 +2097,11 @@ private:
 
     void ShowImeLocked(InputMethod_RequestKeyboardReason reason)
     {
+        OH_LOG_INFO(LOG_APP, "FT_DIAG ShowImeLocked enter wantsIme=%{public}d proxy=%{public}d activeHost=%{public}d reason=%{public}d",
+                    static_cast<int>(m_wantsIme),
+                    m_imeInputMethodProxy != nullptr ? 1 : 0,
+                    g_activeImeHost.load() == this ? 1 : 0,
+                    static_cast<int>(reason));
         m_wantsIme = true;
         // If another tab has since taken over the process-wide IME, our proxy is
         // stale. Drop it WITHOUT a framework Detach (that targets the superseded
@@ -2070,8 +2119,10 @@ private:
 
         if (ShowTextInputOnceLocked(reason)) {
             m_imeVisible = true;
+            OH_LOG_INFO(LOG_APP, "FT_DIAG ShowImeLocked ShowTextInputOnceLocked OK");
             return;
         }
+        OH_LOG_WARN(LOG_APP, "FT_DIAG ShowImeLocked ShowTextInputOnceLocked FAILED, attempting reattach");
 
         // ShowTextInput failed — the handle exists but the IMF reports the
         // client is not bound (12800009). Recover by re-attaching from scratch,
@@ -3337,6 +3388,16 @@ static napi_value GetRendererError(napi_env env, napi_callback_info info) {
     return result;
 }
 
+static napi_value FocusTerminal(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    OH_LOG_INFO(LOG_APP, "FT_DIAG FocusTerminal NAPI host=%{public}d", host != nullptr ? 1 : 0);
+    if (host) {
+        host->RequestImeFocus();
+    }
+    return nullptr;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
     napi_value exportInstance = nullptr;
     OH_NativeXComponent* nativeXComponent = nullptr;
@@ -3414,6 +3475,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getThemeColors", nullptr, GetThemeColors, nullptr, nullptr, nullptr, napi_default, host},
         {"isRendererReady", nullptr, IsRendererReady, nullptr, nullptr, nullptr, napi_default, host},
         {"getRendererError", nullptr, GetRendererError, nullptr, nullptr, nullptr, napi_default, host},
+        {"focusTerminal", nullptr, FocusTerminal, nullptr, nullptr, nullptr, napi_default, host},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

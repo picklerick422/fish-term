@@ -106,6 +106,11 @@ struct Index {
       this.runtimes.forEach((rt: TerminalRuntime) => {
         rt.session?.onForeground();
       });
+      // Returning to the foreground: the window regains focus but the active
+      // terminal surface does not automatically reclaim keyboard focus, so the
+      // first keystrokes would be dropped (or routed nowhere) until the user
+      // taps the page. Re-focus it explicitly.
+      this.focusActiveTerminal();
     });
   }
 
@@ -225,14 +230,53 @@ struct Index {
 
   // Hand keyboard focus back to the active terminal surface.
   private focusActiveTerminal(): void {
+    if (!this.canFocusTerminal()) {
+      return;
+    }
     const rt: TerminalRuntime | null = this.activeRuntime();
     if (!rt) {
       return;
     }
-    const id: string = rt.surfaceId;
+    // Two independent focus channels must both move to the active tab:
+    //  1. ArkUI focus (focusControl) routes the hardware keyboard to its
+    //     XComponent — retried because it races the surface's visibility commit.
+    //  2. The native IME attachment (process-wide) routes soft-keyboard / CJK
+    //     input and raises the keyboard — moved via the controller, exactly like
+    //     a tap. Without this, IME text keeps going to the previously tapped tab
+    //     and returning from background never re-raises the keyboard.
+    console.info('FT_DIAG focusActiveTerminal surfaceId=' + rt.surfaceId);
+    this.requestSurfaceFocus(rt.surfaceId, 8);
+    rt.controller.focusTerminal();
+  }
+
+  // Don't pull focus to a terminal when an overlay that needs the keyboard is up
+  // (connect form, settings sheet, onboarding guide) — e.g. when returning from
+  // the background with the connect form open.
+  private canFocusTerminal(): boolean {
+    return this.tabs.length > 0 && !this.showSettings && !this.showNewConnection && !this.showGuide;
+  }
+
+  // Requesting focus right after a tab switch or return-to-foreground races the
+  // XComponent's visibility/layout commit: the target surface may not be
+  // focusable yet, so focusControl.requestFocus() silently fails and keystrokes
+  // keep going to the previously focused surface. Retry until it takes, aborting
+  // if the active tab changes underneath us (rapid switching).
+  private requestSurfaceFocus(surfaceId: string, attempts: number): void {
     setTimeout(() => {
-      focusControl.requestFocus(id);
-    }, 0);
+      const rt: TerminalRuntime | null = this.activeRuntime();
+      if (!rt || rt.surfaceId !== surfaceId) {
+        return;
+      }
+      let ok: boolean = false;
+      try {
+        ok = focusControl.requestFocus(surfaceId);
+      } catch (_) {
+        ok = false;
+      }
+      if (!ok && attempts > 1) {
+        this.requestSurfaceFocus(surfaceId, attempts - 1);
+      }
+    }, 24);
   }
 
   private updateTabMeta(id: number, state: DriverState, statusText: string): void {

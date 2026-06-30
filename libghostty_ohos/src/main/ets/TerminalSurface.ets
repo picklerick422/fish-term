@@ -33,6 +33,15 @@ export struct TerminalSurface {
   // The typed-character lag happens exactly in that gap.
   private framePresentTimer: number = -1;
   @State private framePresentTick: number = 0;
+  // Debounce resize events during window resize to prevent rendering disorder.
+  // onAreaChange fires at display refresh rate (~60 Hz) while the user drags a
+  // window edge. Each call queues a native resize and may trigger a SIGWINCH
+  // (driver.resize) to the remote shell. The rapid cascade of grid reflows can
+  // cause out-of-order frame presentation. We apply the first event immediately
+  // for responsiveness, then throttle trailing events at ~80 ms so the native
+  // renderer has time to settle between resizes.
+  private resizeDebounceTimer: number = -1;
+  private pendingResizeParams: number[] = [];
   private contextMenuSelectedText: string = '';
   private contextMenuScreenContent: string = '';
   private contextMenuCanPaste: boolean = false;
@@ -80,6 +89,10 @@ export struct TerminalSurface {
   }
 
   aboutToDisappear(): void {
+    if (this.resizeDebounceTimer >= 0) {
+      clearTimeout(this.resizeDebounceTimer);
+      this.resizeDebounceTimer = -1;
+    }
     this.stopFallbackPolling();
     this.stopFramePolling();
     this.controller.setConfigListener(null);
@@ -145,15 +158,30 @@ export struct TerminalSurface {
         const globalY = Number(newValue.globalPosition?.y ?? 0);
         const width = Number(newValue.width ?? 0);
         const height = Number(newValue.height ?? 0);
-        if (Number.isFinite(globalX) && Number.isFinite(globalY) &&
-          Number.isFinite(width) && Number.isFinite(height)) {
-          this.controller.setSurfaceFrame(
-            globalX * density,
-            globalY * density,
-            width * density,
-            height * density
-          );
+        if (!Number.isFinite(globalX) || !Number.isFinite(globalY) ||
+          !Number.isFinite(width) || !Number.isFinite(height)) {
+          return;
         }
+        const params = [globalX * density, globalY * density, width * density, height * density];
+        // First event in a resize burst: update native surface immediately for
+        // responsive visual feedback, but do NOT trigger a SIGWINCH (driver
+        // resize) yet — the size is still changing.
+        if (this.resizeDebounceTimer < 0) {
+          this.controller.setSurfaceFrameImmediate(params[0], params[1], params[2], params[3]);
+        }
+        this.pendingResizeParams = params;
+        if (this.resizeDebounceTimer >= 0) {
+          clearTimeout(this.resizeDebounceTimer);
+        }
+        this.resizeDebounceTimer = setTimeout(() => {
+          this.resizeDebounceTimer = -1;
+          const p = this.pendingResizeParams;
+          if (p.length === 4) {
+            // Trailing edge: resize has settled. Apply final dimensions AND
+            // schedule the debounced SIGWINCH notification.
+            this.controller.setSurfaceFrame(p[0], p[1], p[2], p[3]);
+          }
+        }, 80) as number;
       })
       .onTouch((_event?: TouchEvent) => {
         if (this.searchVisible) {
@@ -166,9 +194,9 @@ export struct TerminalSurface {
         // single XComponent owns keyboard, IME, scrolling, selection and paste.
         this.requestTerminalFocus();
       })
-      .focusable(true)
-      .focusOnTouch(true)
-      .defaultFocus(true)
+      .focusable(this.isActiveTab)
+      .focusOnTouch(this.isActiveTab)
+      .defaultFocus(this.isActiveTab)
       // Remove this component from the Tab-key focus ring so that pressing Tab
       // inside the terminal (autocomplete, Shift-Tab in TUI apps) does not
       // cause ArkUI to move focus away to the next focusable widget and stop
@@ -500,10 +528,31 @@ export struct TerminalSurface {
     return `-/${this.searchTotal}`;
   }
 
-  // Host toggles which tab is active. Input (keyboard + IME) is handled
-  // entirely by the native layer attached to the focused XComponent, so there
-  // is nothing to do here beyond letting ArkUI re-evaluate focus naturally.
+  // When this surface becomes the active tab, drive BOTH focus channels.
+  // The host page (Index.switchTab) calls focusActiveTerminal() synchronously,
+  // which races the ArkUI visibility commit — the XComponent may still be
+  // Hidden and not yet focusable, so focusControl.requestFocus silently fails.
+  // By the time @Watch triggers, the XComponent has transitioned to Visible
+  // and the native surface is ready. Drive:
+  //   1. ArkUI focus (requestTerminalFocus) — routes hardware keys (digits,
+  //      arrows, Ctrl sequences) to this XComponent's DispatchKeyEvent.
+  //   2. Native IME (controller.focusTerminal) — attaches the process-wide
+  //      IME and raises the keyboard for soft-keyboard / CJK input.
+  // Only fire when becoming active to avoid the newly-hidden tab stealing focus.
   private onIsActiveTabChange(): void {
+    if (this.isActiveTab) {
+      // Defer the ArkUI focus request by one microtask so it lands after the
+      // XComponent's Visibility.Hidden→Visible commit has been fully processed
+      // by the render pipeline. Calling it inline (inside @Watch) may still
+      // race the render pass and silently fail, leaving hardware keys (digits,
+      // arrows, Ctrl sequences) routed to the previously focused XComponent.
+      setTimeout(() => {
+        this.requestTerminalFocus();
+      }, 0);
+      // Native IME channel can fire immediately — ShowImeLocked is robust to
+      // surface state and the deferred OnSurfaceShow path is a safety net.
+      this.controller.focusTerminal();
+    }
   }
 
   private openSearch(initialQuery: string): void {

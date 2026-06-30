@@ -928,7 +928,19 @@ bool NativeDrawingRenderer::paintBuiltinGlyph(
     float width,
     float height)
 {
-    if (cell.selected || cell.attrs.hidden || !IsBuiltinGeometryCodepoint(cell.codepoint)) {
+    if (cell.selected || cell.attrs.hidden) {
+        return false;
+    }
+
+    // Powerline separators/caps (Nerd Font PUA) must tile edge-to-edge with no
+    // gap. Drawing them through the font typography path leaves them shifted and
+    // mis-scaled because the symbol font's glyph metrics do not match the
+    // terminal cell box. Render them as exact cell geometry instead.
+    if (paintPowerlineGlyph(cell.codepoint, attrs, left, top, width, height)) {
+        return true;
+    }
+
+    if (!IsBuiltinGeometryCodepoint(cell.codepoint)) {
         return false;
     }
 
@@ -1045,6 +1057,232 @@ bool NativeDrawingRenderer::paintBuiltinGlyph(
     }
 
     return false;
+}
+
+void NativeDrawingRenderer::fillTrianglePath(
+    float ax, float ay, float bx, float by, float cx, float cy, uint32_t color)
+{
+    OH_Drawing_Path* path = OH_Drawing_PathCreate();
+    if (!path) {
+        return;
+    }
+    OH_Drawing_PathMoveTo(path, ax, ay);
+    OH_Drawing_PathLineTo(path, bx, by);
+    OH_Drawing_PathLineTo(path, cx, cy);
+    OH_Drawing_PathClose(path);
+
+    OH_Drawing_BrushSetColor(m_brush, color);
+    OH_Drawing_BrushSetAntiAlias(m_brush, true);
+    OH_Drawing_CanvasAttachBrush(m_canvas, m_brush);
+    OH_Drawing_CanvasDrawPath(m_canvas, path);
+    OH_Drawing_CanvasDetachBrush(m_canvas);
+    OH_Drawing_BrushSetAntiAlias(m_brush, false);
+    OH_Drawing_PathDestroy(path);
+}
+
+void NativeDrawingRenderer::fillHalfEllipse(
+    float left, float top, float width, float height, bool bulgeRight, uint32_t color)
+{
+    OH_Drawing_Path* path = OH_Drawing_PathCreate();
+    if (!path) {
+        return;
+    }
+    const float midY = top + height * 0.5f;
+    if (bulgeRight) {
+        // Flat edge on the left (x = left), bulge to the right (x = left+width).
+        OH_Drawing_PathMoveTo(path, left, top);
+        OH_Drawing_PathArcTo(path, left - width, top, left + width, top + height, -90.0f, 180.0f);
+        OH_Drawing_PathLineTo(path, left, midY);
+        OH_Drawing_PathClose(path);
+    } else {
+        // Flat edge on the right (x = left+width), bulge to the left (x = left).
+        const float right = left + width;
+        OH_Drawing_PathMoveTo(path, right, top + height);
+        OH_Drawing_PathArcTo(path, right - width, top, right + width, top + height, 90.0f, 180.0f);
+        OH_Drawing_PathLineTo(path, right, midY);
+        OH_Drawing_PathClose(path);
+    }
+
+    OH_Drawing_BrushSetColor(m_brush, color);
+    OH_Drawing_BrushSetAntiAlias(m_brush, true);
+    OH_Drawing_CanvasAttachBrush(m_canvas, m_brush);
+    OH_Drawing_CanvasDrawPath(m_canvas, path);
+    OH_Drawing_CanvasDetachBrush(m_canvas);
+    OH_Drawing_BrushSetAntiAlias(m_brush, false);
+    OH_Drawing_PathDestroy(path);
+}
+
+void NativeDrawingRenderer::strokePolyline(
+    const float* xs, const float* ys, int count, float thickness, uint32_t color)
+{
+    if (count < 2) {
+        return;
+    }
+    OH_Drawing_Path* path = OH_Drawing_PathCreate();
+    if (!path) {
+        return;
+    }
+    OH_Drawing_PathMoveTo(path, xs[0], ys[0]);
+    for (int i = 1; i < count; ++i) {
+        OH_Drawing_PathLineTo(path, xs[i], ys[i]);
+    }
+
+    OH_Drawing_Pen* pen = OH_Drawing_PenCreate();
+    if (!pen) {
+        OH_Drawing_PathDestroy(path);
+        return;
+    }
+    OH_Drawing_PenSetColor(pen, color);
+    OH_Drawing_PenSetWidth(pen, std::max(1.0f, thickness));
+    OH_Drawing_PenSetAntiAlias(pen, true);
+    OH_Drawing_CanvasAttachPen(m_canvas, pen);
+    OH_Drawing_CanvasDrawPath(m_canvas, path);
+    OH_Drawing_CanvasDetachPen(m_canvas);
+    OH_Drawing_PenDestroy(pen);
+    OH_Drawing_PathDestroy(path);
+}
+
+void NativeDrawingRenderer::strokeHalfEllipse(
+    float left, float top, float width, float height, bool bulgeRight, float thickness, uint32_t color)
+{
+    OH_Drawing_Path* path = OH_Drawing_PathCreate();
+    if (!path) {
+        return;
+    }
+    if (bulgeRight) {
+        OH_Drawing_PathMoveTo(path, left, top);
+        OH_Drawing_PathArcTo(path, left - width, top, left + width, top + height, -90.0f, 180.0f);
+    } else {
+        const float right = left + width;
+        OH_Drawing_PathMoveTo(path, right, top + height);
+        OH_Drawing_PathArcTo(path, right - width, top, right + width, top + height, 90.0f, 180.0f);
+    }
+
+    OH_Drawing_Pen* pen = OH_Drawing_PenCreate();
+    if (!pen) {
+        OH_Drawing_PathDestroy(path);
+        return;
+    }
+    OH_Drawing_PenSetColor(pen, color);
+    OH_Drawing_PenSetWidth(pen, std::max(1.0f, thickness));
+    OH_Drawing_PenSetAntiAlias(pen, true);
+    OH_Drawing_CanvasAttachPen(m_canvas, pen);
+    OH_Drawing_CanvasDrawPath(m_canvas, path);
+    OH_Drawing_CanvasDetachPen(m_canvas);
+    OH_Drawing_PenDestroy(pen);
+    OH_Drawing_PathDestroy(path);
+}
+
+bool NativeDrawingRenderer::paintPowerlineGlyph(
+    uint32_t codepoint,
+    const CellAttributes& attrs,
+    float left,
+    float top,
+    float width,
+    float height)
+{
+    // Powerline glyph block: triangles, half-circle caps, and diagonal
+    // ("slant") separators. The cell background has already been painted with
+    // the "into" segment color; here we draw the glyph with the foreground
+    // color so the separator tiles seamlessly against the neighboring segment.
+    if (codepoint < 0xE0B0 || codepoint > 0xE0BF) {
+        return false;
+    }
+
+    const uint32_t fg = attrs.fg;
+    const float l = left;
+    const float r = left + width;
+    const float t = top;
+    const float b = top + height;
+    const float midY = top + height * 0.5f;
+    const float lineW = std::max(1.0f, width * 0.14f);
+
+    switch (codepoint) {
+        // Right-pointing solid triangle.
+        case 0xE0B0:
+            fillTrianglePath(l, t, r, midY, l, b, fg);
+            return true;
+        // Right-pointing hollow triangle (chevron).
+        case 0xE0B1: {
+            const float xs[] = {l, r, l};
+            const float ys[] = {t, midY, b};
+            strokePolyline(xs, ys, 3, lineW, fg);
+            return true;
+        }
+        // Left-pointing solid triangle.
+        case 0xE0B2:
+            fillTrianglePath(r, t, l, midY, r, b, fg);
+            return true;
+        // Left-pointing hollow triangle (chevron).
+        case 0xE0B3: {
+            const float xs[] = {r, l, r};
+            const float ys[] = {t, midY, b};
+            strokePolyline(xs, ys, 3, lineW, fg);
+            return true;
+        }
+        // Right half-circle solid cap.
+        case 0xE0B4:
+            fillHalfEllipse(l, t, width, height, true, fg);
+            return true;
+        // Right half-circle hollow cap.
+        case 0xE0B5:
+            strokeHalfEllipse(l, t, width, height, true, lineW, fg);
+            return true;
+        // Left half-circle solid cap.
+        case 0xE0B6:
+            fillHalfEllipse(l, t, width, height, false, fg);
+            return true;
+        // Left half-circle hollow cap.
+        case 0xE0B7:
+            strokeHalfEllipse(l, t, width, height, false, lineW, fg);
+            return true;
+        // Bottom-left filled triangle (diagonal).
+        case 0xE0B8:
+            fillTrianglePath(l, t, l, b, r, b, fg);
+            return true;
+        // Bottom-left hollow triangle (diagonal).
+        case 0xE0B9: {
+            const float xs[] = {l, r};
+            const float ys[] = {t, b};
+            strokePolyline(xs, ys, 2, lineW, fg);
+            return true;
+        }
+        // Bottom-right filled triangle (diagonal).
+        case 0xE0BA:
+            fillTrianglePath(r, t, r, b, l, b, fg);
+            return true;
+        // Bottom-right hollow triangle (diagonal).
+        case 0xE0BB: {
+            const float xs[] = {r, l};
+            const float ys[] = {t, b};
+            strokePolyline(xs, ys, 2, lineW, fg);
+            return true;
+        }
+        // Top-left filled triangle (diagonal).
+        case 0xE0BC:
+            fillTrianglePath(l, t, r, t, l, b, fg);
+            return true;
+        // Top-left hollow triangle (diagonal).
+        case 0xE0BD: {
+            const float xs[] = {r, l};
+            const float ys[] = {t, b};
+            strokePolyline(xs, ys, 2, lineW, fg);
+            return true;
+        }
+        // Top-right filled triangle (diagonal).
+        case 0xE0BE:
+            fillTrianglePath(l, t, r, t, r, b, fg);
+            return true;
+        // Top-right hollow triangle (diagonal).
+        case 0xE0BF: {
+            const float xs[] = {l, r};
+            const float ys[] = {t, b};
+            strokePolyline(xs, ys, 2, lineW, fg);
+            return true;
+        }
+        default:
+            return false;
+    }
 }
 
 uint8_t NativeDrawingRenderer::makeStyleBits(const CellAttributes& attrs)
