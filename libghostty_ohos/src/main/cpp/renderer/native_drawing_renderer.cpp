@@ -285,7 +285,6 @@ bool NativeDrawingRenderer::loadFontAtlas(NativeResourceManager* resourceManager
             registerBundledFont("FiraCode-Regular.ttf", "Fira Code", "FiraCode-Regular.ttf");
             registerBundledFont("CascadiaCode-Regular.ttf", "Cascadia Code", "CascadiaCode-Regular.ttf");
             registerBundledFont("SourceCodePro-Regular.ttf", "Source Code Pro", "SourceCodePro-Regular.ttf");
-            registerBundledFont("ClaudeSans-LET-Plain10.ttf", "Claude Sans LET Plain10", "ClaudeSans-LET-Plain10.ttf");
 
             // 2. System Noto Sans Mono — always available on HarmonyOS
             const char* sysMonoPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";

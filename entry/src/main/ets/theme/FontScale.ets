@@ -38,6 +38,7 @@ export const UI_FONT_OPTIONS: FontOption[] = [
   { family: 'HarmonyOS Sans', label: 'HarmonyOS Sans', category: 'ui' },
   { family: 'Noto Sans SC', label: 'Noto Sans SC', category: 'ui' },
   { family: 'Claude Sans', label: 'Claude Sans', category: 'ui' },
+  { family: 'Claude Sans LET Plain10', label: 'Claude Sans LET Plain10', category: 'ui' },
   { family: 'monospace', label: 'Monospace (等宽)', category: 'ui' },
 ];
 
@@ -47,5 +48,4 @@ export const TERM_FONT_OPTIONS: FontOption[] = [
   { family: 'Fira Code', label: 'Fira Code', category: 'terminal' },
   { family: 'Cascadia Code', label: 'Cascadia Code', category: 'terminal' },
   { family: 'Source Code Pro', label: 'Source Code Pro', category: 'terminal' },
-  { family: 'Claude Sans LET Plain10', label: 'Claude Sans LET Plain10', category: 'terminal' },
 ];

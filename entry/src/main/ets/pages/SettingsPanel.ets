@@ -85,12 +85,10 @@ export struct SettingsPanel {
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
   private readonly dropdownEnter: TransitionEffect =
-    TransitionEffect.OPACITY
-      .combine(TransitionEffect.translate({ y: -8 }))
+    TransitionEffect.scale({ y: 0, centerY: '0%' })
       .animation({ curve: curves.springMotion(0.6, 0.8) });
   private readonly dropdownExit: TransitionEffect =
-    TransitionEffect.OPACITY
-      .combine(TransitionEffect.translate({ y: -4 }))
+    TransitionEffect.scale({ y: 0, centerY: '0%' })
       .animation({ curve: curves.springMotion(0.6, 0.8) });
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
@@ -429,23 +427,24 @@ export struct SettingsPanel {
     .width('100%')
   }
 
-  // Live preview of the currently selected theme: a mock terminal snippet
-  // rendered with that theme's real bg / fg / accent colors.
+  // Live preview of the currently selected theme and fonts: a mock terminal snippet
+  // rendered with the active theme colors and terminal font family.
   @Builder
   private buildThemePreview() {
+    const previewFont: string = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
     Column({ space: 4 }) {
       Row({ space: 6 }) {
         Text('user@fish')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).a2)
         Text('~/project')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).a3)
         Text('$ ls')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).fg)
       }
       .width('100%')
@@ -453,15 +452,15 @@ export struct SettingsPanel {
       Row({ space: 10 }) {
         Text('README.md')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).a1)
         Text('src')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).a2)
         Text('build.zig')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).a3)
       }
       .width('100%')
@@ -469,7 +468,7 @@ export struct SettingsPanel {
       Row({ space: 0 }) {
         Text('$ ')
           .fontSize(12)
-          .fontFamily('monospace')
+          .fontFamily(previewFont)
           .fontColor(this.colorsFor(this.themeName).fg)
         // blinking-cursor stand-in
         Text(' ')
