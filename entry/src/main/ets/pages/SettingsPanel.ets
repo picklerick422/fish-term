@@ -2,7 +2,7 @@ import { TerminalController } from 'libghostty_ohos';
 import { Palette } from '../theme/Palette';
 import { ConnectionStore, TerminalPrefs } from '../store/ConnectionStore';
 import { MIN_FONT_SIZE, MAX_FONT_SIZE, FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS } from '../theme/FontScale';
-import { curves, Curve } from '@kit.ArkUI';
+import { curves } from '@kit.ArkUI';
 
 interface CursorOpt {
   label: string;
@@ -101,12 +101,12 @@ export struct SettingsPanel {
     TERM_FONT_OPTIONS.length * this.DROPDOWN_ITEM_HEIGHT +
     (TERM_FONT_OPTIONS.length - 1) * this.DROPDOWN_ITEM_GAP +
     this.DROPDOWN_PADDING;
-  private readonly dropdownRevealCurve: Curve = Curve.EaseOut;
+  private readonly dropdownRevealCurve = curves.cubicBezierCurve(0.25, 0.1, 0.25, 1.0);
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
   private syncPreviewFont(): void {
-    this.previewFontFamilyFamily = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
+    this.previewFontFamily = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
   }
 
   aboutToAppear(): void {
