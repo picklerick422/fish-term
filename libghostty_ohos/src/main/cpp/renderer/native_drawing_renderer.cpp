@@ -689,7 +689,7 @@ float NativeDrawingRenderer::effectiveFontSize() const
     // Claude Sans has a relatively small visual size; give it a gentle boost
     // so English text does not look tiny next to CJK glyphs or other fonts.
     if (m_primaryFontFamily.find("Claude Sans") != std::string::npos) {
-        return m_fontSize * 1.08f;
+        return m_fontSize * 1.15f;
     }
     return m_fontSize;
 }
