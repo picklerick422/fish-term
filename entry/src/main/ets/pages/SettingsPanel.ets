@@ -55,7 +55,7 @@ export struct SettingsPanel {
   controller: TerminalController = new TerminalController();
   store: ConnectionStore | null = null;
   @Prop @Watch('syncFontSizeDraft') fontSize: number = 16;
-  @Prop lineSpacing: number = 1.05;
+  @Prop @Watch('syncLineSpacingDraft') lineSpacing: number = 1.05;
   @Prop initialTab: number = 0;
   @Prop statusText: string = '空闲';
   @Prop statusColor: string = '#8A94A6';
@@ -89,6 +89,7 @@ export struct SettingsPanel {
   @State private hoverFontMinus: boolean = false;
   @State private hoverFontPlus: boolean = false;
   @State private fontSizeDraft: string = this.fontSize.toString();
+  @State private lineSpacingDraft: string = this.lineSpacing.toFixed(2);
   @State private hoverLineSpacingMinus: boolean = false;
   @State private hoverLineSpacingPlus: boolean = false;
   @State private uiFontDropdownOpen: boolean = false;
@@ -130,9 +131,22 @@ export struct SettingsPanel {
     this.syncFontSizeDraft();
   }
 
+  private syncLineSpacingDraft(): void {
+    this.lineSpacingDraft = this.lineSpacing.toFixed(2);
+  }
+
+  private applyLineSpacingDraft(): void {
+    const n = parseFloat(this.lineSpacingDraft);
+    if (!isNaN(n)) {
+      this.onLineSpacingChange(n);
+    }
+    this.syncLineSpacingDraft();
+  }
+
   aboutToAppear(): void {
     this.syncPreviewFont();
     this.syncFontSizeDraft();
+    this.syncLineSpacingDraft();
     this.tab = this.initialTab;
     const all: string[] = this.controller.getThemeList();
     // Pin recommended themes (that actually exist) to the top, rest follow.
@@ -561,95 +575,92 @@ export struct SettingsPanel {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
 
-    // Text settings section: font size (editable) + line spacing
+    // Text settings section: font size + line spacing on one row.
     Column({ space: 8 }) {
       this.buildSectionHeader('文本')
 
-      Row({ space: 2 }) {
-        Row() {
-          Text('A-')
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : Palette.accent)
-        }
-        .width(36)
-        .height(32)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.hoverFontMinus ? '#1FFFFFFF' : '#0D1520')
-        .borderRadius(8)
-        .animation({ duration: 100, curve: Curve.EaseOut })
-        .focusable(false)
-        .enabled(this.fontSize > MIN_FONT_SIZE)
-        .onHover((h: boolean) => { this.hoverFontMinus = h; })
-        .onClick(() => {
-          if (this.fontSize > MIN_FONT_SIZE) {
-            this.onFontSizeChange(this.fontSize - FONT_STEP);
-          }
-        })
-
-        TextInput({ text: this.fontSizeDraft })
-          .width(40)
-          .height(32)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.accent)
-          .textAlign(TextAlign.Center)
-          .backgroundColor('#0D1520')
-          .borderRadius(8)
-          .padding({ left: 2, right: 2 })
-          .caretColor(Palette.accent)
-          .onChange((value: string) => {
-            // Only allow digits so the field stays a valid font-size input.
-            const digits = value.replace(/[^0-9]/g, '');
-            this.fontSizeDraft = digits;
-          })
-          .onBlur(() => { this.applyFontSizeDraft(); })
-          .onSubmit(() => { this.applyFontSizeDraft(); })
-
-        Row() {
-          Text('A+')
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : Palette.accent)
-        }
-        .width(36)
-        .height(32)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.hoverFontPlus ? '#1FFFFFFF' : '#0D1520')
-        .borderRadius(8)
-        .animation({ duration: 100, curve: Curve.EaseOut })
-        .focusable(false)
-        .enabled(this.fontSize < MAX_FONT_SIZE)
-        .onHover((h: boolean) => { this.hoverFontPlus = h; })
-        .onClick(() => {
-          if (this.fontSize < MAX_FONT_SIZE) {
-            this.onFontSizeChange(this.fontSize + FONT_STEP);
-          }
-        })
-      }
-      .padding({ left: 4, right: 4, top: 3, bottom: 3 })
-      .backgroundColor('#080F18')
-      .borderRadius(18)
-      .border({ width: 1, color: Palette.border })
-
-      Row({ space: 8 }) {
-        Text('行间距')
-          .fontSize(13)
-          .fontColor(Palette.text)
-          .width(52)
-
+      Row({ space: 12 }) {
+        // Font size control group
         Row({ space: 2 }) {
           Row() {
-            Text('-')
+            Text('A-')
               .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : Palette.accent)
+          }
+          .width(36)
+          .height(32)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.hoverFontMinus ? '#1FFFFFFF' : '#0D1520')
+          .borderRadius(8)
+          .animation({ duration: 100, curve: Curve.EaseOut })
+          .focusable(false)
+          .enabled(this.fontSize > MIN_FONT_SIZE)
+          .onHover((h: boolean) => { this.hoverFontMinus = h; })
+          .onClick(() => {
+            if (this.fontSize > MIN_FONT_SIZE) {
+              this.onFontSizeChange(this.fontSize - FONT_STEP);
+            }
+          })
+
+          TextInput({ text: this.fontSizeDraft })
+            .width(40)
+            .height(32)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Palette.accent)
+            .textAlign(TextAlign.Center)
+            .backgroundColor('#0D1520')
+            .borderRadius(8)
+            .padding({ left: 2, right: 2 })
+            .caretColor(Palette.accent)
+            .onChange((value: string) => {
+              // Only allow digits so the field stays a valid font-size input.
+              const digits = value.replace(/[^0-9]/g, '');
+              this.fontSizeDraft = digits;
+            })
+            .onBlur(() => { this.applyFontSizeDraft(); })
+            .onSubmit(() => { this.applyFontSizeDraft(); })
+
+          Row() {
+            Text('A+')
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : Palette.accent)
+          }
+          .width(36)
+          .height(32)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.hoverFontPlus ? '#1FFFFFFF' : '#0D1520')
+          .borderRadius(8)
+          .animation({ duration: 100, curve: Curve.EaseOut })
+          .focusable(false)
+          .enabled(this.fontSize < MAX_FONT_SIZE)
+          .onHover((h: boolean) => { this.hoverFontPlus = h; })
+          .onClick(() => {
+            if (this.fontSize < MAX_FONT_SIZE) {
+              this.onFontSizeChange(this.fontSize + FONT_STEP);
+            }
+          })
+        }
+        .padding({ left: 4, right: 4, top: 3, bottom: 3 })
+        .backgroundColor('#080F18')
+        .borderRadius(18)
+        .border({ width: 1, color: Palette.border })
+
+        // Line spacing control group
+        Row({ space: 2 }) {
+          Row() {
+            Text('≡-')
+              .fontSize(13)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.lineSpacing <= MIN_LINE_SPACING ? '#4A5568' : Palette.accent)
           }
           .width(32)
-          .height(28)
+          .height(32)
           .justifyContent(FlexAlign.Center)
           .backgroundColor(this.hoverLineSpacingMinus ? '#1FFFFFFF' : '#0D1520')
-          .borderRadius(7)
+          .borderRadius(8)
           .animation({ duration: 100, curve: Curve.EaseOut })
           .focusable(false)
           .enabled(this.lineSpacing > MIN_LINE_SPACING)
@@ -660,24 +671,46 @@ export struct SettingsPanel {
             }
           })
 
-          Text(this.lineSpacing.toFixed(2))
+          TextInput({ text: this.lineSpacingDraft })
+            .width(48)
+            .height(32)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor(Palette.accent)
-            .width(44)
             .textAlign(TextAlign.Center)
+            .backgroundColor('#0D1520')
+            .borderRadius(8)
+            .padding({ left: 2, right: 2 })
+            .caretColor(Palette.accent)
+            .onChange((value: string) => {
+              // Allow digits and at most one decimal point for line spacing.
+              let filtered = '';
+              let dotSeen = false;
+              for (let i = 0; i < value.length; i++) {
+                const ch = value[i];
+                if (ch >= '0' && ch <= '9') {
+                  filtered += ch;
+                } else if (ch === '.' && !dotSeen) {
+                  filtered += ch;
+                  dotSeen = true;
+                }
+              }
+              this.lineSpacingDraft = filtered;
+            })
+            .onBlur(() => { this.applyLineSpacingDraft(); })
+            .onSubmit(() => { this.applyLineSpacingDraft(); })
 
           Row() {
-            Text('+')
-              .fontSize(14)
+            Text('≡+')
+              .fontSize(13)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.lineSpacing >= MAX_LINE_SPACING ? '#4A5568' : Palette.accent)
           }
           .width(32)
-          .height(28)
+          .height(32)
           .justifyContent(FlexAlign.Center)
           .backgroundColor(this.hoverLineSpacingPlus ? '#1FFFFFFF' : '#0D1520')
-          .borderRadius(7)
+          .borderRadius(8)
           .animation({ duration: 100, curve: Curve.EaseOut })
           .focusable(false)
           .enabled(this.lineSpacing < MAX_LINE_SPACING)
@@ -688,9 +721,9 @@ export struct SettingsPanel {
             }
           })
         }
-        .padding({ left: 3, right: 3, top: 2, bottom: 2 })
+        .padding({ left: 4, right: 4, top: 3, bottom: 3 })
         .backgroundColor('#080F18')
-        .borderRadius(15)
+        .borderRadius(18)
         .border({ width: 1, color: Palette.border })
 
         Blank()
