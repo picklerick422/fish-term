@@ -1,8 +1,12 @@
 import { TerminalController } from 'libghostty_ohos';
 import { Palette } from '../theme/Palette';
 import { ConnectionStore, TerminalPrefs } from '../store/ConnectionStore';
-import { MIN_FONT_SIZE, MAX_FONT_SIZE, FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS } from '../theme/FontScale';
-import { curves } from '@kit.ArkUI';
+import {
+  MIN_FONT_SIZE, MAX_FONT_SIZE, FONT_STEP,
+  MIN_LINE_SPACING, MAX_LINE_SPACING, LINE_SPACING_STEP, DEFAULT_LINE_SPACING,
+  FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS
+} from '../theme/FontScale';
+import { curves, InputType } from '@kit.ArkUI';
 
 interface CursorOpt {
   label: string;
@@ -50,7 +54,8 @@ const RECOMMENDED_THEMES: string[] = [
 export struct SettingsPanel {
   controller: TerminalController = new TerminalController();
   store: ConnectionStore | null = null;
-  @Prop fontSize: number = 16;
+  @Prop @Watch('syncFontSizeDraft') fontSize: number = 16;
+  @Prop lineSpacing: number = 1.05;
   @Prop initialTab: number = 0;
   @Prop statusText: string = '空闲';
   @Prop statusColor: string = '#8A94A6';
@@ -64,6 +69,7 @@ export struct SettingsPanel {
   onCursorBlinkChange: (v: boolean) => void = (_v: boolean) => {};
   onScrollbackChange: (v: number) => void = (_v: number) => {};
   onFontSizeChange: (size: number) => void = (_size: number) => {};
+  onLineSpacingChange: (spacing: number) => void = (_spacing: number) => {};
   @Prop uiFontFamily: string = 'Inter';
   @Prop @Watch('syncPreviewFont') termFontFamily: string = '';
   onUIFontFamilyChange: (family: string) => void = (_family: string) => {};
@@ -82,6 +88,9 @@ export struct SettingsPanel {
   @State private hoverTheme: string = '';
   @State private hoverFontMinus: boolean = false;
   @State private hoverFontPlus: boolean = false;
+  @State private fontSizeDraft: string = this.fontSize.toString();
+  @State private hoverLineSpacingMinus: boolean = false;
+  @State private hoverLineSpacingPlus: boolean = false;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
   // Mirrored terminal font used in the theme preview so @State reactivity is
@@ -109,8 +118,21 @@ export struct SettingsPanel {
     this.previewFontFamily = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
   }
 
+  private syncFontSizeDraft(): void {
+    this.fontSizeDraft = this.fontSize.toString();
+  }
+
+  private applyFontSizeDraft(): void {
+    const n = parseInt(this.fontSizeDraft, 10);
+    if (!isNaN(n)) {
+      this.onFontSizeChange(n);
+    }
+    this.syncFontSizeDraft();
+  }
+
   aboutToAppear(): void {
     this.syncPreviewFont();
+    this.syncFontSizeDraft();
     this.tab = this.initialTab;
     const all: string[] = this.controller.getThemeList();
     // Pin recommended themes (that actually exist) to the top, rest follow.
@@ -539,9 +561,10 @@ export struct SettingsPanel {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
 
-    // Font size section
-    Column({ space: 0 }) {
-      this.buildSectionHeader('字号')
+    // Text settings section: font size (editable) + line spacing
+    Column({ space: 8 }) {
+      this.buildSectionHeader('文本')
+
       Row({ space: 2 }) {
         Row() {
           Text('A-')
@@ -560,16 +583,25 @@ export struct SettingsPanel {
         .onHover((h: boolean) => { this.hoverFontMinus = h; })
         .onClick(() => {
           if (this.fontSize > MIN_FONT_SIZE) {
-            this.onFontSizeChange(this.fontSize - 2);
+            this.onFontSizeChange(this.fontSize - FONT_STEP);
           }
         })
 
-        Text(this.fontSize.toString())
+        TextInput({ text: this.fontSizeDraft })
+          .width(40)
+          .height(32)
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.accent)
-          .width(32)
           .textAlign(TextAlign.Center)
+          .type(InputType.Number)
+          .backgroundColor('#0D1520')
+          .borderRadius(8)
+          .padding({ left: 2, right: 2 })
+          .caretColor(Palette.accent)
+          .onChange((value: string) => { this.fontSizeDraft = value; })
+          .onBlur(() => { this.applyFontSizeDraft(); })
+          .onSubmit(() => { this.applyFontSizeDraft(); })
 
         Row() {
           Text('A+')
@@ -588,7 +620,7 @@ export struct SettingsPanel {
         .onHover((h: boolean) => { this.hoverFontPlus = h; })
         .onClick(() => {
           if (this.fontSize < MAX_FONT_SIZE) {
-            this.onFontSizeChange(this.fontSize + 2);
+            this.onFontSizeChange(this.fontSize + FONT_STEP);
           }
         })
       }
@@ -596,6 +628,73 @@ export struct SettingsPanel {
       .backgroundColor('#080F18')
       .borderRadius(18)
       .border({ width: 1, color: Palette.border })
+
+      Row({ space: 8 }) {
+        Text('行间距')
+          .fontSize(13)
+          .fontColor(Palette.text)
+          .width(52)
+
+        Row({ space: 2 }) {
+          Row() {
+            Text('-')
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.lineSpacing <= MIN_LINE_SPACING ? '#4A5568' : Palette.accent)
+          }
+          .width(32)
+          .height(28)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.hoverLineSpacingMinus ? '#1FFFFFFF' : '#0D1520')
+          .borderRadius(7)
+          .animation({ duration: 100, curve: Curve.EaseOut })
+          .focusable(false)
+          .enabled(this.lineSpacing > MIN_LINE_SPACING)
+          .onHover((h: boolean) => { this.hoverLineSpacingMinus = h; })
+          .onClick(() => {
+            if (this.lineSpacing > MIN_LINE_SPACING) {
+              this.onLineSpacingChange(this.lineSpacing - LINE_SPACING_STEP);
+            }
+          })
+
+          Text(this.lineSpacing.toFixed(2))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Palette.accent)
+            .width(44)
+            .textAlign(TextAlign.Center)
+
+          Row() {
+            Text('+')
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.lineSpacing >= MAX_LINE_SPACING ? '#4A5568' : Palette.accent)
+          }
+          .width(32)
+          .height(28)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.hoverLineSpacingPlus ? '#1FFFFFFF' : '#0D1520')
+          .borderRadius(7)
+          .animation({ duration: 100, curve: Curve.EaseOut })
+          .focusable(false)
+          .enabled(this.lineSpacing < MAX_LINE_SPACING)
+          .onHover((h: boolean) => { this.hoverLineSpacingPlus = h; })
+          .onClick(() => {
+            if (this.lineSpacing < MAX_LINE_SPACING) {
+              this.onLineSpacingChange(this.lineSpacing + LINE_SPACING_STEP);
+            }
+          })
+        }
+        .padding({ left: 3, right: 3, top: 2, bottom: 2 })
+        .backgroundColor('#080F18')
+        .borderRadius(15)
+        .border({ width: 1, color: Palette.border })
+
+        Blank()
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')

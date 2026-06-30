@@ -8,7 +8,11 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
-import { DEFAULT_FONT_SIZE, clampFontSize, DEFAULT_UI_FONT, DEFAULT_TERM_FONT } from '../theme/FontScale';
+import {
+  DEFAULT_FONT_SIZE, clampFontSize,
+  DEFAULT_LINE_SPACING, clampLineSpacing,
+  DEFAULT_UI_FONT, DEFAULT_TERM_FONT
+} from '../theme/FontScale';
 import { SettingsPanel } from './SettingsPanel';
 
 function stateLabel(s: DriverStatus): string {
@@ -65,6 +69,7 @@ struct Index {
   @State private rememberToken: boolean = false;
   @State private showToken: boolean = false;
   @State private fontSize: number = DEFAULT_FONT_SIZE;
+  @State private lineSpacing: number = DEFAULT_LINE_SPACING;
   @State private formError: string = '';
   @State private focusedField: string = '';
   @State private showSettings: boolean = false;
@@ -161,6 +166,10 @@ struct Index {
       this.fontSize = clampFontSize(fs);
       this.broadcastConfig();
     });
+    store.loadLineSpacing(DEFAULT_LINE_SPACING).then((ls: number): void => {
+      this.lineSpacing = clampLineSpacing(ls);
+      this.broadcastConfig();
+    });
     store.loadTheme('Aizen_Dark').then((name: string): void => {
       this.themeName = name;
       this.broadcastTheme();
@@ -213,6 +222,7 @@ struct Index {
     controller.updateConfig({
       fontSize: this.fontSize,
       fontFamily: this.termFontFamily,
+      lineSpacing: this.lineSpacing,
       scrollbackLines: this.scrollbackLines,
       cursorStyle: this.cursorStyle,
       cursorBlink: this.cursorBlink
@@ -224,6 +234,7 @@ struct Index {
       rt.controller.updateConfig({
         fontSize: this.fontSize,
         fontFamily: this.termFontFamily,
+        lineSpacing: this.lineSpacing,
         scrollbackLines: this.scrollbackLines,
         cursorStyle: this.cursorStyle,
         cursorBlink: this.cursorBlink
@@ -558,6 +569,14 @@ struct Index {
     this.broadcastConfig();
     if (this.store) {
       this.store.saveFontSize(size);
+    }
+  }
+
+  private applyLineSpacing(spacing: number): void {
+    this.lineSpacing = clampLineSpacing(spacing);
+    this.broadcastConfig();
+    if (this.store) {
+      this.store.saveLineSpacing(this.lineSpacing);
     }
   }
 
@@ -959,6 +978,7 @@ struct Index {
       controller: this.activeController(),
       store: this.store,
       fontSize: this.fontSize,
+      lineSpacing: this.lineSpacing,
       initialTab: this.settingsInitialTab,
       statusText: this.activeMeta().statusText,
       statusColor: this.dotColor(this.activeMeta().state),
@@ -974,6 +994,7 @@ struct Index {
       onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
       onScrollbackChange: (v: number) => { this.scrollbackLines = v; this.broadcastConfig(); },
       onFontSizeChange: (s: number) => { this.applyFontSize(s); },
+      onLineSpacingChange: (s: number) => { this.applyLineSpacing(s); },
       onUIFontFamilyChange: (f: string) => { this.applyUIFontFamily(f); },
       onTermFontFamilyChange: (f: string) => { this.applyTermFontFamily(f); },
       onReplayGuide: () => { this.showSettings = false; this.guideStep = 0; this.showGuide = true; },

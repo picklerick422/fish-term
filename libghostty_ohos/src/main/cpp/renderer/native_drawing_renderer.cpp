@@ -584,7 +584,7 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 // glyphs visually lower than Latin/digit glyphs; nudge them up.
                 const bool isClaudeSans = (m_primaryFontFamily.find("Claude Sans") != std::string::npos);
                 const float cjkNudge = (isClaudeSans && isCJKCodepoint(cell.codepoint))
-                    ? -1.0f * m_density
+                    ? -2.0f * m_density
                     : 0.0f;
                 OH_Drawing_TypographyPaint(layout->typography, m_canvas, left, y + cjkNudge);
             }
@@ -757,12 +757,12 @@ void NativeDrawingRenderer::updateCellDimensions()
     const float cellWidth = isMonospace ? widthM : measureAverageGlyphWidth();
 
     m_cellWidth = std::ceil(std::max(cellWidth, 1.0f));
-    m_cellHeight = std::ceil(std::max(layoutM->height * 1.05f, 1.0f));
+    m_cellHeight = std::ceil(std::max(layoutM->height * m_lineSpacing, 1.0f));
 
     OH_LOG_INFO(LOG_APP,
-        "FT_FONT cellSize family='%{public}s' mono=%{public}d proportional=%{public}d widthM=%.2f widthI=%.2f cellW=%.2f cellH=%.2f",
+        "FT_FONT cellSize family='%{public}s' mono=%{public}d proportional=%{public}d lineSpacing=%.2f widthM=%.2f widthI=%.2f cellW=%.2f cellH=%.2f",
         m_primaryFontFamily.c_str(), static_cast<int>(isMonospace), static_cast<int>(m_isProportionalFont),
-        widthM, widthI, m_cellWidth, m_cellHeight);
+        m_lineSpacing, widthM, widthI, m_cellWidth, m_cellHeight);
 }
 
 void NativeDrawingRenderer::computeRowMetrics(const std::vector<Cell>& cells, int cols, int rows)

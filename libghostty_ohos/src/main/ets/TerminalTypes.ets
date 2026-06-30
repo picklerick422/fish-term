@@ -27,6 +27,8 @@ export type TerminalContextMenuListener = (x: number, y: number) => void;
 
 export interface TerminalConfig {
   fontSize: number;
+  fontFamily: string;
+  lineSpacing: number;
   scrollbackLines: number;
   bgColor: number;
   fgColor: number;
@@ -36,6 +38,8 @@ export interface TerminalConfig {
 
 export interface TerminalConfigPatch {
   fontSize?: number;
+  fontFamily?: string;
+  lineSpacing?: number;
   scrollbackLines?: number;
   bgColor?: number;
   fgColor?: number;
@@ -47,6 +51,8 @@ export const DEFAULT_THEME_NAME: string = 'Aizen_Dark';
 
 export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
   fontSize: 14,
+  fontFamily: '',
+  lineSpacing: 1.05,
   scrollbackLines: 10000,
   bgColor: 0xFF1A1A1A,
   fgColor: 0xFFD0D6F0,
@@ -57,6 +63,8 @@ export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
 export function cloneTerminalConfig(config: TerminalConfig): TerminalConfig {
   return {
     fontSize: config.fontSize,
+    fontFamily: config.fontFamily,
+    lineSpacing: config.lineSpacing,
     scrollbackLines: config.scrollbackLines,
     bgColor: config.bgColor,
     fgColor: config.fgColor,

@@ -47,6 +47,7 @@ export struct TerminalSurface {
   private contextMenuCanPaste: boolean = false;
 
   @State private appliedFontSize: number = DEFAULT_TERMINAL_CONFIG.fontSize;
+  @State private appliedLineSpacing: number = DEFAULT_TERMINAL_CONFIG.lineSpacing;
   @State private useTextFallback: boolean = false;
   @State private fallbackContent: string = '';
   @State private fallbackError: string = '';
@@ -72,6 +73,7 @@ export struct TerminalSurface {
     } catch (_) {}
     this.controller.setConfigListener((config: TerminalConfig) => {
       this.appliedFontSize = config.fontSize;
+      this.appliedLineSpacing = config.lineSpacing;
     });
     this.controller.setLinkListener((url: string) => {
       this.handleLinkActivated(url);
@@ -86,6 +88,7 @@ export struct TerminalSurface {
       this.pasteFromClipboard();
     });
     this.appliedFontSize = this.controller.getConfig().fontSize;
+    this.appliedLineSpacing = this.controller.getConfig().lineSpacing;
   }
 
   aboutToDisappear(): void {
@@ -138,6 +141,7 @@ export struct TerminalSurface {
         this.useTextFallback = !this.controller.isRendererReady();
         this.fallbackError = this.controller.getRendererError();
         this.appliedFontSize = this.controller.getConfig().fontSize;
+        this.appliedLineSpacing = this.controller.getConfig().lineSpacing;
         if (this.useTextFallback) {
           this.syncFallbackScreen();
           this.startFallbackPolling();
@@ -220,7 +224,7 @@ export struct TerminalSurface {
         .fontSize(this.appliedFontSize)
         .fontFamily('monospace')
         .fontColor('#D8DEE9')
-        .lineHeight(this.appliedFontSize * 1.35)
+        .lineHeight(this.appliedFontSize * this.appliedLineSpacing)
         .padding(12)
     }
     .scrollBar(BarState.Off)

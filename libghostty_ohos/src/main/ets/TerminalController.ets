@@ -127,6 +127,12 @@ export class TerminalController {
     if (patch.fontSize !== undefined) {
       nextConfig.fontSize = patch.fontSize;
     }
+    if (patch.fontFamily !== undefined) {
+      nextConfig.fontFamily = patch.fontFamily;
+    }
+    if (patch.lineSpacing !== undefined) {
+      nextConfig.lineSpacing = patch.lineSpacing;
+    }
     if (patch.scrollbackLines !== undefined) {
       nextConfig.scrollbackLines = patch.scrollbackLines;
     }

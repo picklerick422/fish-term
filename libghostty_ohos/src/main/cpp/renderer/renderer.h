@@ -61,6 +61,11 @@ public:
         updateCellDimensions();
     }
 
+    void setLineSpacing(float lineSpacing) {
+        m_lineSpacing = lineSpacing > 0.0f ? lineSpacing : 1.0f;
+        updateCellDimensions();
+    }
+
     void setColors(uint32_t bgColor, uint32_t fgColor) {
         m_defaultBgColor = bgColor;
         m_defaultFgColor = fgColor;
@@ -104,6 +109,7 @@ protected:
     float m_cellHeight = 20.0f;
     float m_fontSize = 14.0f;
     float m_density = 1.0f;
+    float m_lineSpacing = 1.05f;
     uint32_t m_defaultBgColor = 0xFF000000;
     uint32_t m_defaultFgColor = 0xFFFFFFFF;
     uint32_t m_cursorBgColor = 0xFFFFFFFF;

@@ -16,11 +16,14 @@ const KEY_PORT: string = 'port';
 const KEY_TLS: string = 'tls';
 const KEY_REMEMBER: string = 'remember_token';
 const KEY_FONT: string = 'font_size';
+const KEY_LINE_SPACING: string = 'line_spacing';
 const KEY_THEME: string = 'theme_name';
 const KEY_CURSOR_STYLE: string = 'cursor_style';
 const KEY_CURSOR_BLINK: string = 'cursor_blink';
 const KEY_SCROLLBACK: string = 'scrollback_lines';
 const KEY_ONBOARDED: string = 'onboarded';
+const KEY_FONT_FAMILY_UI: string = 'font_family_ui';
+const KEY_FONT_FAMILY_TERM: string = 'font_family_term';
 const TOKEN_ALIAS: string = 'fish_agent_token';
 const ASSET_NOT_FOUND: number = 24000002;
 
@@ -132,6 +135,28 @@ export class ConnectionStore {
     }
   }
 
+  async loadLineSpacing(fallback: number): Promise<number> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_LINE_SPACING, fallback) as number;
+    } catch (e) {
+      console.error('fish-term load lineSpacing failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveLineSpacing(spacing: number): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_LINE_SPACING, spacing);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save lineSpacing failed: ' + JSON.stringify(e));
+    }
+  }
+
   async loadTheme(fallback: string): Promise<string> {
     try {
       const opt: preferences.Options = { name: PREF_NAME };
@@ -200,6 +225,30 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-termsave onboarded failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadFontFamily(fallback: string, isUI: boolean): Promise<string> {
+    const key = isUI ? KEY_FONT_FAMILY_UI : KEY_FONT_FAMILY_TERM;
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(key, fallback) as string;
+    } catch (e) {
+      console.error('fish-term load fontFamily failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveFontFamily(family: string, isUI: boolean): Promise<void> {
+    const key = isUI ? KEY_FONT_FAMILY_UI : KEY_FONT_FAMILY_TERM;
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(key, family);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save fontFamily failed: ' + JSON.stringify(e));
     }
   }
 

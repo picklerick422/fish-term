@@ -4,6 +4,11 @@ export const MIN_FONT_SIZE: number = 10;
 export const MAX_FONT_SIZE: number = 28;
 export const FONT_STEP: number = 2;
 
+export const DEFAULT_LINE_SPACING: number = 1.05;
+export const MIN_LINE_SPACING: number = 1.0;
+export const MAX_LINE_SPACING: number = 1.5;
+export const LINE_SPACING_STEP: number = 0.05;
+
 export function clampFontSize(n: number): number {
   if (!Number.isFinite(n)) {
     return DEFAULT_FONT_SIZE;
@@ -20,6 +25,26 @@ export function clampFontSize(n: number): number {
 
 export function stepFontSize(current: number, deltaSteps: number): number {
   return clampFontSize(current + deltaSteps * FONT_STEP);
+}
+
+export function clampLineSpacing(n: number): number {
+  if (!Number.isFinite(n)) {
+    return DEFAULT_LINE_SPACING;
+  }
+  // Round to nearest step to keep the UI value clean.
+  const steps = Math.round(n / LINE_SPACING_STEP);
+  const r = steps * LINE_SPACING_STEP;
+  if (r < MIN_LINE_SPACING) {
+    return MIN_LINE_SPACING;
+  }
+  if (r > MAX_LINE_SPACING) {
+    return MAX_LINE_SPACING;
+  }
+  return parseFloat(r.toFixed(2));
+}
+
+export function stepLineSpacing(current: number, deltaSteps: number): number {
+  return clampLineSpacing(current + deltaSteps * LINE_SPACING_STEP);
 }
 
 // Font family options for the settings picker.
