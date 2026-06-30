@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { emitter } from '@kit.BasicServicesKit';
+import { font } from '@kit.ArkUI';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { TerminalRuntime } from '../session/TerminalTab';
@@ -7,7 +8,7 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
-import { DEFAULT_FONT_SIZE, clampFontSize } from '../theme/FontScale';
+import { DEFAULT_FONT_SIZE, clampFontSize, DEFAULT_UI_FONT, DEFAULT_TERM_FONT } from '../theme/FontScale';
 import { SettingsPanel } from './SettingsPanel';
 
 function stateLabel(s: DriverStatus): string {
@@ -78,6 +79,8 @@ struct Index {
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
   @State private scrollbackLines: number = 20000;
+  @State private uiFontFamily: string = DEFAULT_UI_FONT;
+  @State private termFontFamily: string = DEFAULT_TERM_FONT;
   // Bumped on Ctrl+Shift+F to open the find overlay on the active terminal.
   @State private searchSignal: number = 0;
   // First-run onboarding guide.
@@ -100,6 +103,31 @@ struct Index {
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.store = new ConnectionStore(this.context);
+
+    // Register bundled custom fonts in the active UI context.
+    // font.registerFont() was deprecated from API 18 — must use UIContext.getFont().
+    try {
+      const fontMgr = this.getUIContext().getFont();
+      fontMgr.registerFont({
+        familyName: 'Inter',
+        familySrc: $rawfile('fonts/Inter-Regular.otf')
+      });
+      fontMgr.registerFont({
+        familyName: 'Source Serif 4',
+        familySrc: $rawfile('fonts/SourceSerif4-Regular.otf')
+      });
+      fontMgr.registerFont({
+        familyName: 'Claude Sans',
+        familySrc: $rawfile('fonts/ClaudeSans-Regular.ttf')
+      });
+      fontMgr.registerFont({
+        familyName: 'Claude Sans LET Plain10',
+        familySrc: $rawfile('fonts/ClaudeSans-LET-Plain10.ttf')
+      });
+    } catch (e) {
+      // Non-fatal: fontFamily() falls back gracefully.
+    }
+
     this.loadProfile();
     this.loadSettings();
     emitter.on({ eventId: 10086 }, () => {
@@ -153,6 +181,15 @@ struct Index {
         this.guideStep = 0;
       }
     });
+    store.loadFontFamily(DEFAULT_UI_FONT, true).then((f: string): void => {
+      this.uiFontFamily = f;
+    });
+    store.loadFontFamily(DEFAULT_TERM_FONT, false).then((f: string): void => {
+      this.termFontFamily = f;
+      if (f.length > 0) {
+        this.broadcastConfig();
+      }
+    });
   }
 
   private finishGuide(): void {
@@ -179,6 +216,7 @@ struct Index {
     controller.setTheme(this.themeName);
     controller.updateConfig({
       fontSize: this.fontSize,
+      fontFamily: this.termFontFamily,
       scrollbackLines: this.scrollbackLines,
       cursorStyle: this.cursorStyle,
       cursorBlink: this.cursorBlink
@@ -189,6 +227,7 @@ struct Index {
     this.runtimes.forEach((rt: TerminalRuntime) => {
       rt.controller.updateConfig({
         fontSize: this.fontSize,
+        fontFamily: this.termFontFamily,
         scrollbackLines: this.scrollbackLines,
         cursorStyle: this.cursorStyle,
         cursorBlink: this.cursorBlink
@@ -526,6 +565,20 @@ struct Index {
     }
   }
 
+  private applyUIFontFamily(family: string): void {
+    this.uiFontFamily = family;
+    if (this.store) {
+      this.store.saveFontFamily(family, true);
+    }
+  }
+
+  private applyTermFontFamily(family: string): void {
+    this.termFontFamily = family;
+    this.broadcastConfig();
+    if (this.store) {
+      this.store.saveFontFamily(family, false);
+    }
+  }
 
   private dotColor(state: DriverState): string {
     switch (state) {
@@ -634,6 +687,7 @@ struct Index {
           .fontColor(this.dotColor(this.activeMeta().state))
         Text(this.activeMeta().statusText)
           .fontSize(12)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.text)
           .layoutWeight(1)
           .maxLines(1)
@@ -641,6 +695,7 @@ struct Index {
         if (this.activeMeta().state !== DriverState.Connecting) {
           Text('立即重连')
             .fontSize(12)
+            .fontFamily(this.uiFontFamily)
             .fontColor(Palette.accent)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .borderRadius(6)
@@ -765,6 +820,7 @@ struct Index {
         .fontColor(this.dotColor(tab.state))
       Text(tab.title)
         .fontSize(12)
+        .fontFamily(this.uiFontFamily)
         .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -915,11 +971,15 @@ struct Index {
       cursorStyle: this.cursorStyle,
       cursorBlink: this.cursorBlink,
       scrollbackLines: this.scrollbackLines,
+      uiFontFamily: this.uiFontFamily,
+      termFontFamily: this.termFontFamily,
       onThemeChange: (n: string) => { this.themeName = n; this.broadcastTheme(); },
       onCursorStyleChange: (v: number) => { this.cursorStyle = v; this.broadcastConfig(); },
       onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
       onScrollbackChange: (v: number) => { this.scrollbackLines = v; this.broadcastConfig(); },
       onFontSizeChange: (s: number) => { this.applyFontSize(s); },
+      onUIFontFamilyChange: (f: string) => { this.applyUIFontFamily(f); },
+      onTermFontFamilyChange: (f: string) => { this.applyTermFontFamily(f); },
       onReplayGuide: () => { this.showSettings = false; this.guideStep = 0; this.showGuide = true; },
       onClose: () => { this.showSettings = false; }
     })
@@ -1000,12 +1060,14 @@ struct Index {
         Text(this.guideTitle(step))
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.text)
           .width('100%')
           .margin({ bottom: 10 })
 
         Text(this.guideDesc(step))
           .fontSize(14)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.textDim)
           .lineHeight(22)
           .width('100%')
@@ -1135,9 +1197,11 @@ struct Index {
         Text(this.showNewConnection ? '新建连接' : 'fish-term')
           .fontSize(24)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.text)
         Text('connect to fish-agent')
           .fontSize(13)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.textDim)
       }
       .margin({ bottom: 20 })

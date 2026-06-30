@@ -1,7 +1,8 @@
 import { TerminalController } from 'libghostty_ohos';
 import { Palette } from '../theme/Palette';
 import { ConnectionStore, TerminalPrefs } from '../store/ConnectionStore';
-import { MIN_FONT_SIZE, MAX_FONT_SIZE } from '../theme/FontScale';
+import { MIN_FONT_SIZE, MAX_FONT_SIZE, FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS } from '../theme/FontScale';
+import { curves } from '@kit.ArkUI';
 
 interface CursorOpt {
   label: string;
@@ -63,6 +64,10 @@ export struct SettingsPanel {
   onCursorBlinkChange: (v: boolean) => void = (_v: boolean) => {};
   onScrollbackChange: (v: number) => void = (_v: number) => {};
   onFontSizeChange: (size: number) => void = (_size: number) => {};
+  @Prop uiFontFamily: string = 'Inter';
+  @Prop termFontFamily: string = '';
+  onUIFontFamilyChange: (family: string) => void = (_family: string) => {};
+  onTermFontFamilyChange: (family: string) => void = (_family: string) => {};
   onReplayGuide: () => void = () => {};
   onClose: () => void = () => {};
 
@@ -77,6 +82,17 @@ export struct SettingsPanel {
   @State private hoverTheme: string = '';
   @State private hoverFontMinus: boolean = false;
   @State private hoverFontPlus: boolean = false;
+  @State private uiFontDropdownOpen: boolean = false;
+  @State private termFontDropdownOpen: boolean = false;
+  private readonly dropdownEnter: TransitionEffect =
+    TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ y: -8 }))
+      .combine(TransitionEffect.scale({ y: 0 }))
+      .animation({ curve: curves.springMotion(0.6, 0.8) });
+  private readonly dropdownExit: TransitionEffect =
+    TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ y: -4 }))
+      .animation({ curve: curves.springMotion(0.6, 0.8) });
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
@@ -152,6 +168,7 @@ export struct SettingsPanel {
         Text('设置')
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.text)
 
         // connection status, pushed to the right
@@ -205,6 +222,25 @@ export struct SettingsPanel {
     .width('100%')
     .height('100%')
     .backgroundColor(Palette.base)
+    .onClick(() => {
+      if (this.uiFontDropdownOpen || this.termFontDropdownOpen) {
+        this.uiFontDropdownOpen = false;
+        this.termFontDropdownOpen = false;
+      }
+    })
+  }
+
+  // Build one font-picker line (drop‑down style).
+  // NOT a @Builder — takes too many value‑pass params and ArkUI would
+  // lose reactivity.  Inlined with direct @State access instead.
+  // Handles both UI‑font and terminal‑font pickers.
+  private fontLabel(family: string, options: FontOption[]): string {
+    for (let i: number = 0; i < options.length; i++) {
+      if (options[i].family === family) {
+        return options[i].label;
+      }
+    }
+    return '系统默认';
   }
 
   @Builder
@@ -213,6 +249,7 @@ export struct SettingsPanel {
       .fontSize(11)
       .fontColor(Palette.textDim)
       .fontWeight(FontWeight.Medium)
+      .fontFamily(this.uiFontFamily)
       .width('100%')
       .margin({ bottom: 6 })
   }
@@ -221,6 +258,7 @@ export struct SettingsPanel {
   private buildTabButton(label: string, index: number) {
     Text(label)
       .fontSize(13)
+      .fontFamily(this.uiFontFamily)
       .fontColor(this.tab === index ? Palette.base : Palette.textDim)
       .fontWeight(this.tab === index ? FontWeight.Medium : FontWeight.Normal)
       .padding({ left: 14, right: 14, top: 6, bottom: 6 })
@@ -312,10 +350,12 @@ export struct SettingsPanel {
     Row() {
       Text(label)
         .fontSize(13)
+        .fontFamily(this.uiFontFamily)
         .fontColor(Palette.textDim)
       Text(value)
         .layoutWeight(1)
         .fontSize(13)
+        .fontFamily(this.uiFontFamily)
         .fontColor(Palette.text)
         .textAlign(TextAlign.End)
         .maxLines(1)
@@ -341,9 +381,11 @@ export struct SettingsPanel {
         Text('fish-term')
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.text)
         Text('HarmonyOS 终端 · 连接 fish-agent')
           .fontSize(12)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.textDim)
       }
       .width('100%')
@@ -363,6 +405,7 @@ export struct SettingsPanel {
       Row() {
         Text('查看新手引导')
           .fontSize(14)
+          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.accent)
           .textAlign(TextAlign.Center)
           .width('100%')
@@ -378,6 +421,7 @@ export struct SettingsPanel {
 
       Text('© 2026 fish-term · 基于开源组件构建')
         .fontSize(11)
+        .fontFamily(this.uiFontFamily)
         .fontColor(Palette.textDim)
         .width('100%')
         .textAlign(TextAlign.Center)
@@ -513,6 +557,183 @@ export struct SettingsPanel {
       .backgroundColor('#080F18')
       .borderRadius(18)
       .border({ width: 1, color: Palette.border })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+
+    // Font family section
+    Column({ space: 0 }) {
+      this.buildSectionHeader('字体')
+
+      // --- UI font selector (inlined for @State reactivity) ---
+      Column({ space: 6 }) {
+        Text('UI 字体')
+          .fontSize(11)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(Palette.textDim)
+          .width('100%')
+
+        // Collapsed row — toggle open/close on click
+        Row() {
+          Text(this.fontLabel(this.uiFontFamily, UI_FONT_OPTIONS))
+            .fontSize(14)
+            .fontColor(Palette.text)
+            .fontFamily(this.uiFontFamily.length > 0 ? this.uiFontFamily : 'monospace')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text('▼')
+            .fontSize(9)
+            .fontColor(Palette.textDim)
+            .rotate({ angle: this.uiFontDropdownOpen ? 180 : 0 })
+            .animation({ curve: curves.springMotion(0.6, 0.8) })
+        }
+        .width('100%')
+        .height(40)
+        .padding({ left: 14, right: 14 })
+        .justifyContent(FlexAlign.SpaceBetween)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: this.uiFontDropdownOpen ? Palette.accent : Palette.border })
+        .animation({ curve: curves.springMotion(0.6, 0.8) })
+        .focusable(false)
+        .onClick(() => {
+          this.uiFontDropdownOpen = !this.uiFontDropdownOpen;
+          if (this.uiFontDropdownOpen) { this.termFontDropdownOpen = false; }
+        })
+
+        // Expanded options list with enter/exit transition
+        if (this.uiFontDropdownOpen) {
+          Column({ space: 2 }) {
+            ForEach(UI_FONT_OPTIONS, (opt: FontOption) => {
+              Row() {
+                // Radio dot
+                Row() {
+                  if (this.uiFontFamily === opt.family) {
+                    Row()
+                      .width(8).height(8).borderRadius(4).backgroundColor(Palette.accent)
+                  }
+                }
+                .width(18).height(18).borderRadius(9)
+                .border({
+                  width: this.uiFontFamily === opt.family ? 2 : 1,
+                  color: this.uiFontFamily === opt.family ? Palette.accent : Palette.border
+                })
+                .justifyContent(FlexAlign.Center)
+
+                // Font name preview — rendered in the actual font face
+                Text(opt.label)
+                  .fontSize(14)
+                  .fontColor(this.uiFontFamily === opt.family ? Palette.accent : Palette.text)
+                  .fontFamily(opt.family.length > 0 ? opt.family : 'monospace')
+                  .margin({ left: 10 })
+              }
+              .width('100%')
+              .height(40)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(8)
+              .focusable(false)
+              .onClick(() => {
+                this.uiFontFamily = opt.family;
+                this.onUIFontFamilyChange(opt.family);
+              })
+            })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding({ top: 6, left: 4, right: 4, bottom: 2 })
+          .transition(TransitionEffect.asymmetric(this.dropdownEnter, this.dropdownExit))
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .margin({ bottom: 12 })
+      .onClick(() => {})
+
+      // --- Terminal font selector (inlined for @State reactivity) ---
+      Column({ space: 6 }) {
+        Text('终端字体')
+          .fontSize(11)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(Palette.textDim)
+          .width('100%')
+
+        Row() {
+          Text(this.fontLabel(this.termFontFamily, TERM_FONT_OPTIONS))
+            .fontSize(14)
+            .fontColor(Palette.text)
+            .fontFamily(this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text('▼')
+            .fontSize(9)
+            .fontColor(Palette.textDim)
+            .rotate({ angle: this.termFontDropdownOpen ? 180 : 0 })
+            .animation({ curve: curves.springMotion(0.6, 0.8) })
+        }
+        .width('100%')
+        .height(40)
+        .padding({ left: 14, right: 14 })
+        .justifyContent(FlexAlign.SpaceBetween)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: this.termFontDropdownOpen ? Palette.accent : Palette.border })
+        .animation({ curve: curves.springMotion(0.6, 0.8) })
+        .focusable(false)
+        .onClick(() => {
+          this.termFontDropdownOpen = !this.termFontDropdownOpen;
+          if (this.termFontDropdownOpen) { this.uiFontDropdownOpen = false; }
+        })
+
+        if (this.termFontDropdownOpen) {
+          Column({ space: 2 }) {
+            ForEach(TERM_FONT_OPTIONS, (opt: FontOption) => {
+              Row() {
+                Row() {
+                  if (this.termFontFamily === opt.family) {
+                    Row()
+                      .width(8).height(8).borderRadius(4).backgroundColor(Palette.accent)
+                  }
+                }
+                .width(18).height(18).borderRadius(9)
+                .border({
+                  width: this.termFontFamily === opt.family ? 2 : 1,
+                  color: this.termFontFamily === opt.family ? Palette.accent : Palette.border
+                })
+                .justifyContent(FlexAlign.Center)
+
+                Text(opt.label)
+                  .fontSize(14)
+                  .fontColor(this.termFontFamily === opt.family ? Palette.accent : Palette.text)
+                  .fontFamily(opt.family.length > 0 ? opt.family : 'monospace')
+                  .margin({ left: 10 })
+              }
+              .width('100%')
+              .height(40)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(8)
+              .focusable(false)
+              .onClick(() => {
+                this.termFontFamily = opt.family;
+                this.onTermFontFamilyChange(opt.family);
+              })
+            })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding({ top: 6, left: 4, right: 4, bottom: 2 })
+          .transition(TransitionEffect.asymmetric(this.dropdownEnter, this.dropdownExit))
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .margin({ bottom: 12 })
+      .onClick(() => {})
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
