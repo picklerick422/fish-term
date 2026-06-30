@@ -120,10 +120,6 @@ struct Index {
         familyName: 'Claude Sans',
         familySrc: $rawfile('fonts/ClaudeSans-Regular.ttf')
       });
-      fontMgr.registerFont({
-        familyName: 'Claude Sans LET Plain10',
-        familySrc: $rawfile('fonts/ClaudeSans-LET-Plain10.ttf')
-      });
     } catch (e) {
       // Non-fatal: fontFamily() falls back gracefully.
     }

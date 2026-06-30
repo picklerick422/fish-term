@@ -286,7 +286,6 @@ bool NativeDrawingRenderer::loadFontAtlas(NativeResourceManager* resourceManager
             registerBundledFont("CascadiaCode-Regular.ttf", "Cascadia Code", "CascadiaCode-Regular.ttf");
             registerBundledFont("SourceCodePro-Regular.ttf", "Source Code Pro", "SourceCodePro-Regular.ttf");
             registerBundledFont("ClaudeSans-Regular.ttf", "Claude Sans", "ClaudeSans-Regular.ttf");
-            registerBundledFont("ClaudeSans-LET-Plain10.ttf", "Claude Sans LET Plain10", "ClaudeSans-LET-Plain10.ttf");
 
             // 2. System Noto Sans Mono — always available on HarmonyOS
             const char* sysMonoPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";
@@ -720,6 +719,12 @@ void NativeDrawingRenderer::updateCellDimensions()
     const float widthI = (layoutI && layoutI->width > 0.0f) ? layoutI->width : widthM;
     const bool isMonospace = std::fabs(widthM - widthI) < 0.5f;
     m_isProportionalFont = !isMonospace;
+    if (isMonospace) {
+        // Drop stale proportional offsets so the fixed grid is used immediately
+        // and memory is not wasted once we switch back to monospace.
+        m_rowOffsets.clear();
+        m_rowWidths.clear();
+    }
     const float cellWidth = isMonospace ? widthM : measureAverageGlyphWidth();
 
     m_cellWidth = std::ceil(std::max(cellWidth, 1.0f));
@@ -756,7 +761,11 @@ void NativeDrawingRenderer::computeRowMetrics(const std::vector<Cell>& cells, in
             if (m_isProportionalFont && !text.empty() && text.find_first_not_of(' ') != std::string::npos) {
                 GlyphLayout* layout = getGlyphLayout(text, probeCell.attrs, span);
                 if (layout && layout->width > 0.0f) {
-                    w = layout->width;
+                    // Add a tiny amount of horizontal breathing room between
+                    // proportional glyphs so the terminal grid does not feel
+                    // cramped; leave wide (CJK) glyphs at their natural width.
+                    const float extra = (span == 1) ? 1.0f : 0.0f;
+                    w = layout->width + extra;
                 }
             }
             m_rowWidths[row][col] = w;
@@ -776,7 +785,7 @@ void NativeDrawingRenderer::computeRowMetrics(const std::vector<Cell>& cells, in
 
 float NativeDrawingRenderer::cellX(int row, int col) const
 {
-    if (row < 0 || row >= static_cast<int>(m_rowOffsets.size())) {
+    if (!m_isProportionalFont || row < 0 || row >= static_cast<int>(m_rowOffsets.size())) {
         return col * m_cellWidth;
     }
     if (col < 0 || col > static_cast<int>(m_rowOffsets[row].size()) - 1) {
@@ -956,8 +965,12 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     // advance/overhang, and an exact width can clip the rightmost glyph in a
     // freshly typed run. Give layout a small overhang budget while keeping the
     // paint origin snapped to the terminal cell.
+    // For proportional fonts we lay out at the full viewport width so wider
+    // glyphs are not clipped, since cells are positioned by their natural advance.
     const double overhang = std::max(2.0, static_cast<double>(m_fontSize * m_density) * 0.25);
-    const double maxWidth = std::max(1.0, static_cast<double>(m_cellWidth * span) + overhang);
+    const double maxWidth = m_isProportionalFont
+        ? static_cast<double>(std::max(1u, m_width))
+        : std::max(1.0, static_cast<double>(m_cellWidth * span) + overhang);
     OH_Drawing_TypographyLayout(typography, maxWidth);
     const size_t unresolvedCount = OH_Drawing_TypographyGetUnresolvedGlyphsCount(typography);
     if (unresolvedCount > 0) {
