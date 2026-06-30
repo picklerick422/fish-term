@@ -125,4 +125,6 @@ private:
     std::vector<std::vector<float>> m_rowOffsets;
     std::vector<std::vector<float>> m_rowWidths;
     bool m_isProportionalFont = false;
+
+    static bool isCJKCodepoint(uint32_t codepoint);
 };

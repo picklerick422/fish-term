@@ -580,7 +580,13 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 const float left = cellX(row, col);
                 const float top = row * cellHeight;
                 const float y = top + std::max(0.0f, (cellHeight - layout->height) * 0.5f);
-                OH_Drawing_TypographyPaint(layout->typography, m_canvas, left, y);
+                // Claude Sans + CJK fallback combination tends to place CJK
+                // glyphs visually lower than Latin/digit glyphs; nudge them up.
+                const bool isClaudeSans = (m_primaryFontFamily.find("Claude Sans") != std::string::npos);
+                const float cjkNudge = (isClaudeSans && isCJKCodepoint(cell.codepoint))
+                    ? -1.0f * m_density
+                    : 0.0f;
+                OH_Drawing_TypographyPaint(layout->typography, m_canvas, left, y + cjkNudge);
             }
 
             col += span;
@@ -689,9 +695,22 @@ float NativeDrawingRenderer::effectiveFontSize() const
     // Claude Sans has a relatively small visual size; give it a gentle boost
     // so English text does not look tiny next to CJK glyphs or other fonts.
     if (m_primaryFontFamily.find("Claude Sans") != std::string::npos) {
-        return m_fontSize * 1.15f;
+        return m_fontSize * 1.20f;
     }
     return m_fontSize;
+}
+
+bool NativeDrawingRenderer::isCJKCodepoint(uint32_t cp)
+{
+    return (cp >= 0x4E00 && cp <= 0x9FFF) ||   // CJK Unified Ideographs
+           (cp >= 0x3400 && cp <= 0x4DBF) ||   // CJK Unified Ideographs Extension A
+           (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK Compatibility Ideographs
+           (cp >= 0x20000 && cp <= 0x2EBEF) || // CJK Unified Ideographs Extensions B-F
+           (cp >= 0x3000 && cp <= 0x303F) ||   // CJK Symbols and Punctuation
+           (cp >= 0x3040 && cp <= 0x309F) ||   // Hiragana
+           (cp >= 0x30A0 && cp <= 0x30FF) ||   // Katakana
+           (cp >= 0xAC00 && cp <= 0xD7AF) ||   // Hangul Syllables
+           (cp >= 0xFF01 && cp <= 0xFF5E);     // Fullwidth ASCII variants
 }
 
 void NativeDrawingRenderer::updateCellDimensions()
