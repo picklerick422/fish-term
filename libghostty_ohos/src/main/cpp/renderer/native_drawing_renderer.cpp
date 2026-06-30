@@ -285,6 +285,8 @@ bool NativeDrawingRenderer::loadFontAtlas(NativeResourceManager* resourceManager
             registerBundledFont("FiraCode-Regular.ttf", "Fira Code", "FiraCode-Regular.ttf");
             registerBundledFont("CascadiaCode-Regular.ttf", "Cascadia Code", "CascadiaCode-Regular.ttf");
             registerBundledFont("SourceCodePro-Regular.ttf", "Source Code Pro", "SourceCodePro-Regular.ttf");
+            registerBundledFont("ClaudeSans-Regular.ttf", "Claude Sans", "ClaudeSans-Regular.ttf");
+            registerBundledFont("ClaudeSans-LET-Plain10.ttf", "Claude Sans LET Plain10", "ClaudeSans-LET-Plain10.ttf");
 
             // 2. System Noto Sans Mono — always available on HarmonyOS
             const char* sysMonoPath = "/system/fonts/NotoSansMono[wdth,wght].ttf";
@@ -615,6 +617,42 @@ void NativeDrawingRenderer::endFrame()
     m_currentConfig = {};
 }
 
+float NativeDrawingRenderer::measureAverageGlyphWidth()
+{
+    if (!m_fontCollection || !m_fontsConfigured) {
+        return m_cellWidth;
+    }
+
+    Cell probeCell;
+    probeCell.codepoint = 'M';
+    probeCell.textLen = 1;
+    probeCell.attrs.fg = m_defaultFgColor;
+
+    // Use a representative sample of ASCII characters to compute an average
+    // glyph advance. This makes proportional fonts usable in the terminal grid
+    // by reducing the oversized gaps that occur when cell width is based on 'M'.
+    const char* sample =
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789"
+        "!@#$%^&*()_+-=[]{}|;':\",./<>?";
+    double total = 0.0;
+    int count = 0;
+    for (const char* p = sample; *p != '\0'; ++p) {
+        char text[2] = { *p, '\0' };
+        std::memcpy(probeCell.text, text, sizeof(text));
+        GlyphLayout* layout = getGlyphLayout(text, probeCell.attrs, 1);
+        if (layout && layout->width > 0.0f) {
+            total += layout->width;
+            ++count;
+        }
+    }
+    if (count == 0) {
+        return m_cellWidth;
+    }
+    return static_cast<float>(total / static_cast<double>(count));
+}
+
 void NativeDrawingRenderer::updateCellDimensions()
 {
     Renderer::updateCellDimensions();
@@ -635,11 +673,29 @@ void NativeDrawingRenderer::updateCellDimensions()
     std::memcpy(probeCell.text, probe, sizeof(probe));
     probeCell.textLen = 1;
     probeCell.attrs.fg = m_defaultFgColor;
-    GlyphLayout* layout = getGlyphLayout("M", probeCell.attrs, 1);
-    if (layout && layout->width > 0.0f && layout->height > 0.0f) {
-        m_cellWidth = std::ceil(std::max(layout->width, 1.0f));
-        m_cellHeight = std::ceil(std::max(layout->height * 1.05f, 1.0f));
+    GlyphLayout* layoutM = getGlyphLayout("M", probeCell.attrs, 1);
+    if (!layoutM || layoutM->width <= 0.0f || layoutM->height <= 0.0f) {
+        return;
     }
+
+    // Detect proportional fonts by comparing the widths of a narrow and a wide
+    // glyph. For monospace fonts these will be identical; for proportional fonts
+    // we fall back to the average glyph width so character spacing is reasonable.
+    const char probeI[] = "i";
+    std::memcpy(probeCell.text, probeI, sizeof(probeI));
+    GlyphLayout* layoutI = getGlyphLayout("i", probeCell.attrs, 1);
+    const float widthM = layoutM->width;
+    const float widthI = (layoutI && layoutI->width > 0.0f) ? layoutI->width : widthM;
+    const bool isMonospace = std::fabs(widthM - widthI) < 0.5f;
+    const float cellWidth = isMonospace ? widthM : measureAverageGlyphWidth();
+
+    m_cellWidth = std::ceil(std::max(cellWidth, 1.0f));
+    m_cellHeight = std::ceil(std::max(layoutM->height * 1.05f, 1.0f));
+
+    OH_LOG_INFO(LOG_APP,
+        "FT_FONT cellSize family='%{public}s' mono=%{public}d widthM=%.2f widthI=%.2f cellW=%.2f cellH=%.2f",
+        m_primaryFontFamily.c_str(), static_cast<int>(isMonospace),
+        widthM, widthI, m_cellWidth, m_cellHeight);
 }
 
 bool NativeDrawingRenderer::configureWindow()

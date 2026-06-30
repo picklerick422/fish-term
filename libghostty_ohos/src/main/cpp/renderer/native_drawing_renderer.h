@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <string>
 #include <cstdint>
+#include <mutex>
 #include "renderer.h"
 
 class NativeDrawingRenderer : public Renderer {
@@ -76,9 +77,10 @@ private:
 
     bool configureWindow();
     bool ensureDrawingObjects();
-    void destroyGlyphCache();
+    void clearGlyphCache() override;
     void trimGlyphCache();
     GlyphLayout* getGlyphLayout(const std::string& text, const CellAttributes& attrs, uint8_t span);
+    float measureAverageGlyphWidth();
     bool paintBuiltinGlyph(const Cell& cell, const CellAttributes& attrs, float left, float top, float width, float height);
     bool paintPowerlineGlyph(uint32_t codepoint, const CellAttributes& attrs, float left, float top, float width, float height);
     void fillTrianglePath(float ax, float ay, float bx, float by, float cx, float cy, uint32_t color);
@@ -110,7 +112,7 @@ private:
     OH_Drawing_FontCollection* m_fontCollection = nullptr;
 
     std::unordered_map<GlyphKey, GlyphLayout, GlyphKeyHash> m_glyphCache;
-    std::string m_primaryFontFamily = "libghostty Mono";
+    mutable std::recursive_mutex m_glyphCacheMutex;   // protects m_glyphCache from concurrent clear+read on VSync vs main thread
     std::string m_symbolFontFamily = "libghostty Nerd Symbols";
     bool m_fontsConfigured = false;
 };

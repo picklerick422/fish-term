@@ -84,12 +84,16 @@ export struct SettingsPanel {
   @State private hoverFontPlus: boolean = false;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
+  // Dropdown unfolds downward from the header: a small upward slide paired
+  // with a fade-in, giving a native "pull-down" feel rather than a pure scale.
   private readonly dropdownEnter: TransitionEffect =
-    TransitionEffect.scale({ y: 0, centerY: '0%' })
-      .animation({ curve: curves.springMotion(0.6, 0.8) });
+    TransitionEffect.translate({ y: -16 })
+      .animation({ curve: curves.springMotion(0.6, 0.8) })
+      .combine(TransitionEffect.OPACITY.animation({ curve: curves.springMotion(0.6, 0.8) }));
   private readonly dropdownExit: TransitionEffect =
-    TransitionEffect.scale({ y: 0, centerY: '0%' })
-      .animation({ curve: curves.springMotion(0.6, 0.8) });
+    TransitionEffect.translate({ y: -16 })
+      .animation({ curve: curves.springMotion(0.6, 0.8) })
+      .combine(TransitionEffect.OPACITY.animation({ curve: curves.springMotion(0.6, 0.8) }));
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
@@ -435,7 +439,32 @@ export struct SettingsPanel {
   // rendered with the active theme colors and terminal font family.
   @Builder
   private buildThemePreview() {
-    Column({ space: 4 }) {
+    Column({ space: 6 }) {
+      // Font labels so both UI and terminal font changes are immediately visible.
+      Row({ space: 4 }) {
+        Text('UI: ')
+          .fontSize(11)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.colorsFor(this.themeName).a3)
+        Text(this.uiFontFamily.length > 0 ? this.uiFontFamily : 'default')
+          .fontSize(11)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.colorsFor(this.themeName).fg)
+      }
+      .width('100%')
+
+      Row({ space: 4 }) {
+        Text('Terminal: ')
+          .fontSize(11)
+          .fontFamily(this.previewFont)
+          .fontColor(this.colorsFor(this.themeName).a3)
+        Text(this.previewFont)
+          .fontSize(11)
+          .fontFamily(this.previewFont)
+          .fontColor(this.colorsFor(this.themeName).fg)
+      }
+      .width('100%')
+
       Row({ space: 6 }) {
         Text('user@fish')
           .fontSize(12)

@@ -48,4 +48,6 @@ export const TERM_FONT_OPTIONS: FontOption[] = [
   { family: 'Fira Code', label: 'Fira Code', category: 'terminal' },
   { family: 'Cascadia Code', label: 'Cascadia Code', category: 'terminal' },
   { family: 'Source Code Pro', label: 'Source Code Pro', category: 'terminal' },
+  { family: 'Claude Sans', label: 'Claude Sans (比例字体)', category: 'terminal' },
+  { family: 'Claude Sans LET Plain10', label: 'Claude Sans LET Plain10 (比例字体)', category: 'terminal' },
 ];
