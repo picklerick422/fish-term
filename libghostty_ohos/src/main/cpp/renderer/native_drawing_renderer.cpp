@@ -684,6 +684,16 @@ float NativeDrawingRenderer::measureAverageGlyphWidth()
     return static_cast<float>(total / static_cast<double>(count));
 }
 
+float NativeDrawingRenderer::effectiveFontSize() const
+{
+    // Claude Sans has a relatively small visual size; give it a gentle boost
+    // so English text does not look tiny next to CJK glyphs or other fonts.
+    if (m_primaryFontFamily.find("Claude Sans") != std::string::npos) {
+        return m_fontSize * 1.08f;
+    }
+    return m_fontSize;
+}
+
 void NativeDrawingRenderer::updateCellDimensions()
 {
     Renderer::updateCellDimensions();
@@ -902,7 +912,7 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     OH_Drawing_SetTypographyTextMaxLines(typographyStyle, 1);
 
     OH_Drawing_SetTextStyleColor(textStyle, attrs.fg);
-    OH_Drawing_SetTextStyleFontSize(textStyle, std::max(1.0, static_cast<double>(m_fontSize * m_density)));
+    OH_Drawing_SetTextStyleFontSize(textStyle, std::max(1.0, static_cast<double>(effectiveFontSize() * m_density)));
     OH_Drawing_SetTextStyleFontWeight(textStyle, attrs.bold ? FONT_WEIGHT_700 : FONT_WEIGHT_400);
     OH_Drawing_SetTextStyleFontStyle(textStyle, attrs.italic ? FONT_STYLE_ITALIC : FONT_STYLE_NORMAL);
     OH_Drawing_SetTextStyleBaseLine(textStyle, TEXT_BASELINE_ALPHABETIC);
@@ -929,9 +939,9 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     {
         static std::atomic<int> s_fontLogCount{0};
         if (s_fontLogCount.fetch_add(1) < 3) {
-            OH_LOG_INFO(LOG_APP, "FT_FONT getGlyphLayout primary='%{public}s' symbol='%{public}s' fontSize=%.1f density=%.2f",
+            OH_LOG_INFO(LOG_APP, "FT_FONT getGlyphLayout primary='%{public}s' symbol='%{public}s' fontSize=%.1f eff=%.1f density=%.2f",
                         m_primaryFontFamily.c_str(), m_symbolFontFamily.c_str(),
-                        static_cast<double>(m_fontSize), static_cast<double>(m_density));
+                        static_cast<double>(m_fontSize), static_cast<double>(effectiveFontSize()), static_cast<double>(m_density));
         }
     }
     const char* families[fontFamilies.size()];
@@ -970,7 +980,7 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     // paint origin snapped to the terminal cell.
     // For proportional fonts we lay out at the full viewport width so wider
     // glyphs are not clipped, since cells are positioned by their natural advance.
-    const double overhang = std::max(2.0, static_cast<double>(m_fontSize * m_density) * 0.25);
+    const double overhang = std::max(2.0, static_cast<double>(effectiveFontSize() * m_density) * 0.25);
     const double maxWidth = m_isProportionalFont
         ? static_cast<double>(std::max(1u, m_width))
         : std::max(1.0, static_cast<double>(m_cellWidth * span) + overhang);

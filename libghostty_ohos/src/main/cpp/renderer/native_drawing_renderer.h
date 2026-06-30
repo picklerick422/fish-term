@@ -83,6 +83,7 @@ private:
     GlyphLayout* getGlyphLayout(const std::string& text, const CellAttributes& attrs, uint8_t span);
     float measureAverageGlyphWidth();
     void computeRowMetrics(const std::vector<Cell>& cells, int cols, int rows);
+    float effectiveFontSize() const;
     float cellX(int row, int col) const;
     float cellW(int row, int col, uint8_t span) const;
     bool paintBuiltinGlyph(const Cell& cell, const CellAttributes& attrs, float left, float top, float width, float height);
