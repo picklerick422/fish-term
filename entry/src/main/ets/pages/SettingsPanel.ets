@@ -2,7 +2,7 @@ import { TerminalController } from 'libghostty_ohos';
 import { Palette } from '../theme/Palette';
 import { ConnectionStore, TerminalPrefs } from '../store/ConnectionStore';
 import { MIN_FONT_SIZE, MAX_FONT_SIZE, FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS } from '../theme/FontScale';
-import { curves } from '@kit.ArkUI';
+import { curves, Curve } from '@kit.ArkUI';
 
 interface CursorOpt {
   label: string;
@@ -65,7 +65,7 @@ export struct SettingsPanel {
   onScrollbackChange: (v: number) => void = (_v: number) => {};
   onFontSizeChange: (size: number) => void = (_size: number) => {};
   @Prop uiFontFamily: string = 'Inter';
-  @Prop termFontFamily: string = '';
+  @Prop @Watch('syncPreviewFont') termFontFamily: string = '';
   onUIFontFamilyChange: (family: string) => void = (_family: string) => {};
   onTermFontFamilyChange: (family: string) => void = (_family: string) => {};
   onReplayGuide: () => void = () => {};
@@ -84,24 +84,33 @@ export struct SettingsPanel {
   @State private hoverFontPlus: boolean = false;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
-  // Dropdown unfolds downward from the header: a small upward slide paired
-  // with a fade-in, giving a native "pull-down" feel rather than a pure scale.
-  private readonly dropdownEnter: TransitionEffect =
-    TransitionEffect.translate({ y: -16 })
-      .animation({ curve: curves.springMotion(0.6, 0.8) })
-      .combine(TransitionEffect.OPACITY.animation({ curve: curves.springMotion(0.6, 0.8) }));
-  private readonly dropdownExit: TransitionEffect =
-    TransitionEffect.translate({ y: -16 })
-      .animation({ curve: curves.springMotion(0.6, 0.8) })
-      .combine(TransitionEffect.OPACITY.animation({ curve: curves.springMotion(0.6, 0.8) }));
+  // Mirrored terminal font used in the theme preview so @State reactivity is
+  // explicit and not dependent on a class getter being observed by ArkUI.
+  @State private previewFontFamily: string = 'monospace';
+  // True "pull-down" reveal: the dropdown container height animates from 0
+  // to full while clipping content, so lines appear one-by-one from the top
+  // and retract from the bottom without scaling or fading the whole list.
+  private readonly DROPDOWN_ITEM_HEIGHT: number = 40;
+  private readonly DROPDOWN_ITEM_GAP: number = 2;
+  private readonly DROPDOWN_PADDING: number = 8; // top 6 + bottom 2
+  private readonly UI_DROPDOWN_HEIGHT: number =
+    UI_FONT_OPTIONS.length * this.DROPDOWN_ITEM_HEIGHT +
+    (UI_FONT_OPTIONS.length - 1) * this.DROPDOWN_ITEM_GAP +
+    this.DROPDOWN_PADDING;
+  private readonly TERM_DROPDOWN_HEIGHT: number =
+    TERM_FONT_OPTIONS.length * this.DROPDOWN_ITEM_HEIGHT +
+    (TERM_FONT_OPTIONS.length - 1) * this.DROPDOWN_ITEM_GAP +
+    this.DROPDOWN_PADDING;
+  private readonly dropdownRevealCurve: Curve = Curve.EaseOut;
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
 
-  private get previewFont(): string {
-    return this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
+  private syncPreviewFont(): void {
+    this.previewFontFamilyFamily = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
   }
 
   aboutToAppear(): void {
+    this.syncPreviewFont();
     this.tab = this.initialTab;
     const all: string[] = this.controller.getThemeList();
     // Pin recommended themes (that actually exist) to the top, rest follow.
@@ -456,11 +465,11 @@ export struct SettingsPanel {
       Row({ space: 4 }) {
         Text('Terminal: ')
           .fontSize(11)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).a3)
-        Text(this.previewFont)
+        Text(this.previewFontFamily)
           .fontSize(11)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).fg)
       }
       .width('100%')
@@ -468,15 +477,15 @@ export struct SettingsPanel {
       Row({ space: 6 }) {
         Text('user@fish')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).a2)
         Text('~/project')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).a3)
         Text('$ ls')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).fg)
       }
       .width('100%')
@@ -484,15 +493,15 @@ export struct SettingsPanel {
       Row({ space: 10 }) {
         Text('README.md')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).a1)
         Text('src')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).a2)
         Text('build.zig')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).a3)
       }
       .width('100%')
@@ -500,7 +509,7 @@ export struct SettingsPanel {
       Row({ space: 0 }) {
         Text('$ ')
           .fontSize(12)
-          .fontFamily(this.previewFont)
+          .fontFamily(this.previewFontFamily)
           .fontColor(this.colorsFor(this.themeName).fg)
         // blinking-cursor stand-in
         Text(' ')
@@ -596,12 +605,13 @@ export struct SettingsPanel {
       this.buildSectionHeader('字体')
 
       // --- UI font selector (inlined for @State reactivity) ---
-      Column({ space: 6 }) {
+      Column({ space: 0 }) {
         Text('UI 字体')
           .fontSize(11)
           .fontFamily(this.uiFontFamily)
           .fontColor(Palette.textDim)
           .width('100%')
+          .margin({ bottom: 6 })
 
         // Collapsed row — toggle open/close on click
         Row() {
@@ -628,14 +638,16 @@ export struct SettingsPanel {
         .borderRadius(10)
         .border({ width: 1, color: this.uiFontDropdownOpen ? Palette.accent : Palette.border })
         .animation({ curve: curves.springMotion(0.6, 0.8) })
+        .margin({ bottom: this.uiFontDropdownOpen ? 6 : 0 })
         .focusable(false)
         .onClick(() => {
           this.uiFontDropdownOpen = !this.uiFontDropdownOpen;
           if (this.uiFontDropdownOpen) { this.termFontDropdownOpen = false; }
         })
 
-        // Expanded options list with enter/exit transition
-        if (this.uiFontDropdownOpen) {
+        // Expanded options list: true clip-based wipe reveal. The Stack height
+        // animates while clipping its child, so options appear line-by-line.
+        Stack({ alignContent: Alignment.TopStart }) {
           Column({ space: 2 }) {
             ForEach(UI_FONT_OPTIONS, (opt: FontOption) => {
               Row() {
@@ -664,8 +676,12 @@ export struct SettingsPanel {
               .height(40)
               .padding({ left: 12, right: 12 })
               .borderRadius(8)
+              .enabled(this.uiFontDropdownOpen)
               .focusable(false)
               .onClick(() => {
+                if (!this.uiFontDropdownOpen) {
+                  return;
+                }
                 this.uiFontFamily = opt.family;
                 this.onUIFontFamilyChange(opt.family);
               })
@@ -674,8 +690,11 @@ export struct SettingsPanel {
           .alignItems(HorizontalAlign.Start)
           .width('100%')
           .padding({ top: 6, left: 4, right: 4, bottom: 2 })
-          .transition(TransitionEffect.asymmetric(this.dropdownEnter, this.dropdownExit))
         }
+        .width('100%')
+        .height(this.uiFontDropdownOpen ? this.UI_DROPDOWN_HEIGHT : 0)
+        .clip(true)
+        .animation({ curve: this.dropdownRevealCurve, duration: 220 })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -683,12 +702,13 @@ export struct SettingsPanel {
       .onClick(() => {})
 
       // --- Terminal font selector (inlined for @State reactivity) ---
-      Column({ space: 6 }) {
+      Column({ space: 0 }) {
         Text('终端字体')
           .fontSize(11)
           .fontFamily(this.uiFontFamily)
           .fontColor(Palette.textDim)
           .width('100%')
+          .margin({ bottom: 6 })
 
         Row() {
           Text(this.fontLabel(this.termFontFamily, TERM_FONT_OPTIONS))
@@ -714,13 +734,14 @@ export struct SettingsPanel {
         .borderRadius(10)
         .border({ width: 1, color: this.termFontDropdownOpen ? Palette.accent : Palette.border })
         .animation({ curve: curves.springMotion(0.6, 0.8) })
+        .margin({ bottom: this.termFontDropdownOpen ? 6 : 0 })
         .focusable(false)
         .onClick(() => {
           this.termFontDropdownOpen = !this.termFontDropdownOpen;
           if (this.termFontDropdownOpen) { this.uiFontDropdownOpen = false; }
         })
 
-        if (this.termFontDropdownOpen) {
+        Stack({ alignContent: Alignment.TopStart }) {
           Column({ space: 2 }) {
             ForEach(TERM_FONT_OPTIONS, (opt: FontOption) => {
               Row() {
@@ -747,8 +768,12 @@ export struct SettingsPanel {
               .height(40)
               .padding({ left: 12, right: 12 })
               .borderRadius(8)
+              .enabled(this.termFontDropdownOpen)
               .focusable(false)
               .onClick(() => {
+                if (!this.termFontDropdownOpen) {
+                  return;
+                }
                 this.termFontFamily = opt.family;
                 this.onTermFontFamilyChange(opt.family);
               })
@@ -757,8 +782,11 @@ export struct SettingsPanel {
           .alignItems(HorizontalAlign.Start)
           .width('100%')
           .padding({ top: 6, left: 4, right: 4, bottom: 2 })
-          .transition(TransitionEffect.asymmetric(this.dropdownEnter, this.dropdownExit))
         }
+        .width('100%')
+        .height(this.termFontDropdownOpen ? this.TERM_DROPDOWN_HEIGHT : 0)
+        .clip(true)
+        .animation({ curve: this.dropdownRevealCurve, duration: 220 })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')

@@ -32,6 +32,7 @@ public:
     void renderGrid(const std::vector<Cell>& cells, int cols, int rows,
                     int cursorRow, int cursorCol, bool cursorVisible) override;
     void endFrame() override;
+    int mapXToCol(int row, float x) const override;
 
 protected:
     void updateCellDimensions() override;
@@ -81,6 +82,9 @@ private:
     void trimGlyphCache();
     GlyphLayout* getGlyphLayout(const std::string& text, const CellAttributes& attrs, uint8_t span);
     float measureAverageGlyphWidth();
+    void computeRowMetrics(const std::vector<Cell>& cells, int cols, int rows);
+    float cellX(int row, int col) const;
+    float cellW(int row, int col, uint8_t span) const;
     bool paintBuiltinGlyph(const Cell& cell, const CellAttributes& attrs, float left, float top, float width, float height);
     bool paintPowerlineGlyph(uint32_t codepoint, const CellAttributes& attrs, float left, float top, float width, float height);
     void fillTrianglePath(float ax, float ay, float bx, float by, float cx, float cy, uint32_t color);
@@ -115,4 +119,9 @@ private:
     mutable std::recursive_mutex m_glyphCacheMutex;   // protects m_glyphCache from concurrent clear+read on VSync vs main thread
     std::string m_symbolFontFamily = "libghostty Nerd Symbols";
     bool m_fontsConfigured = false;
+    // Per-row cumulative x offsets and per-cell widths, used when the primary
+    // font is proportional so glyphs are rendered at their natural positions.
+    std::vector<std::vector<float>> m_rowOffsets;
+    std::vector<std::vector<float>> m_rowWidths;
+    bool m_isProportionalFont = false;
 };

@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <hilog/log.h>
+#include <string>
 #include <vector>
 #include "../terminal/terminal_state.h"
 
@@ -26,6 +28,8 @@ public:
     float getCellHeight() const { return m_cellHeight; }
     uint32_t getWidth() const { return m_width; }
     uint32_t getHeight() const { return m_height; }
+    virtual int mapXToCol(int row, float x) const { return static_cast<int>(x / m_cellWidth); }
+    virtual int mapYToRow(float y) const { return static_cast<int>(y / m_cellHeight); }
     void getLastCursorRect(float& left, float& top, float& width, float& height, bool& valid) const {
         left = m_lastCursorLeft;
         top = m_lastCursorTop;
@@ -38,6 +42,19 @@ public:
         m_fontSize = size;
         updateCellDimensions();
     }
+
+    virtual void clearGlyphCache() = 0;
+
+    virtual void setFontFamily(const std::string& family) {
+        const std::string old = m_primaryFontFamily;
+        m_primaryFontFamily = family.empty() ? "Noto Sans Mono" : family;
+        OH_LOG_INFO(LOG_APP, "FT_FONT setFontFamily old='%{public}s' new='%{public}s'",
+                    old.c_str(), m_primaryFontFamily.c_str());
+        clearGlyphCache();
+        updateCellDimensions();
+    }
+
+    const std::string& getFontFamily() const { return m_primaryFontFamily; }
 
     void setDensity(float density) {
         m_density = density > 0 ? density : 1.0f;
@@ -93,6 +110,7 @@ protected:
     uint32_t m_cursorFgColor = 0xFF000000;
     int m_cursorStyle = 0;
     bool m_cursorBlink = true;
+    std::string m_primaryFontFamily = "Noto Sans Mono";
     float m_lastCursorLeft = 0.0f;
     float m_lastCursorTop = 0.0f;
     float m_lastCursorWidth = 0.0f;

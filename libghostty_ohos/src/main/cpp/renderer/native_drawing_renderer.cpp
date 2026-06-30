@@ -468,11 +468,18 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
 
     const float cellWidth = getCellWidth();
     const float cellHeight = getCellHeight();
+
+    // For proportional fonts each cell is positioned by the actual glyph advance
+    // of the preceding cells in the row. Compute these offsets once per frame.
+    if (m_isProportionalFont) {
+        computeRowMetrics(cells, cols, rows);
+    }
+
     m_lastCursorRectValid = false;
     if (drawCursor && cursorRow >= 0 && cursorRow < rows && cursorCol >= 0 && cursorCol < cols) {
-        m_lastCursorLeft = static_cast<float>(cursorCol) * cellWidth;
+        m_lastCursorLeft = cellX(cursorRow, cursorCol);
         m_lastCursorTop = static_cast<float>(cursorRow) * cellHeight;
-        m_lastCursorWidth = cellWidth;
+        m_lastCursorWidth = cellW(cursorRow, cursorCol, 1);
         m_lastCursorHeight = cellHeight;
         m_lastCursorRectValid = true;
     }
@@ -497,9 +504,9 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 bg = m_cursorBgColor;
             }
 
-            const float left = col * cellWidth;
+            const float left = cellX(row, col);
             const float top = row * cellHeight;
-            const float width = cellWidth * span;
+            const float width = cellW(row, col, span);
             CellAttributes visualAttrs = cell.attrs;
             visualAttrs.fg = fg;
             visualAttrs.bg = bg;
@@ -528,7 +535,7 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
             }
         }
 
-        const float paintedWidth = cols * cellWidth;
+        const float paintedWidth = m_isProportionalFont ? cellX(row, cols) : cols * cellWidth;
         if (paintedWidth < static_cast<float>(m_width)) {
             paintCellBackground(
                 paintedWidth,
@@ -571,7 +578,7 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
 
             GlyphLayout* layout = getGlyphLayout(firstText, visualAttrs, span);
             if (layout && layout->typography) {
-                const float left = col * cellWidth;
+                const float left = cellX(row, col);
                 const float top = row * cellHeight;
                 const float y = top + std::max(0.0f, (cellHeight - layout->height) * 0.5f);
                 OH_Drawing_TypographyPaint(layout->typography, m_canvas, left, y);
@@ -580,6 +587,31 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
             col += span;
         }
     }
+}
+
+int NativeDrawingRenderer::mapXToCol(int row, float x) const
+{
+    if (!m_isProportionalFont || row < 0 || row >= static_cast<int>(m_rowOffsets.size())) {
+        return static_cast<int>(x / m_cellWidth);
+    }
+    const std::vector<float>& offsets = m_rowOffsets[row];
+    if (offsets.empty()) {
+        return static_cast<int>(x / m_cellWidth);
+    }
+    // Binary search the cell whose horizontal range contains x.
+    int lo = 0;
+    int hi = static_cast<int>(offsets.size()) - 2; // last valid cell index
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (x < offsets[mid]) {
+            hi = mid - 1;
+        } else if (x >= offsets[mid + 1]) {
+            lo = mid + 1;
+        } else {
+            return mid;
+        }
+    }
+    return std::clamp(lo, 0, static_cast<int>(offsets.size()) - 2);
 }
 
 void NativeDrawingRenderer::endFrame()
@@ -687,15 +719,83 @@ void NativeDrawingRenderer::updateCellDimensions()
     const float widthM = layoutM->width;
     const float widthI = (layoutI && layoutI->width > 0.0f) ? layoutI->width : widthM;
     const bool isMonospace = std::fabs(widthM - widthI) < 0.5f;
+    m_isProportionalFont = !isMonospace;
     const float cellWidth = isMonospace ? widthM : measureAverageGlyphWidth();
 
     m_cellWidth = std::ceil(std::max(cellWidth, 1.0f));
     m_cellHeight = std::ceil(std::max(layoutM->height * 1.05f, 1.0f));
 
     OH_LOG_INFO(LOG_APP,
-        "FT_FONT cellSize family='%{public}s' mono=%{public}d widthM=%.2f widthI=%.2f cellW=%.2f cellH=%.2f",
-        m_primaryFontFamily.c_str(), static_cast<int>(isMonospace),
+        "FT_FONT cellSize family='%{public}s' mono=%{public}d proportional=%{public}d widthM=%.2f widthI=%.2f cellW=%.2f cellH=%.2f",
+        m_primaryFontFamily.c_str(), static_cast<int>(isMonospace), static_cast<int>(m_isProportionalFont),
         widthM, widthI, m_cellWidth, m_cellHeight);
+}
+
+void NativeDrawingRenderer::computeRowMetrics(const std::vector<Cell>& cells, int cols, int rows)
+{
+    m_rowOffsets.assign(rows, std::vector<float>(cols + 1, 0.0f));
+    m_rowWidths.assign(rows, std::vector<float>(cols, 0.0f));
+
+    Cell probeCell;
+    probeCell.textLen = 1;
+    probeCell.attrs.fg = m_defaultFgColor;
+
+    for (int row = 0; row < rows; ++row) {
+        float x = 0.0f;
+        for (int col = 0; col < cols; ++col) {
+            m_rowOffsets[row][col] = x;
+            const Cell& cell = cells[row * cols + col];
+            if (cell.width == 3 || cell.width == 4) {
+                // Continuation of a wide character: no advance.
+                m_rowWidths[row][col] = 0.0f;
+                continue;
+            }
+            const uint8_t span = cell.width == 2 ? 2 : 1;
+            const std::string text = cellText(cell);
+            float w = m_cellWidth * span;
+            if (m_isProportionalFont && !text.empty() && text.find_first_not_of(' ') != std::string::npos) {
+                GlyphLayout* layout = getGlyphLayout(text, probeCell.attrs, span);
+                if (layout && layout->width > 0.0f) {
+                    w = layout->width;
+                }
+            }
+            m_rowWidths[row][col] = w;
+            x += w;
+            if (span == 2) {
+                // Skip the continuation cell on the next iteration; it shares this offset.
+                if (col + 1 < cols) {
+                    m_rowOffsets[row][col + 1] = x;
+                    m_rowWidths[row][col + 1] = 0.0f;
+                }
+                ++col;
+            }
+        }
+        m_rowOffsets[row][cols] = x;
+    }
+}
+
+float NativeDrawingRenderer::cellX(int row, int col) const
+{
+    if (row < 0 || row >= static_cast<int>(m_rowOffsets.size())) {
+        return col * m_cellWidth;
+    }
+    if (col < 0 || col > static_cast<int>(m_rowOffsets[row].size()) - 1) {
+        return col * m_cellWidth;
+    }
+    return m_rowOffsets[row][col];
+}
+
+float NativeDrawingRenderer::cellW(int row, int col, uint8_t span) const
+{
+    if (!m_isProportionalFont || row < 0 || row >= static_cast<int>(m_rowWidths.size()) ||
+        col < 0 || col >= static_cast<int>(m_rowWidths[row].size())) {
+        return m_cellWidth * span;
+    }
+    if (span == 1) {
+        return m_rowWidths[row][col];
+    }
+    // For wide cells, return the measured width stored at the leading cell.
+    return m_rowWidths[row][col];
 }
 
 bool NativeDrawingRenderer::configureWindow()
