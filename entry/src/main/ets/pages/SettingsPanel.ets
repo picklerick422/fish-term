@@ -113,17 +113,17 @@ export struct SettingsPanel {
   // True "pull-down" reveal: the dropdown container height animates from 0
   // to full while clipping content, so lines appear one-by-one from the top
   // and retract from the bottom without scaling or fading the whole list.
-  private readonly DROPDOWN_ITEM_HEIGHT: number = 40;
+  private readonly DROPDOWN_ITEM_HEIGHT: number = 36;
   private readonly DROPDOWN_ITEM_GAP: number = 2;
-  private readonly DROPDOWN_PADDING: number = 8; // top 6 + bottom 2
+  private readonly DROPDOWN_PAD_V: number = 8; // top 4 + bottom 4
   private readonly UI_DROPDOWN_HEIGHT: number =
     UI_FONT_OPTIONS.length * this.DROPDOWN_ITEM_HEIGHT +
     (UI_FONT_OPTIONS.length - 1) * this.DROPDOWN_ITEM_GAP +
-    this.DROPDOWN_PADDING;
+    this.DROPDOWN_PAD_V;
   private readonly TERM_DROPDOWN_HEIGHT: number =
     TERM_FONT_OPTIONS.length * this.DROPDOWN_ITEM_HEIGHT +
     (TERM_FONT_OPTIONS.length - 1) * this.DROPDOWN_ITEM_GAP +
-    this.DROPDOWN_PADDING;
+    this.DROPDOWN_PAD_V;
   private readonly dropdownRevealCurve = curves.cubicBezierCurve(0.25, 0.1, 0.25, 1.0);
   private recommendedSet: Set<string> = new Set<string>();
   private colorCache: Map<string, ThemeColors> = new Map<string, ThemeColors>();
@@ -640,8 +640,8 @@ export struct SettingsPanel {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
 
-    // Text settings section: font size + line spacing on one row.
-    Column({ space: 8 }) {
+    // Text settings section: font size + line spacing on one row, plus scale params.
+    Column({ space: 6 }) {
       this.buildSectionHeader('文本')
 
       Row({ space: 12 }) {
@@ -796,6 +796,128 @@ export struct SettingsPanel {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+
+      // Scale-font parameters — slim pill rows matching the font-size / line-spacing
+      // control style. Always visible; dimmed via opacity when inactive.
+      Row({ space: 6 }) {
+        Text('缩放')
+          .fontSize(11)
+          .fontColor(isScaledFont(this.termFontFamily) ? Palette.text : Palette.textDim)
+          .fontFamily(this.uiFontFamily)
+          .width(28)
+        Slider({
+          value: this.fontScaleBoost,
+          min: MIN_FONT_SCALE_BOOST,
+          max: MAX_FONT_SCALE_BOOST,
+          step: FONT_SCALE_BOOST_STEP,
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .selectedColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.border)
+          .trackColor(Palette.border)
+          .focusable(false)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (!isScaledFont(this.termFontFamily)) { return; }
+            this.fontScaleBoost = Math.round(value * 100) / 100;
+            this.fontScaleBoostDraft = this.fontScaleBoost.toFixed(2);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onFontScaleBoostChange(this.fontScaleBoost);
+            }
+          })
+        Text(this.fontScaleBoostDraft + 'x')
+          .fontSize(11)
+          .fontColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.textDim)
+          .width(36)
+          .textAlign(TextAlign.End)
+      }
+      .width('80%')
+      .height(28)
+      .padding({ left: 8, right: 8 })
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor('#080F18')
+      .borderRadius(14)
+      .border({ width: 1, color: Palette.border })
+      .opacity(isScaledFont(this.termFontFamily) ? 1.0 : 0.45)
+
+      Row({ space: 6 }) {
+        Text('CJK')
+          .fontSize(11)
+          .fontColor(isScaledFont(this.termFontFamily) ? Palette.text : Palette.textDim)
+          .fontFamily(this.uiFontFamily)
+          .width(28)
+        Slider({
+          value: this.cjkVerticalOffset,
+          min: MIN_CJK_VERTICAL_OFFSET,
+          max: MAX_CJK_VERTICAL_OFFSET,
+          step: CJK_VERTICAL_OFFSET_STEP,
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .selectedColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.border)
+          .trackColor(Palette.border)
+          .focusable(false)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (!isScaledFont(this.termFontFamily)) { return; }
+            this.cjkVerticalOffset = Math.round(value * 10) / 10;
+            this.cjkVerticalOffsetDraft = this.cjkVerticalOffset.toFixed(1);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onCjkVerticalOffsetChange(this.cjkVerticalOffset);
+            }
+          })
+        Text(this.cjkVerticalOffsetDraft + ' dp')
+          .fontSize(11)
+          .fontColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.textDim)
+          .width(44)
+          .textAlign(TextAlign.End)
+      }
+      .width('80%')
+      .height(28)
+      .padding({ left: 8, right: 8 })
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor('#080F18')
+      .borderRadius(14)
+      .border({ width: 1, color: Palette.border })
+      .opacity(isScaledFont(this.termFontFamily) ? 1.0 : 0.45)
+
+      Row({ space: 6 }) {
+        Text('间距')
+          .fontSize(11)
+          .fontColor(isScaledFont(this.termFontFamily) ? Palette.text : Palette.textDim)
+          .fontFamily(this.uiFontFamily)
+          .width(28)
+        Slider({
+          value: this.characterSpacing,
+          min: MIN_CHARACTER_SPACING,
+          max: MAX_CHARACTER_SPACING,
+          step: CHARACTER_SPACING_STEP,
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .selectedColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.border)
+          .trackColor(Palette.border)
+          .focusable(false)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (!isScaledFont(this.termFontFamily)) { return; }
+            this.characterSpacing = Math.round(value * 10) / 10;
+            this.characterSpacingDraft = this.characterSpacing.toFixed(1);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onCharacterSpacingChange(this.characterSpacing);
+            }
+          })
+        Text(this.characterSpacingDraft + ' dp')
+          .fontSize(11)
+          .fontColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.textDim)
+          .width(44)
+          .textAlign(TextAlign.End)
+      }
+      .width('80%')
+      .height(28)
+      .padding({ left: 8, right: 8 })
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor('#080F18')
+      .borderRadius(14)
+      .border({ width: 1, color: Palette.border })
+      .opacity(isScaledFont(this.termFontFamily) ? 1.0 : 0.45)
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -827,7 +949,8 @@ export struct SettingsPanel {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // Two selectors side by side
+      // Two selectors side by side — true overlay (position absolute) with
+      // height-animated clip for a top-down wipe reveal.
       Row({ space: 10 }) {
         // --- UI font selector ---
         Column({ space: 0 }) {
@@ -838,7 +961,8 @@ export struct SettingsPanel {
             .width('100%')
             .margin({ bottom: 4 })
 
-          Stack({ alignContent: Alignment.TopStart }) {
+          Column({ space: 0 }) {
+            // Button row — always visible
             Row() {
               Text(this.fontLabel(this.uiFontFamily, UI_FONT_OPTIONS))
                 .fontSize(12)
@@ -868,8 +992,10 @@ export struct SettingsPanel {
               if (this.uiFontDropdownOpen) { this.termFontDropdownOpen = false; }
             })
 
-            // Expanded options overlay
-            if (this.uiFontDropdownOpen) {
+            // Dropdown — natural sibling below button in a Column.
+            // Height-animated with clip for top-down wipe reveal.
+            // Column height is constrained to 36px → dropdown overflows → true overlay.
+            Stack() {
               Column({ space: 2 }) {
                 ForEach(UI_FONT_OPTIONS, (opt: FontOption) => {
                   this.fontPickerItem(opt.family, opt.label, true)
@@ -878,15 +1004,21 @@ export struct SettingsPanel {
               .alignItems(HorizontalAlign.Start)
               .width('100%')
               .padding({ top: 4, left: 4, right: 4, bottom: 4 })
-              .backgroundColor(Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: Palette.accent })
-              .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
-              .offset({ y: 40 })
             }
+            .width('100%')
+            .height(this.uiFontDropdownOpen ? this.UI_DROPDOWN_HEIGHT : 0)
+            .clip(true)
+            .animation({ curve: this.dropdownRevealCurve, duration: 220 })
+            .zIndex(10)
+            .backgroundColor(Palette.surface)
+            .borderRadius(8)
+            .border({ width: 1, color: Palette.accent })
+            .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
           }
           .width('100%')
+          .height(36)
           .clip(false)
+          .zIndex(this.uiFontDropdownOpen ? 10 : 0)
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -900,7 +1032,8 @@ export struct SettingsPanel {
             .width('100%')
             .margin({ bottom: 4 })
 
-          Stack({ alignContent: Alignment.TopStart }) {
+          Column({ space: 0 }) {
+            // Button row — always visible
             Row() {
               Text(this.fontLabel(this.termFontFamily, TERM_FONT_OPTIONS))
                 .fontSize(12)
@@ -930,7 +1063,10 @@ export struct SettingsPanel {
               if (this.termFontDropdownOpen) { this.uiFontDropdownOpen = false; }
             })
 
-            if (this.termFontDropdownOpen) {
+            // Dropdown — natural sibling below button in a Column.
+            // Height-animated with clip for top-down wipe reveal.
+            // Column height is constrained to 36px → dropdown overflows → true overlay.
+            Stack() {
               Column({ space: 2 }) {
                 ForEach(TERM_FONT_OPTIONS, (opt: FontOption) => {
                   this.fontPickerItem(opt.family, opt.label, false)
@@ -939,136 +1075,30 @@ export struct SettingsPanel {
               .alignItems(HorizontalAlign.Start)
               .width('100%')
               .padding({ top: 4, left: 4, right: 4, bottom: 4 })
-              .backgroundColor(Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: Palette.accent })
-              .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
-              .offset({ y: 40 })
             }
+            .width('100%')
+            .height(this.termFontDropdownOpen ? this.TERM_DROPDOWN_HEIGHT : 0)
+            .clip(true)
+            .animation({ curve: this.dropdownRevealCurve, duration: 220 })
+            .zIndex(10)
+            .backgroundColor(Palette.surface)
+            .borderRadius(8)
+            .border({ width: 1, color: Palette.accent })
+            .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
           }
           .width('100%')
+          .height(36)
           .clip(false)
+          .zIndex(this.termFontDropdownOpen ? 10 : 0)
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-
-      // Scale-font parameters panel (only when Claude Sans is selected)
-      if (isScaledFont(this.termFontFamily)) {
-        Column({ space: 10 }) {
-          Text('缩放参数')
-            .fontSize(11)
-            .fontFamily(this.uiFontFamily)
-            .fontColor(Palette.textDim)
-            .width('100%')
-
-          // Font scale boost
-          Row({ space: 8 }) {
-            Text('缩放比例')
-              .fontSize(12)
-              .fontColor(Palette.text)
-              .width(68)
-            Slider({
-              value: this.fontScaleBoost,
-              min: MIN_FONT_SCALE_BOOST,
-              max: MAX_FONT_SCALE_BOOST,
-              step: FONT_SCALE_BOOST_STEP,
-              style: SliderStyle.OutSet
-            })
-              .layoutWeight(1)
-              .selectedColor(Palette.accent)
-              .trackColor(Palette.border)
-              .focusable(false)
-              .onChange((value: number, mode: SliderChangeMode) => {
-                this.fontScaleBoost = Math.round(value * 100) / 100;
-                this.fontScaleBoostDraft = this.fontScaleBoost.toFixed(2);
-                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                  this.onFontScaleBoostChange(this.fontScaleBoost);
-                }
-              })
-            Text(this.fontScaleBoostDraft)
-              .fontSize(12)
-              .fontColor(Palette.accent)
-              .width(36)
-              .textAlign(TextAlign.End)
-          }
-          .width('100%')
-
-          // CJK vertical offset
-          Row({ space: 8 }) {
-            Text('CJK 上移')
-              .fontSize(12)
-              .fontColor(Palette.text)
-              .width(68)
-            Slider({
-              value: this.cjkVerticalOffset,
-              min: MIN_CJK_VERTICAL_OFFSET,
-              max: MAX_CJK_VERTICAL_OFFSET,
-              step: CJK_VERTICAL_OFFSET_STEP,
-              style: SliderStyle.OutSet
-            })
-              .layoutWeight(1)
-              .selectedColor(Palette.accent)
-              .trackColor(Palette.border)
-              .focusable(false)
-              .onChange((value: number, mode: SliderChangeMode) => {
-                this.cjkVerticalOffset = Math.round(value * 10) / 10;
-                this.cjkVerticalOffsetDraft = this.cjkVerticalOffset.toFixed(1);
-                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                  this.onCjkVerticalOffsetChange(this.cjkVerticalOffset);
-                }
-              })
-            Text(this.cjkVerticalOffsetDraft + ' dp')
-              .fontSize(12)
-              .fontColor(Palette.accent)
-              .width(52)
-              .textAlign(TextAlign.End)
-          }
-          .width('100%')
-
-          // Character spacing
-          Row({ space: 8 }) {
-            Text('字间距')
-              .fontSize(12)
-              .fontColor(Palette.text)
-              .width(68)
-            Slider({
-              value: this.characterSpacing,
-              min: MIN_CHARACTER_SPACING,
-              max: MAX_CHARACTER_SPACING,
-              step: CHARACTER_SPACING_STEP,
-              style: SliderStyle.OutSet
-            })
-              .layoutWeight(1)
-              .selectedColor(Palette.accent)
-              .trackColor(Palette.border)
-              .focusable(false)
-              .onChange((value: number, mode: SliderChangeMode) => {
-                this.characterSpacing = Math.round(value * 10) / 10;
-                this.characterSpacingDraft = this.characterSpacing.toFixed(1);
-                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                  this.onCharacterSpacingChange(this.characterSpacing);
-                }
-              })
-            Text(this.characterSpacingDraft + ' dp')
-              .fontSize(12)
-              .fontColor(Palette.accent)
-              .width(52)
-              .textAlign(TextAlign.End)
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .padding(12)
-        .backgroundColor('#080F18')
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
-        .onClick(() => {})  // prevent closing dropdown when clicking this panel
-      }
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
+    .zIndex(this.uiFontDropdownOpen || this.termFontDropdownOpen ? 10 : 0)
 
     // Theme section
     Column({ space: 0 }) {
