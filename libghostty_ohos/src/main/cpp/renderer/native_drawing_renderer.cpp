@@ -584,7 +584,7 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 // glyphs visually lower than Latin/digit glyphs; nudge them up.
                 const bool isClaudeSans = (m_primaryFontFamily.find("Claude Sans") != std::string::npos);
                 const float cjkNudge = (isClaudeSans && isCJKCodepoint(cell.codepoint))
-                    ? -2.0f * m_density
+                    ? m_cjkVerticalOffset * m_density
                     : 0.0f;
                 OH_Drawing_TypographyPaint(layout->typography, m_canvas, left, y + cjkNudge);
             }
@@ -695,7 +695,7 @@ float NativeDrawingRenderer::effectiveFontSize() const
     // Claude Sans has a relatively small visual size; give it a gentle boost
     // so English text does not look tiny next to CJK glyphs or other fonts.
     if (m_primaryFontFamily.find("Claude Sans") != std::string::npos) {
-        return m_fontSize * 1.20f;
+        return m_fontSize * m_fontScaleBoost;
     }
     return m_fontSize;
 }
@@ -793,7 +793,7 @@ void NativeDrawingRenderer::computeRowMetrics(const std::vector<Cell>& cells, in
                     // Add a small amount of horizontal breathing room between
                     // proportional glyphs so the terminal grid does not feel
                     // cramped; leave wide (CJK) glyphs at their natural width.
-                    const float extra = (span == 1) ? 1.5f : 0.0f;
+                    const float extra = (span == 1) ? m_characterSpacing : 0.0f;
                     w = layout->width + extra;
                 }
             }

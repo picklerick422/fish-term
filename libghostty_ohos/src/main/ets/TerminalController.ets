@@ -148,6 +148,15 @@ export class TerminalController {
     if (patch.cursorBlink !== undefined) {
       nextConfig.cursorBlink = patch.cursorBlink;
     }
+    if (patch.fontScaleBoost !== undefined) {
+      nextConfig.fontScaleBoost = patch.fontScaleBoost;
+    }
+    if (patch.cjkVerticalOffset !== undefined) {
+      nextConfig.cjkVerticalOffset = patch.cjkVerticalOffset;
+    }
+    if (patch.characterSpacing !== undefined) {
+      nextConfig.characterSpacing = patch.characterSpacing;
+    }
 
     this.setConfig(nextConfig);
   }

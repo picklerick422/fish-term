@@ -11,7 +11,9 @@ import { Palette } from '../theme/Palette';
 import {
   DEFAULT_FONT_SIZE, clampFontSize,
   DEFAULT_LINE_SPACING, clampLineSpacing,
-  DEFAULT_UI_FONT, DEFAULT_TERM_FONT
+  DEFAULT_UI_FONT, DEFAULT_TERM_FONT,
+  DEFAULT_FONT_SCALE_BOOST, DEFAULT_CJK_VERTICAL_OFFSET, DEFAULT_CHARACTER_SPACING,
+  clampFontScaleBoost, clampCjkVerticalOffset, clampCharacterSpacing
 } from '../theme/FontScale';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -86,6 +88,9 @@ struct Index {
   @State private scrollbackLines: number = 20000;
   @State private uiFontFamily: string = DEFAULT_UI_FONT;
   @State private termFontFamily: string = DEFAULT_TERM_FONT;
+  @State private fontScaleBoost: number = DEFAULT_FONT_SCALE_BOOST;
+  @State private cjkVerticalOffset: number = DEFAULT_CJK_VERTICAL_OFFSET;
+  @State private characterSpacing: number = DEFAULT_CHARACTER_SPACING;
   // Bumped on Ctrl+Shift+F to open the find overlay on the active terminal.
   @State private searchSignal: number = 0;
   // First-run onboarding guide.
@@ -195,6 +200,15 @@ struct Index {
         this.broadcastConfig();
       }
     });
+    store.loadFontScaleBoost(DEFAULT_FONT_SCALE_BOOST).then((v: number): void => {
+      this.fontScaleBoost = v;
+    });
+    store.loadCjkVerticalOffset(DEFAULT_CJK_VERTICAL_OFFSET).then((v: number): void => {
+      this.cjkVerticalOffset = v;
+    });
+    store.loadCharacterSpacing(DEFAULT_CHARACTER_SPACING).then((v: number): void => {
+      this.characterSpacing = v;
+    });
   }
 
   private finishGuide(): void {
@@ -225,7 +239,10 @@ struct Index {
       lineSpacing: this.lineSpacing,
       scrollbackLines: this.scrollbackLines,
       cursorStyle: this.cursorStyle,
-      cursorBlink: this.cursorBlink
+      cursorBlink: this.cursorBlink,
+      fontScaleBoost: this.fontScaleBoost,
+      cjkVerticalOffset: this.cjkVerticalOffset,
+      characterSpacing: this.characterSpacing
     });
   }
 
@@ -237,7 +254,10 @@ struct Index {
         lineSpacing: this.lineSpacing,
         scrollbackLines: this.scrollbackLines,
         cursorStyle: this.cursorStyle,
-        cursorBlink: this.cursorBlink
+        cursorBlink: this.cursorBlink,
+        fontScaleBoost: this.fontScaleBoost,
+        cjkVerticalOffset: this.cjkVerticalOffset,
+        characterSpacing: this.characterSpacing
       });
     });
   }
@@ -592,6 +612,30 @@ struct Index {
     this.broadcastConfig();
     if (this.store) {
       this.store.saveFontFamily(family, false);
+    }
+  }
+
+  private applyFontScaleBoost(value: number): void {
+    this.fontScaleBoost = clampFontScaleBoost(value);
+    this.broadcastConfig();
+    if (this.store) {
+      this.store.saveFontScaleBoost(this.fontScaleBoost);
+    }
+  }
+
+  private applyCjkVerticalOffset(value: number): void {
+    this.cjkVerticalOffset = clampCjkVerticalOffset(value);
+    this.broadcastConfig();
+    if (this.store) {
+      this.store.saveCjkVerticalOffset(this.cjkVerticalOffset);
+    }
+  }
+
+  private applyCharacterSpacing(value: number): void {
+    this.characterSpacing = clampCharacterSpacing(value);
+    this.broadcastConfig();
+    if (this.store) {
+      this.store.saveCharacterSpacing(this.characterSpacing);
     }
   }
 
@@ -989,6 +1033,9 @@ struct Index {
       scrollbackLines: this.scrollbackLines,
       uiFontFamily: this.uiFontFamily,
       termFontFamily: this.termFontFamily,
+      fontScaleBoost: this.fontScaleBoost,
+      cjkVerticalOffset: this.cjkVerticalOffset,
+      characterSpacing: this.characterSpacing,
       onThemeChange: (n: string) => { this.themeName = n; this.broadcastTheme(); },
       onCursorStyleChange: (v: number) => { this.cursorStyle = v; this.broadcastConfig(); },
       onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
@@ -997,6 +1044,9 @@ struct Index {
       onLineSpacingChange: (s: number) => { this.applyLineSpacing(s); },
       onUIFontFamilyChange: (f: string) => { this.applyUIFontFamily(f); },
       onTermFontFamilyChange: (f: string) => { this.applyTermFontFamily(f); },
+      onFontScaleBoostChange: (v: number) => { this.applyFontScaleBoost(v); },
+      onCjkVerticalOffsetChange: (v: number) => { this.applyCjkVerticalOffset(v); },
+      onCharacterSpacingChange: (v: number) => { this.applyCharacterSpacing(v); },
       onReplayGuide: () => { this.showSettings = false; this.guideStep = 0; this.showGuide = true; },
       onClose: () => { this.showSettings = false; }
     })

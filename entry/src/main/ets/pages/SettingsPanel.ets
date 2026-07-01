@@ -4,7 +4,11 @@ import { ConnectionStore, TerminalPrefs } from '../store/ConnectionStore';
 import {
   MIN_FONT_SIZE, MAX_FONT_SIZE, FONT_STEP,
   MIN_LINE_SPACING, MAX_LINE_SPACING, LINE_SPACING_STEP, DEFAULT_LINE_SPACING,
-  FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS
+  FontOption, UI_FONT_OPTIONS, TERM_FONT_OPTIONS,
+  DEFAULT_FONT_SCALE_BOOST, MIN_FONT_SCALE_BOOST, MAX_FONT_SCALE_BOOST, FONT_SCALE_BOOST_STEP,
+  DEFAULT_CJK_VERTICAL_OFFSET, MIN_CJK_VERTICAL_OFFSET, MAX_CJK_VERTICAL_OFFSET, CJK_VERTICAL_OFFSET_STEP,
+  DEFAULT_CHARACTER_SPACING, MIN_CHARACTER_SPACING, MAX_CHARACTER_SPACING, CHARACTER_SPACING_STEP,
+  isScaledFont
 } from '../theme/FontScale';
 import { curves } from '@kit.ArkUI';
 
@@ -74,6 +78,12 @@ export struct SettingsPanel {
   @Prop @Watch('syncPreviewFont') termFontFamily: string = '';
   onUIFontFamilyChange: (family: string) => void = (_family: string) => {};
   onTermFontFamilyChange: (family: string) => void = (_family: string) => {};
+  @Prop fontScaleBoost: number = DEFAULT_FONT_SCALE_BOOST;
+  @Prop cjkVerticalOffset: number = DEFAULT_CJK_VERTICAL_OFFSET;
+  @Prop characterSpacing: number = DEFAULT_CHARACTER_SPACING;
+  onFontScaleBoostChange: (v: number) => void = (_v: number) => {};
+  onCjkVerticalOffsetChange: (v: number) => void = (_v: number) => {};
+  onCharacterSpacingChange: (v: number) => void = (_v: number) => {};
   onReplayGuide: () => void = () => {};
   onClose: () => void = () => {};
 
@@ -94,6 +104,9 @@ export struct SettingsPanel {
   @State private hoverLineSpacingPlus: boolean = false;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
+  @State private fontScaleBoostDraft: string = this.fontScaleBoost.toFixed(2);
+  @State private cjkVerticalOffsetDraft: string = this.cjkVerticalOffset.toFixed(1);
+  @State private characterSpacingDraft: string = this.characterSpacing.toFixed(1);
   // Mirrored terminal font used in the theme preview so @State reactivity is
   // explicit and not dependent on a class getter being observed by ArkUI.
   @State private previewFontFamily: string = 'monospace';
@@ -117,6 +130,12 @@ export struct SettingsPanel {
 
   private syncPreviewFont(): void {
     this.previewFontFamily = this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace';
+  }
+
+  private syncScaleParamsDraft(): void {
+    this.fontScaleBoostDraft = this.fontScaleBoost.toFixed(2);
+    this.cjkVerticalOffsetDraft = this.cjkVerticalOffset.toFixed(1);
+    this.characterSpacingDraft = this.characterSpacing.toFixed(1);
   }
 
   private syncFontSizeDraft(): void {
@@ -147,6 +166,7 @@ export struct SettingsPanel {
     this.syncPreviewFont();
     this.syncFontSizeDraft();
     this.syncLineSpacingDraft();
+    this.syncScaleParamsDraft();
     this.tab = this.initialTab;
     const all: string[] = this.controller.getThemeList();
     // Pin recommended themes (that actually exist) to the top, rest follow.
@@ -291,6 +311,48 @@ export struct SettingsPanel {
       }
     }
     return '系统默认';
+  }
+
+  @Builder
+  private fontPickerItem(family: string, label: string, isUI: boolean) {
+    Row() {
+      Row() {
+        const selected = isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family);
+        if (selected) {
+          Row()
+            .width(7).height(7).borderRadius(3.5).backgroundColor(Palette.accent)
+        }
+      }
+      .width(16).height(16).borderRadius(8)
+      .border({
+        width: (isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? 2 : 1,
+        color: (isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? Palette.accent : Palette.border
+      })
+      .justifyContent(FlexAlign.Center)
+
+      Text(label)
+        .fontSize(13)
+        .fontColor((isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? Palette.accent : Palette.text)
+        .fontFamily(family.length > 0 ? family : 'monospace')
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .height(36)
+    .padding({ left: 8, right: 8 })
+    .borderRadius(6)
+    .backgroundColor((isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? '#15FFFFFF' : Color.Transparent)
+    .focusable(false)
+    .onClick(() => {
+      if (isUI) {
+        this.uiFontFamily = family;
+        this.onUIFontFamilyChange(family);
+        this.uiFontDropdownOpen = false;
+      } else {
+        this.termFontFamily = family;
+        this.onTermFontFamilyChange(family);
+        this.termFontDropdownOpen = false;
+      }
+    })
   }
 
   @Builder
@@ -735,198 +797,272 @@ export struct SettingsPanel {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
 
-    // Font family section
-    Column({ space: 0 }) {
-      this.buildSectionHeader('字体')
-
-      // --- UI font selector (inlined for @State reactivity) ---
-      Column({ space: 0 }) {
-        Text('UI 字体')
+    // Font family section — two selectors side by side with overlay dropdown
+    Column({ space: 8 }) {
+      // Section header with conditional warning when Claude Sans is selected
+      Row({ space: 6 }) {
+        Text('字体'.toUpperCase())
           .fontSize(11)
-          .fontFamily(this.uiFontFamily)
           .fontColor(Palette.textDim)
-          .width('100%')
-          .margin({ bottom: 6 })
-
-        // Collapsed row — toggle open/close on click
-        Row() {
-          Text(this.fontLabel(this.uiFontFamily, UI_FONT_OPTIONS))
-            .fontSize(14)
-            .fontColor(Palette.text)
-            .fontFamily(this.uiFontFamily.length > 0 ? this.uiFontFamily : 'monospace')
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text('▼')
-            .fontSize(9)
-            .fontColor(Palette.textDim)
-            .rotate({ angle: this.uiFontDropdownOpen ? 180 : 0 })
-            .animation({ curve: curves.springMotion(0.6, 0.8) })
-        }
-        .width('100%')
-        .height(40)
-        .padding({ left: 14, right: 14 })
-        .justifyContent(FlexAlign.SpaceBetween)
-        .alignItems(VerticalAlign.Center)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: this.uiFontDropdownOpen ? Palette.accent : Palette.border })
-        .animation({ curve: curves.springMotion(0.6, 0.8) })
-        .margin({ bottom: this.uiFontDropdownOpen ? 6 : 0 })
-        .focusable(false)
-        .onClick(() => {
-          this.uiFontDropdownOpen = !this.uiFontDropdownOpen;
-          if (this.uiFontDropdownOpen) { this.termFontDropdownOpen = false; }
-        })
-
-        // Expanded options list: true clip-based wipe reveal. The Stack height
-        // animates while clipping its child, so options appear line-by-line.
-        Stack({ alignContent: Alignment.TopStart }) {
-          Column({ space: 2 }) {
-            ForEach(UI_FONT_OPTIONS, (opt: FontOption) => {
-              Row() {
-                // Radio dot
-                Row() {
-                  if (this.uiFontFamily === opt.family) {
-                    Row()
-                      .width(8).height(8).borderRadius(4).backgroundColor(Palette.accent)
-                  }
-                }
-                .width(18).height(18).borderRadius(9)
-                .border({
-                  width: this.uiFontFamily === opt.family ? 2 : 1,
-                  color: this.uiFontFamily === opt.family ? Palette.accent : Palette.border
-                })
-                .justifyContent(FlexAlign.Center)
-
-                // Font name preview — rendered in the actual font face
-                Text(opt.label)
-                  .fontSize(14)
-                  .fontColor(this.uiFontFamily === opt.family ? Palette.accent : Palette.text)
-                  .fontFamily(opt.family.length > 0 ? opt.family : 'monospace')
-                  .margin({ left: 10 })
-              }
-              .width('100%')
-              .height(40)
-              .padding({ left: 12, right: 12 })
-              .borderRadius(8)
-              .enabled(this.uiFontDropdownOpen)
-              .focusable(false)
-              .onClick(() => {
-                if (!this.uiFontDropdownOpen) {
-                  return;
-                }
-                this.uiFontFamily = opt.family;
-                this.onUIFontFamilyChange(opt.family);
-              })
-            })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding({ top: 6, left: 4, right: 4, bottom: 2 })
-        }
-        .width('100%')
-        .height(this.uiFontDropdownOpen ? this.UI_DROPDOWN_HEIGHT : 0)
-        .clip(true)
-        .animation({ curve: this.dropdownRevealCurve, duration: 220 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-      .margin({ bottom: 12 })
-      .onClick(() => {})
-
-      // --- Terminal font selector (inlined for @State reactivity) ---
-      Column({ space: 0 }) {
-        Text('终端字体')
-          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.textDim)
-          .width('100%')
-          .margin({ bottom: 6 })
 
-        Row() {
-          Text(this.fontLabel(this.termFontFamily, TERM_FONT_OPTIONS))
-            .fontSize(14)
-            .fontColor(Palette.text)
-            .fontFamily(this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace')
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text('▼')
-            .fontSize(9)
-            .fontColor(Palette.textDim)
-            .rotate({ angle: this.termFontDropdownOpen ? 180 : 0 })
-            .animation({ curve: curves.springMotion(0.6, 0.8) })
-        }
-        .width('100%')
-        .height(40)
-        .padding({ left: 14, right: 14 })
-        .justifyContent(FlexAlign.SpaceBetween)
-        .alignItems(VerticalAlign.Center)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: this.termFontDropdownOpen ? Palette.accent : Palette.border })
-        .animation({ curve: curves.springMotion(0.6, 0.8) })
-        .margin({ bottom: this.termFontDropdownOpen ? 6 : 0 })
-        .focusable(false)
-        .onClick(() => {
-          this.termFontDropdownOpen = !this.termFontDropdownOpen;
-          if (this.termFontDropdownOpen) { this.uiFontDropdownOpen = false; }
-        })
-
-        Stack({ alignContent: Alignment.TopStart }) {
-          Column({ space: 2 }) {
-            ForEach(TERM_FONT_OPTIONS, (opt: FontOption) => {
-              Row() {
-                Row() {
-                  if (this.termFontFamily === opt.family) {
-                    Row()
-                      .width(8).height(8).borderRadius(4).backgroundColor(Palette.accent)
-                  }
-                }
-                .width(18).height(18).borderRadius(9)
-                .border({
-                  width: this.termFontFamily === opt.family ? 2 : 1,
-                  color: this.termFontFamily === opt.family ? Palette.accent : Palette.border
-                })
-                .justifyContent(FlexAlign.Center)
-
-                Text(opt.label)
-                  .fontSize(14)
-                  .fontColor(this.termFontFamily === opt.family ? Palette.accent : Palette.text)
-                  .fontFamily(opt.family.length > 0 ? opt.family : 'monospace')
-                  .margin({ left: 10 })
-              }
-              .width('100%')
-              .height(40)
-              .padding({ left: 12, right: 12 })
-              .borderRadius(8)
-              .enabled(this.termFontDropdownOpen)
-              .focusable(false)
-              .onClick(() => {
-                if (!this.termFontDropdownOpen) {
-                  return;
-                }
-                this.termFontFamily = opt.family;
-                this.onTermFontFamilyChange(opt.family);
-              })
-            })
+        if (isScaledFont(this.termFontFamily)) {
+          Row({ space: 3 }) {
+            Text('⚠')
+              .fontSize(10)
+              .fontColor('#E8B44F')
+            Text('比例字体渲染可能偏位')
+              .fontSize(10)
+              .fontColor('#E8B44F')
           }
-          .alignItems(HorizontalAlign.Start)
+          .padding({ left: 6, right: 8, top: 2, bottom: 2 })
+          .backgroundColor('#1FE8B44F')
+          .borderRadius(4)
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // Two selectors side by side
+      Row({ space: 10 }) {
+        // --- UI font selector ---
+        Column({ space: 0 }) {
+          Text('UI 字体')
+            .fontSize(11)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(Palette.textDim)
+            .width('100%')
+            .margin({ bottom: 4 })
+
+          Stack({ alignContent: Alignment.TopStart }) {
+            Row() {
+              Text(this.fontLabel(this.uiFontFamily, UI_FONT_OPTIONS))
+                .fontSize(12)
+                .fontColor(Palette.text)
+                .fontFamily(this.uiFontFamily.length > 0 ? this.uiFontFamily : 'monospace')
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+              Text('▼')
+                .fontSize(8)
+                .fontColor(Palette.textDim)
+                .rotate({ angle: this.uiFontDropdownOpen ? 180 : 0 })
+                .animation({ curve: curves.springMotion(0.6, 0.8) })
+            }
+            .width('100%')
+            .height(36)
+            .padding({ left: 10, right: 10 })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .backgroundColor(Palette.surface)
+            .borderRadius(8)
+            .border({ width: 1, color: this.uiFontDropdownOpen ? Palette.accent : Palette.border })
+            .focusable(false)
+            .onClick(() => {
+              this.uiFontDropdownOpen = !this.uiFontDropdownOpen;
+              if (this.uiFontDropdownOpen) { this.termFontDropdownOpen = false; }
+            })
+
+            // Expanded options overlay
+            if (this.uiFontDropdownOpen) {
+              Column({ space: 2 }) {
+                ForEach(UI_FONT_OPTIONS, (opt: FontOption) => {
+                  this.fontPickerItem(opt.family, opt.label, true)
+                })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+              .padding({ top: 4, left: 4, right: 4, bottom: 4 })
+              .backgroundColor(Palette.surface)
+              .borderRadius(8)
+              .border({ width: 1, color: Palette.accent })
+              .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
+              .offset({ y: 40 })
+            }
+          }
           .width('100%')
-          .padding({ top: 6, left: 4, right: 4, bottom: 2 })
+          .clip(false)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        // --- Terminal font selector ---
+        Column({ space: 0 }) {
+          Text('终端字体')
+            .fontSize(11)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(Palette.textDim)
+            .width('100%')
+            .margin({ bottom: 4 })
+
+          Stack({ alignContent: Alignment.TopStart }) {
+            Row() {
+              Text(this.fontLabel(this.termFontFamily, TERM_FONT_OPTIONS))
+                .fontSize(12)
+                .fontColor(Palette.text)
+                .fontFamily(this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace')
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+              Text('▼')
+                .fontSize(8)
+                .fontColor(Palette.textDim)
+                .rotate({ angle: this.termFontDropdownOpen ? 180 : 0 })
+                .animation({ curve: curves.springMotion(0.6, 0.8) })
+            }
+            .width('100%')
+            .height(36)
+            .padding({ left: 10, right: 10 })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .backgroundColor(Palette.surface)
+            .borderRadius(8)
+            .border({ width: 1, color: this.termFontDropdownOpen ? Palette.accent : Palette.border })
+            .focusable(false)
+            .onClick(() => {
+              this.termFontDropdownOpen = !this.termFontDropdownOpen;
+              if (this.termFontDropdownOpen) { this.uiFontDropdownOpen = false; }
+            })
+
+            if (this.termFontDropdownOpen) {
+              Column({ space: 2 }) {
+                ForEach(TERM_FONT_OPTIONS, (opt: FontOption) => {
+                  this.fontPickerItem(opt.family, opt.label, false)
+                })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+              .padding({ top: 4, left: 4, right: 4, bottom: 4 })
+              .backgroundColor(Palette.surface)
+              .borderRadius(8)
+              .border({ width: 1, color: Palette.accent })
+              .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
+              .offset({ y: 40 })
+            }
+          }
+          .width('100%')
+          .clip(false)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      // Scale-font parameters panel (only when Claude Sans is selected)
+      if (isScaledFont(this.termFontFamily)) {
+        Column({ space: 10 }) {
+          Text('缩放参数')
+            .fontSize(11)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(Palette.textDim)
+            .width('100%')
+
+          // Font scale boost
+          Row({ space: 8 }) {
+            Text('缩放比例')
+              .fontSize(12)
+              .fontColor(Palette.text)
+              .width(68)
+            Slider({
+              value: this.fontScaleBoost,
+              min: MIN_FONT_SCALE_BOOST,
+              max: MAX_FONT_SCALE_BOOST,
+              step: FONT_SCALE_BOOST_STEP,
+              style: SliderStyle.OutSet
+            })
+              .layoutWeight(1)
+              .selectedColor(Palette.accent)
+              .trackColor(Palette.border)
+              .focusable(false)
+              .onChange((value: number, mode: SliderChangeMode) => {
+                this.fontScaleBoost = Math.round(value * 100) / 100;
+                this.fontScaleBoostDraft = this.fontScaleBoost.toFixed(2);
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.onFontScaleBoostChange(this.fontScaleBoost);
+                }
+              })
+            Text(this.fontScaleBoostDraft)
+              .fontSize(12)
+              .fontColor(Palette.accent)
+              .width(36)
+              .textAlign(TextAlign.End)
+          }
+          .width('100%')
+
+          // CJK vertical offset
+          Row({ space: 8 }) {
+            Text('CJK 上移')
+              .fontSize(12)
+              .fontColor(Palette.text)
+              .width(68)
+            Slider({
+              value: this.cjkVerticalOffset,
+              min: MIN_CJK_VERTICAL_OFFSET,
+              max: MAX_CJK_VERTICAL_OFFSET,
+              step: CJK_VERTICAL_OFFSET_STEP,
+              style: SliderStyle.OutSet
+            })
+              .layoutWeight(1)
+              .selectedColor(Palette.accent)
+              .trackColor(Palette.border)
+              .focusable(false)
+              .onChange((value: number, mode: SliderChangeMode) => {
+                this.cjkVerticalOffset = Math.round(value * 10) / 10;
+                this.cjkVerticalOffsetDraft = this.cjkVerticalOffset.toFixed(1);
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.onCjkVerticalOffsetChange(this.cjkVerticalOffset);
+                }
+              })
+            Text(this.cjkVerticalOffsetDraft + ' dp')
+              .fontSize(12)
+              .fontColor(Palette.accent)
+              .width(52)
+              .textAlign(TextAlign.End)
+          }
+          .width('100%')
+
+          // Character spacing
+          Row({ space: 8 }) {
+            Text('字间距')
+              .fontSize(12)
+              .fontColor(Palette.text)
+              .width(68)
+            Slider({
+              value: this.characterSpacing,
+              min: MIN_CHARACTER_SPACING,
+              max: MAX_CHARACTER_SPACING,
+              step: CHARACTER_SPACING_STEP,
+              style: SliderStyle.OutSet
+            })
+              .layoutWeight(1)
+              .selectedColor(Palette.accent)
+              .trackColor(Palette.border)
+              .focusable(false)
+              .onChange((value: number, mode: SliderChangeMode) => {
+                this.characterSpacing = Math.round(value * 10) / 10;
+                this.characterSpacingDraft = this.characterSpacing.toFixed(1);
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.onCharacterSpacingChange(this.characterSpacing);
+                }
+              })
+            Text(this.characterSpacingDraft + ' dp')
+              .fontSize(12)
+              .fontColor(Palette.accent)
+              .width(52)
+              .textAlign(TextAlign.End)
+          }
+          .width('100%')
         }
         .width('100%')
-        .height(this.termFontDropdownOpen ? this.TERM_DROPDOWN_HEIGHT : 0)
-        .clip(true)
-        .animation({ curve: this.dropdownRevealCurve, duration: 220 })
+        .padding(12)
+        .backgroundColor('#080F18')
+        .borderRadius(10)
+        .border({ width: 1, color: Palette.border })
+        .onClick(() => {})  // prevent closing dropdown when clicking this panel
       }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-      .margin({ bottom: 12 })
-      .onClick(() => {})
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')

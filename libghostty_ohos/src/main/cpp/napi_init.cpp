@@ -1633,7 +1633,8 @@ public:
     }
 
     void SetConfig(int fontSize, float lineSpacing, int scrollbackLines, uint32_t bgColor, uint32_t fgColor,
-                   int cursorStyle, bool cursorBlink, const std::string& fontFamily) {
+                   int cursorStyle, bool cursorBlink, const std::string& fontFamily,
+                   float fontScaleBoost, float cjkVerticalOffset, float characterSpacing) {
         m_fontSize = static_cast<float>(fontSize);
         m_fontFamily = fontFamily;  // may be empty → renderer falls back to default
 
@@ -1641,6 +1642,9 @@ public:
             m_renderer->setFontSize(m_fontSize);
             m_renderer->setLineSpacing(lineSpacing);
             m_renderer->setFontFamily(m_fontFamily);
+            m_renderer->setFontScaleBoost(fontScaleBoost);
+            m_renderer->setCjkVerticalOffset(cjkVerticalOffset);
+            m_renderer->setCharacterSpacing(characterSpacing);
             m_renderer->setColors(bgColor, fgColor);
             m_renderer->setCursorStyle(cursorStyle, cursorBlink);
         }
@@ -3397,7 +3401,20 @@ static napi_value SetConfig(napi_env env, napi_callback_info info) {
             napi_get_value_string_utf8(env, fontFamilyVal, &fontFamily[0], familyLen + 1, &familyLen);
         }
     }
-    host->SetConfig(fontSize, static_cast<float>(lineSpacing), scrollbackLines, bgColor, fgColor, cursorStyle, cursorBlink, fontFamily);
+
+    double fontScaleBoost = 1.20;
+    double cjkVerticalOffset = -2.0;
+    double characterSpacing = 1.5;
+    napi_value fontScaleBoostVal, cjkVerticalOffsetVal, characterSpacingVal;
+    napi_get_named_property(env, args[0], "fontScaleBoost", &fontScaleBoostVal);
+    napi_get_named_property(env, args[0], "cjkVerticalOffset", &cjkVerticalOffsetVal);
+    napi_get_named_property(env, args[0], "characterSpacing", &characterSpacingVal);
+    napi_get_value_double(env, fontScaleBoostVal, &fontScaleBoost);
+    napi_get_value_double(env, cjkVerticalOffsetVal, &cjkVerticalOffset);
+    napi_get_value_double(env, characterSpacingVal, &characterSpacing);
+
+    host->SetConfig(fontSize, static_cast<float>(lineSpacing), scrollbackLines, bgColor, fgColor, cursorStyle, cursorBlink, fontFamily,
+                    static_cast<float>(fontScaleBoost), static_cast<float>(cjkVerticalOffset), static_cast<float>(characterSpacing));
     return nullptr;
 }
 

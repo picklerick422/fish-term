@@ -34,6 +34,9 @@ export interface TerminalConfig {
   fgColor: number;
   cursorStyle: number;
   cursorBlink: boolean;
+  fontScaleBoost: number;
+  cjkVerticalOffset: number;
+  characterSpacing: number;
 }
 
 export interface TerminalConfigPatch {
@@ -45,6 +48,9 @@ export interface TerminalConfigPatch {
   fgColor?: number;
   cursorStyle?: number;
   cursorBlink?: boolean;
+  fontScaleBoost?: number;
+  cjkVerticalOffset?: number;
+  characterSpacing?: number;
 }
 
 export const DEFAULT_THEME_NAME: string = 'Aizen_Dark';
@@ -57,7 +63,10 @@ export const DEFAULT_TERMINAL_CONFIG: TerminalConfig = {
   bgColor: 0xFF1A1A1A,
   fgColor: 0xFFD0D6F0,
   cursorStyle: 0,
-  cursorBlink: true
+  cursorBlink: true,
+  fontScaleBoost: 1.20,
+  cjkVerticalOffset: -2.0,
+  characterSpacing: 1.5
 };
 
 export function cloneTerminalConfig(config: TerminalConfig): TerminalConfig {
@@ -69,6 +78,9 @@ export function cloneTerminalConfig(config: TerminalConfig): TerminalConfig {
     bgColor: config.bgColor,
     fgColor: config.fgColor,
     cursorStyle: config.cursorStyle,
-    cursorBlink: config.cursorBlink
+    cursorBlink: config.cursorBlink,
+    fontScaleBoost: config.fontScaleBoost,
+    cjkVerticalOffset: config.cjkVerticalOffset,
+    characterSpacing: config.characterSpacing
   };
 }

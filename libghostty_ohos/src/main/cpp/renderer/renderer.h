@@ -81,6 +81,22 @@ public:
         m_cursorBlink = blink;
     }
 
+    void setFontScaleBoost(float boost) {
+        m_fontScaleBoost = boost > 0.0f ? boost : 1.20f;
+        clearGlyphCache();
+        updateCellDimensions();
+    }
+
+    void setCjkVerticalOffset(float offset) {
+        m_cjkVerticalOffset = offset;
+    }
+
+    void setCharacterSpacing(float spacing) {
+        m_characterSpacing = spacing >= 0.0f ? spacing : 1.5f;
+        clearGlyphCache();
+        updateCellDimensions();
+    }
+
     bool cursorBlinkEnabled() const { return m_cursorBlink; }
 
     bool shouldRenderCursor(bool cursorVisible) const {
@@ -117,6 +133,9 @@ protected:
     int m_cursorStyle = 0;
     bool m_cursorBlink = true;
     std::string m_primaryFontFamily = "Noto Sans Mono";
+    float m_fontScaleBoost = 1.20f;
+    float m_cjkVerticalOffset = -2.0f;
+    float m_characterSpacing = 1.5f;
     float m_lastCursorLeft = 0.0f;
     float m_lastCursorTop = 0.0f;
     float m_lastCursorWidth = 0.0f;

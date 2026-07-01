@@ -74,3 +74,50 @@ export const TERM_FONT_OPTIONS: FontOption[] = [
   { family: 'Source Code Pro', label: 'Source Code Pro', category: 'terminal' },
   { family: 'Claude Sans', label: 'Claude Sans (比例字体)', category: 'terminal' },
 ];
+
+// Scale-font tuning parameters, only applicable when the terminal font is Claude Sans.
+export const DEFAULT_FONT_SCALE_BOOST: number = 1.20;
+export const MIN_FONT_SCALE_BOOST: number = 1.00;
+export const MAX_FONT_SCALE_BOOST: number = 2.00;
+export const FONT_SCALE_BOOST_STEP: number = 0.05;
+
+export const DEFAULT_CJK_VERTICAL_OFFSET: number = -2.0;
+export const MIN_CJK_VERTICAL_OFFSET: number = -10.0;
+export const MAX_CJK_VERTICAL_OFFSET: number = 10.0;
+export const CJK_VERTICAL_OFFSET_STEP: number = 0.5;
+
+export const DEFAULT_CHARACTER_SPACING: number = 1.5;
+export const MIN_CHARACTER_SPACING: number = 0.0;
+export const MAX_CHARACTER_SPACING: number = 5.0;
+export const CHARACTER_SPACING_STEP: number = 0.5;
+
+export function isScaledFont(family: string): boolean {
+  return family === 'Claude Sans';
+}
+
+export function clampFontScaleBoost(n: number): number {
+  if (!Number.isFinite(n)) {
+    return DEFAULT_FONT_SCALE_BOOST;
+  }
+  const steps = Math.round(n / FONT_SCALE_BOOST_STEP);
+  const r = steps * FONT_SCALE_BOOST_STEP;
+  return Math.max(MIN_FONT_SCALE_BOOST, Math.min(MAX_FONT_SCALE_BOOST, parseFloat(r.toFixed(2))));
+}
+
+export function clampCjkVerticalOffset(n: number): number {
+  if (!Number.isFinite(n)) {
+    return DEFAULT_CJK_VERTICAL_OFFSET;
+  }
+  const steps = Math.round(n / CJK_VERTICAL_OFFSET_STEP);
+  const r = steps * CJK_VERTICAL_OFFSET_STEP;
+  return Math.max(MIN_CJK_VERTICAL_OFFSET, Math.min(MAX_CJK_VERTICAL_OFFSET, parseFloat(r.toFixed(1))));
+}
+
+export function clampCharacterSpacing(n: number): number {
+  if (!Number.isFinite(n)) {
+    return DEFAULT_CHARACTER_SPACING;
+  }
+  const steps = Math.round(n / CHARACTER_SPACING_STEP);
+  const r = steps * CHARACTER_SPACING_STEP;
+  return Math.max(MIN_CHARACTER_SPACING, Math.min(MAX_CHARACTER_SPACING, parseFloat(r.toFixed(1))));
+}

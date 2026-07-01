@@ -24,6 +24,9 @@ const KEY_SCROLLBACK: string = 'scrollback_lines';
 const KEY_ONBOARDED: string = 'onboarded';
 const KEY_FONT_FAMILY_UI: string = 'font_family_ui';
 const KEY_FONT_FAMILY_TERM: string = 'font_family_term';
+const KEY_FONT_SCALE_BOOST: string = 'font_scale_boost';
+const KEY_CJK_VERTICAL_OFFSET: string = 'cjk_vertical_offset';
+const KEY_CHARACTER_SPACING: string = 'character_spacing';
 const TOKEN_ALIAS: string = 'fish_agent_token';
 const ASSET_NOT_FOUND: number = 24000002;
 
@@ -249,6 +252,72 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-term save fontFamily failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadFontScaleBoost(fallback: number): Promise<number> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_FONT_SCALE_BOOST, fallback) as number;
+    } catch (e) {
+      console.error('fish-term load fontScaleBoost failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveFontScaleBoost(value: number): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_FONT_SCALE_BOOST, value);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save fontScaleBoost failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadCjkVerticalOffset(fallback: number): Promise<number> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_CJK_VERTICAL_OFFSET, fallback) as number;
+    } catch (e) {
+      console.error('fish-term load cjkVerticalOffset failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveCjkVerticalOffset(value: number): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_CJK_VERTICAL_OFFSET, value);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save cjkVerticalOffset failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadCharacterSpacing(fallback: number): Promise<number> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_CHARACTER_SPACING, fallback) as number;
+    } catch (e) {
+      console.error('fish-term load characterSpacing failed: ' + JSON.stringify(e));
+      return fallback;
+    }
+  }
+
+  async saveCharacterSpacing(value: number): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_CHARACTER_SPACING, value);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save characterSpacing failed: ' + JSON.stringify(e));
     }
   }
 
