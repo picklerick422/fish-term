@@ -313,26 +313,29 @@ export struct SettingsPanel {
     return '系统默认';
   }
 
+  private isFontSelected(family: string, isUI: boolean): boolean {
+    return isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family);
+  }
+
   @Builder
   private fontPickerItem(family: string, label: string, isUI: boolean) {
     Row() {
       Row() {
-        const selected = isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family);
-        if (selected) {
+        if (this.isFontSelected(family, isUI)) {
           Row()
             .width(7).height(7).borderRadius(3.5).backgroundColor(Palette.accent)
         }
       }
       .width(16).height(16).borderRadius(8)
       .border({
-        width: (isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? 2 : 1,
-        color: (isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? Palette.accent : Palette.border
+        width: this.isFontSelected(family, isUI) ? 2 : 1,
+        color: this.isFontSelected(family, isUI) ? Palette.accent : Palette.border
       })
       .justifyContent(FlexAlign.Center)
 
       Text(label)
         .fontSize(13)
-        .fontColor((isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? Palette.accent : Palette.text)
+        .fontColor(this.isFontSelected(family, isUI) ? Palette.accent : Palette.text)
         .fontFamily(family.length > 0 ? family : 'monospace')
         .margin({ left: 8 })
     }
@@ -340,7 +343,7 @@ export struct SettingsPanel {
     .height(36)
     .padding({ left: 8, right: 8 })
     .borderRadius(6)
-    .backgroundColor((isUI ? (this.uiFontFamily === family) : (this.termFontFamily === family)) ? '#15FFFFFF' : Color.Transparent)
+    .backgroundColor(this.isFontSelected(family, isUI) ? '#15FFFFFF' : Color.Transparent)
     .focusable(false)
     .onClick(() => {
       if (isUI) {
