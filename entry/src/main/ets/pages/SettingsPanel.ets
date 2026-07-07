@@ -559,26 +559,6 @@ export struct SettingsPanel {
       .alignItems(HorizontalAlign.Start)
       .width('100%')
 
-      // 启动时崩溃提醒开关
-      Row({ space: 12 }) {
-        Text('启动时显示崩溃提醒')
-          .fontSize(14)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-          .layoutWeight(1)
-        Toggle({ type: ToggleType.Switch, isOn: this.showCrashOnStartup })
-          .selectedColor(Palette.accent)
-          .onChange((on: boolean) => {
-            this.showCrashOnStartup = on;
-            if (this.store) {
-              this.store.saveShowCrashOnStartup(on);
-            }
-          })
-      }
-      .width('100%')
-      .padding({ left: 14, right: 14 })
-      .margin({ top: 12 })
-
       Row() {
         Text('查看新手引导')
           .fontSize(14)
@@ -1413,6 +1393,32 @@ export struct SettingsPanel {
                   scrollbackLines: Math.round(value)
                 });
               }
+            }
+          })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(Palette.surface)
+      .borderRadius(10)
+      .border({ width: 1, color: Palette.border })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+
+    // 启动时崩溃提醒开关 — 与滚动缓冲卡片风格一致
+    Column({ space: 0 }) {
+      this.buildSectionHeader('崩溃提醒')
+      Row({ space: 12 }) {
+        Text('启动时显示崩溃提醒')
+          .fontSize(14)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.showCrashOnStartup })
+          .selectedColor(Palette.accent)
+          .onChange((on: boolean) => {
+            this.showCrashOnStartup = on;
+            if (this.store) {
+              this.store.saveShowCrashOnStartup(on);
             }
           })
       }
