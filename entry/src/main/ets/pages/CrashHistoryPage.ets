@@ -68,8 +68,8 @@ export struct CrashHistoryPage {
   store: CrashStore | null = null;
 
   @State private selectedEntry: CrashLogEntry | null = null;
-  @State private copyContentLabel: string = '📋 复制日志内容';
-  @State private copyPathLabel: string = '📁 复制文件路径';
+  @State private copyContentLabel: string = '复制日志内容';
+  @State private copyPathLabel: string = '复制文件路径';
   @State private isStackExpanded: boolean = false;
   @State private isSysLogExpanded: boolean = false;
   private tabsController: TabsController = new TabsController();
@@ -142,8 +142,9 @@ export struct CrashHistoryPage {
 
       if (this.entries.length === 0) {
         Column({ space: 12 }) {
-          Text('🎉')
+          Text('·')
             .fontSize(40)
+            .fontColor(Palette.textDim)
           Text('暂无崩溃记录')
             .fontSize(14)
             .fontColor(Palette.textDim)
@@ -528,8 +529,8 @@ export struct CrashHistoryPage {
     lines.push('应用: ' + e.deviceInfo.appVersion);
     const text = lines.join('\n');
     this.copyToClipboard(text);
-    this.copyContentLabel = '✓ 已复制';
-    setTimeout(() => { this.copyContentLabel = '📋 复制日志内容'; }, 2000);
+    this.copyContentLabel = '已复制';
+    setTimeout(() => { this.copyContentLabel = '复制日志内容'; }, 2000);
   }
 
   private copyDetailPath(): void {
@@ -538,8 +539,8 @@ export struct CrashHistoryPage {
     }
     const path = '(应用沙箱)/crash_logs/' + this.selectedEntry.logFileName;
     this.copyToClipboard(path);
-    this.copyPathLabel = '✓ 已复制';
-    setTimeout(() => { this.copyPathLabel = '📁 复制文件路径'; }, 2000);
+    this.copyPathLabel = '已复制';
+    setTimeout(() => { this.copyPathLabel = '复制文件路径'; }, 2000);
   }
 
   private copyToClipboard(text: string): void {

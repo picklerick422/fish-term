@@ -175,11 +175,17 @@ struct Index {
       // taps the page. Re-focus it explicitly.
       this.focusActiveTerminal();
     });
-    // 检查是否有待展示的崩溃日志
-    const pendingCrash = CrashHandler.consumePendingEntry();
-    if (pendingCrash) {
-      this.crashEntry = pendingCrash;
-      this.showCrashLog = true;
+    // 检查是否有待展示的崩溃日志（仅在用户未关闭崩溃提醒时显示）
+    if (this.store) {
+      this.store.loadShowCrashOnStartup().then((show: boolean) => {
+        if (show) {
+          const pendingCrash = CrashHandler.consumePendingEntry();
+          if (pendingCrash) {
+            this.crashEntry = pendingCrash;
+            this.showCrashLog = true;
+          }
+        }
+      });
     }
   }
 
@@ -1629,6 +1635,11 @@ struct Index {
         if (this.context) {
           const store = new CrashStore(this.context);
           store.markViewed(id);
+        }
+      },
+      onDontShowAgain: () => {
+        if (this.store) {
+          this.store.saveShowCrashOnStartup(false);
         }
       }
     })

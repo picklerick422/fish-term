@@ -27,6 +27,7 @@ const KEY_FONT_FAMILY_TERM: string = 'font_family_term';
 const KEY_FONT_SCALE_BOOST: string = 'font_scale_boost';
 const KEY_CJK_VERTICAL_OFFSET: string = 'cjk_vertical_offset';
 const KEY_CHARACTER_SPACING: string = 'character_spacing';
+const KEY_SHOW_CRASH_ON_STARTUP: string = 'show_crash_on_startup';
 const TOKEN_ALIAS: string = 'fish_agent_token';
 const ASSET_NOT_FOUND: number = 24000002;
 
@@ -318,6 +319,28 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-term save characterSpacing failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadShowCrashOnStartup(): Promise<boolean> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_SHOW_CRASH_ON_STARTUP, true) as boolean;
+    } catch (e) {
+      console.error('fish-term load showCrashOnStartup failed: ' + JSON.stringify(e));
+      return true;
+    }
+  }
+
+  async saveShowCrashOnStartup(show: boolean): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_SHOW_CRASH_ON_STARTUP, show);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save showCrashOnStartup failed: ' + JSON.stringify(e));
     }
   }
 

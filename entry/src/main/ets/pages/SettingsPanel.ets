@@ -113,6 +113,8 @@ export struct SettingsPanel {
   @State private hoverLineSpacingPlus: boolean = false;
   @State private hoverReplayGuide: boolean = false;
   @State private hoverCrashHistory: boolean = false;
+  @State private hoverShowCrashOnStartup: boolean = false;
+  @State private showCrashOnStartup: boolean = true;
   @State private hoverCursorIdx: number = -1;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
@@ -201,6 +203,10 @@ export struct SettingsPanel {
     }
     this.themeList = ordered;
     this.filteredThemes = ordered;
+    // 加载崩溃提醒偏好
+    if (this.store) {
+      this.store.loadShowCrashOnStartup().then((v: boolean) => { this.showCrashOnStartup = v; });
+    }
   }
 
   // Memoized accurate preview colors pulled from the native theme parser.
@@ -552,6 +558,26 @@ export struct SettingsPanel {
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
+
+      // 启动时崩溃提醒开关
+      Row({ space: 12 }) {
+        Text('启动时显示崩溃提醒')
+          .fontSize(14)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.showCrashOnStartup })
+          .selectedColor(Palette.accent)
+          .onChange((on: boolean) => {
+            this.showCrashOnStartup = on;
+            if (this.store) {
+              this.store.saveShowCrashOnStartup(on);
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14 })
+      .margin({ top: 12 })
 
       Row() {
         Text('查看新手引导')

@@ -1,4 +1,4 @@
-// CrashLogPanel.ets — 崩溃详情弹窗
+// CrashLogPanel.ets — 崩溃详情弹窗（启动时显示上次崩溃）
 
 import { pasteboard } from '@kit.BasicServicesKit';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
@@ -47,11 +47,13 @@ export struct CrashLogPanel {
   };
   onClose: () => void = () => {};
   onViewed: (id: string) => void = (_id: string) => {};
+  onDontShowAgain: () => void = () => {};
 
-  @State private copyContentLabel: string = '📋 复制日志内容';
-  @State private copyPathLabel: string = '📁 复制文件路径';
+  @State private copyContentLabel: string = '复制日志内容';
+  @State private copyPathLabel: string = '复制文件路径';
   @State private isStackExpanded: boolean = false;
   @State private isSysLogExpanded: boolean = false;
+  @State private dontShowAgain: boolean = false;
 
   // Hover states
   @State private hoverExpandStack: boolean = false;
@@ -59,6 +61,7 @@ export struct CrashLogPanel {
   @State private hoverCopyContent: boolean = false;
   @State private hoverCopyPath: boolean = false;
   @State private hoverClose: boolean = false;
+  @State private hoverDontShow: boolean = false;
 
   aboutToAppear(): void {
     if (this.entry.viewed === false && this.entry.id.length > 0) {
@@ -67,15 +70,31 @@ export struct CrashLogPanel {
   }
 
   build() {
-    Column({ space: 16 }) {
-      // 标题
-      Text('⚠ 应用上次发生了崩溃')
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Palette.text)
+    Column() {
+      // 标题栏 — 崩溃类型色标 + 标题文字
+      Row({ space: 10 }) {
+        // 类型色标圆点
+        Circle({ width: 10, height: 10 })
+          .fill(typeColor(this.entry.crashType))
+        Column({ space: 2 }) {
+          Text('应用上次发生了崩溃')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Palette.text)
+          Text(typeLabel(this.entry.crashType) + ' · ' + formatTime(this.entry.timestamp))
+            .fontSize(12)
+            .fontColor(Palette.textDim)
+        }
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .padding({ top: 22, left: 24, right: 24, bottom: 8 })
+
+      // 分割线
+      Divider()
+        .color(Palette.border)
         .width('100%')
-        .textAlign(TextAlign.Start)
-        .padding({ top: 24, left: 24, right: 24 })
+        .margin({ left: 24, right: 24 })
 
       // 滚动内容区
       Scroll() {
@@ -97,6 +116,9 @@ export struct CrashLogPanel {
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
+
+      // 下次不再显示
+      this.buildDontShowToggle()
 
       this.buildBottomButtons()
     }
@@ -234,6 +256,27 @@ export struct CrashLogPanel {
     .alignItems(HorizontalAlign.Start)
   }
 
+  // === 下次不再显示 ===
+
+  @Builder
+  private buildDontShowToggle() {
+    Row({ space: 8 }) {
+      Text(this.dontShowAgain ? '◉' : '○')
+        .fontSize(16)
+        .fontColor(this.dontShowAgain ? Palette.accent : Palette.textDim)
+      Text('下次不再显示')
+        .fontSize(13)
+        .fontColor(this.hoverDontShow ? Palette.text : Palette.textDim)
+    }
+    .padding({ top: 4, bottom: 4, left: 6, right: 6 })
+    .borderRadius(4)
+    .backgroundColor(this.hoverDontShow ? '#1FFFFFFF' : Color.Transparent)
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .focusable(false)
+    .onHover((h: boolean) => { this.hoverDontShow = h; })
+    .onClick(() => { this.dontShowAgain = !this.dontShowAgain; })
+  }
+
   // === 底部按钮 ===
 
   @Builder
@@ -288,6 +331,9 @@ export struct CrashLogPanel {
         .animation({ duration: 120, curve: Curve.EaseOut })
         .onHover((h: boolean) => { this.hoverClose = h; })
         .onClick(() => {
+          if (this.dontShowAgain) {
+            this.onDontShowAgain();
+          }
           this.onViewed(this.entry.id);
           this.onClose();
         })
@@ -333,15 +379,15 @@ export struct CrashLogPanel {
   private doCopyContent(): void {
     const text = this.buildFullLogText();
     this.copyToClipboard(text);
-    this.copyContentLabel = '✓ 已复制';
-    setTimeout(() => { this.copyContentLabel = '📋 复制日志内容'; }, 2000);
+    this.copyContentLabel = '已复制';
+    setTimeout(() => { this.copyContentLabel = '复制日志内容'; }, 2000);
   }
 
   private doCopyPath(): void {
     const path = '(应用沙箱)/crash_logs/' + this.entry.logFileName;
     this.copyToClipboard(path);
-    this.copyPathLabel = '✓ 已复制';
-    setTimeout(() => { this.copyPathLabel = '📁 复制文件路径'; }, 2000);
+    this.copyPathLabel = '已复制';
+    setTimeout(() => { this.copyPathLabel = '复制文件路径'; }, 2000);
   }
 
   private copyToClipboard(text: string): void {
