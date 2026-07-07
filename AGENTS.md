@@ -1,108 +1,51 @@
 # AGENTS.md
 
-## Repo Summary
+## Project
 
-This repository contains **fish-term** — a HarmonyOS terminal app built on a reusable library:
+fish-term — HarmonyOS terminal app on Ghostty's VT library.
 
-- `libghostty_ohos/`: reusable HAR module published as `libghostty-ohos`
-- `entry/`: fish-term app that consumes the HAR and provides shell / PTY / WebSocket wiring
-- `tools/build-ghostty-vt-docker.sh`: rebuilds the bundled native `libghostty_vt.a` archive in Docker
+- `libghostty_ohos/` — Reusable HAR: terminal rendering, controller, native bindings, themes
+- `entry/` — App: shell/PTY/WebSocket transport, UI
 
-The library boundary matters:
+**Boundary**: Reusable logic → libghostty_ohos. App logic → entry.
 
-- `libghostty_ohos` owns terminal rendering, controller state, native bindings, themes, and bundled assets.
-- `entry` owns app UX and transport integration. Do not move app-specific session logic into the library unless the task explicitly requires expanding the public API.
+## Key Files
 
-## Key Source Layout
+### Library (`libghostty_ohos/src/main/`)
+- `ets/TerminalSurface.ets`, `TerminalController.ets` — ArkTS surface & state
+- `cpp/napi_init.cpp` — N-API bindings
+- `cpp/terminal/terminal.cpp` — Core terminal logic
+- `cpp/renderer/native_drawing_renderer.cpp` — Hardware renderer
+- `cpp/CMakeLists.txt` — Native build config
 
-### ArkTS surface and controller
+### App (`entry/src/main/`)
+- `ets/pages/Index.ets` — Main UI
+- `ets/transport/FishWebSocketDriver.ets` — WebSocket transport
+- `ets/session/TerminalSession.ets` — Session lifecycle
+- `cpp/pty/pty_handler.cpp` — PTY management
 
-- `libghostty_ohos/src/main/ets/TerminalSurface.ets`
-- `libghostty_ohos/src/main/ets/TerminalController.ets`
-- `libghostty_ohos/src/main/ets/TerminalTypes.ets`
+## Rules
 
-### Native terminal / renderer
+1. Preserve library/entry split
+2. Keep public API minimal; sync ArkTS ↔ C++ when changing exports
+3. Never hand-edit `prebuilt/*/libghostty_vt.a` — rebuild with script
+4. No per-frame/per-cell logs in render paths
+5. Keep changes scoped; renderer/state paths are perf-sensitive
 
-- `libghostty_ohos/src/main/cpp/napi_init.cpp`
-- `libghostty_ohos/src/main/cpp/terminal/terminal.cpp`
-- `libghostty_ohos/src/main/cpp/terminal/terminal_state.cpp`
-- `libghostty_ohos/src/main/cpp/renderer/native_drawing_renderer.cpp`
-- `libghostty_ohos/src/main/cpp/CMakeLists.txt`
-
-### App transport layer
-
-- `entry/src/main/ets/pages/Index.ets`
-- `entry/src/main/ets/transport/FishWebSocketDriver.ets`
-- `entry/src/main/ets/transport/FishUrl.ets`
-- `entry/src/main/ets/transport/TerminalDriver.ets`
-- `entry/src/main/ets/session/TerminalSession.ets`
-- `entry/src/main/ets/store/ConnectionStore.ets`
-- `entry/src/main/cpp/example_driver.cpp`
-- `entry/src/main/cpp/pty/pty_handler.cpp`
-- `entry/src/main/cpp/ssh/ssh_session.cpp`
-
-## Working Rules
-
-- Preserve the library/entry split. Put reusable terminal behavior in `libghostty_ohos`; keep app behavior in `entry`.
-- Prefer minimal public API changes. If you change exported behavior in `TerminalController`, `TerminalSurface`, or native N-API bindings, keep ArkTS and C++ in sync.
-- Treat `libghostty_ohos/prebuilt/arm64-v8a/libghostty_vt.a` as generated input. Rebuild it with the script; do not hand-edit prebuilt artifacts.
-- Do not add noisy per-frame or per-cell logs in rendering paths. Logging inside `beginFrame`, `endFrame`, paint loops, or input hot paths must be gated to real failures or explicit debug-only instrumentation.
-- Keep changes scoped. This repo is performance-sensitive in the renderer and state update paths.
-
-## Build And Validation
-
-Install dependencies:
+## Build
 
 ```sh
-ohpm install
+ohpm install                              # Dependencies
+./tools/build-ghostty-vt-docker.sh       # Rebuild native lib
+hvigor.js assembleApp -m project         # Full build (needs signing config)
 ```
 
-Rebuild the upstream terminal archive when native Ghostty integration changes:
+## Change Rules
 
-```sh
-./tools/build-ghostty-vt-docker.sh
-```
+- **ArkTS**: Verify lifecycle (attach/detach), input wiring, config propagation
+- **C++**: Match CMakeLists.txt, preserve OH_NativeWindow/N-API error handling
+- **App**: Keep minimal; don't leak app assumptions into HAR API
 
-Build the full project:
+## Docs
 
-```sh
-/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleApp -m project --no-daemon
-```
-
-Notes:
-
-- The checked-in root `build-profile.json5` does not include signing config for packaging the app.
-- HAR-only work may be partially validated by building the project graph, but full app packaging requires local signing config.
-
-## Change Guidance
-
-For ArkTS changes:
-
-- Verify controller/surface lifecycle behavior, especially attach/detach, input listener wiring, and config propagation.
-- Keep exported types and defaults coherent with the README and usage docs.
-
-For native C++ changes:
-
-- Verify `libghostty_ohos/src/main/cpp/CMakeLists.txt` still matches any new files or link requirements.
-- Preserve error handling around `OH_NativeWindow`, `OH_NativeBuffer`, and N-API resource ownership.
-- Prefer fixing behavior at the source instead of masking issues in the app.
-
-For app changes:
-
-- Keep the entry app minimal and representative of library usage.
-- Do not introduce app-only assumptions into the reusable HAR API unless required by the task.
-
-## Documentation Hygiene
-
-Update docs when behavior changes materially:
-
-- `README.md` for public API or setup changes
-- `docs/USAGE.md` for integration guidance
-- `BUILD.md` for toolchain or build workflow changes
-- `THIRD_PARTY_NOTICES.md` when third-party libraries, fonts, or bundled materials change
-
-## Useful Context
-
-- Root `build-profile.json5` defines the project modules: `libghostty_ohos` and `entry`.
-- `libghostty_ohos/build-profile.json5` points native builds at `src/main/cpp/CMakeLists.txt`.
-- The entry app is the fastest place to validate end-to-end behavior, but the library should remain independently reusable.
+Update on material changes: README.md (API), BUILD.md (toolchain), THIRD_PARTY_NOTICES.md (deps)

@@ -11,6 +11,10 @@ import {
   isScaledFont
 } from '../theme/FontScale';
 import { curves } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+import { CrashHistoryPage } from './CrashHistoryPage';
+import { CrashStore } from '../crash/CrashStore';
+import { CrashLogEntry } from '../crash/CrashTypes';
 
 interface CursorOpt {
   label: string;
@@ -93,8 +97,13 @@ export struct SettingsPanel {
   @State private filteredThemes: string[] = [];
   @State private hoverBack: boolean = false;
   @State private hoverTabIdx: number = -1;
+  @State private showCrashHistory: boolean = false;
+  @State private crashEntries: CrashLogEntry[] = [];
+  private crashStore: CrashStore | null = null;
   // Drives the native horizontal slide between sub-pages.
   private subTabs: TabsController = new TabsController();
+  // Drives the slide between settings and crash-history page.
+  private pageTabs: TabsController = new TabsController();
   @State private hoverTheme: string = '';
   @State private hoverFontMinus: boolean = false;
   @State private hoverFontPlus: boolean = false;
@@ -102,6 +111,9 @@ export struct SettingsPanel {
   @State private lineSpacingDraft: string = this.lineSpacing.toFixed(2);
   @State private hoverLineSpacingMinus: boolean = false;
   @State private hoverLineSpacingPlus: boolean = false;
+  @State private hoverReplayGuide: boolean = false;
+  @State private hoverCrashHistory: boolean = false;
+  @State private hoverCursorIdx: number = -1;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
   @State private fontScaleBoostDraft: string = this.fontScaleBoost.toFixed(2);
@@ -218,8 +230,12 @@ export struct SettingsPanel {
 
   build() {
     Column() {
-      // Header: ← + left-aligned title, with the connection status on the right.
-      Row() {
+      Tabs({ controller: this.pageTabs, index: this.showCrashHistory ? 1 : 0 }) {
+        TabContent() {
+          Column() {
+      if (!this.showCrashHistory) {
+        // Header: ← + left-aligned title, with the connection status on the right.
+        Row() {
         Row() {
           Text('←')
             .fontSize(18)
@@ -288,6 +304,26 @@ export struct SettingsPanel {
       .animationDuration(280)
       .layoutWeight(1)
       .onChange((i: number) => { this.tab = i; })
+      } // end if (!this.showCrashHistory)
+          }
+          .width('100%')
+          .height('100%')
+        }
+        TabContent() {
+          if (this.showCrashHistory) {
+            CrashHistoryPage({
+              entries: this.crashEntries,
+              onBack: () => { this.showCrashHistory = false; this.pageTabs.changeIndex(0); },
+              onDeleteAll: () => { this.crashEntries = []; },
+              store: this.crashStore!
+            })
+          }
+        }
+      }
+      .barHeight(0)
+      .scrollable(false)
+      .animationDuration(280)
+      .layoutWeight(1)
     }
     .width('100%')
     .height('100%')
@@ -521,18 +557,56 @@ export struct SettingsPanel {
         Text('查看新手引导')
           .fontSize(14)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.accent)
+          .fontColor(this.hoverReplayGuide ? '#5FE8D8' : Palette.accent)
           .textAlign(TextAlign.Center)
           .width('100%')
       }
       .width('100%')
       .height(44)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor(Palette.surface)
+      .backgroundColor(this.hoverReplayGuide ? '#1A1F2A' : Palette.surface)
       .borderRadius(10)
       .border({ width: 1, color: Palette.border })
+      .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
+      .onHover((h: boolean) => { this.hoverReplayGuide = h; })
       .onClick(() => { this.onReplayGuide(); })
+
+      // 崩溃历史入口
+      Row() {
+        Text('崩溃历史')
+          .fontSize(14)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.hoverCrashHistory ? '#5FE8D8' : Palette.accent)
+        Blank()
+        Text('›')
+          .fontSize(16)
+          .fontColor(Palette.textDim)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 14, right: 14 })
+      .justifyContent(FlexAlign.Start)
+      .backgroundColor(this.hoverCrashHistory ? '#1A1F2A' : Palette.surface)
+      .borderRadius(10)
+      .border({ width: 1, color: Palette.border })
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverCrashHistory = h; })
+      .onClick(() => {
+        // 加载崩溃列表
+        try {
+          const ctx = this.getUIContext().getHostContext();
+          if (ctx) {
+            this.crashStore = new CrashStore(ctx as common.UIAbilityContext);
+            this.crashEntries = this.crashStore.listEntries();
+            this.showCrashHistory = true;
+            this.pageTabs.changeIndex(1);
+          }
+        } catch (_e) {
+          // fail silently
+        }
+      })
 
       Text('© 2026 fish-term · 基于开源组件构建')
         .fontSize(11)
@@ -1203,14 +1277,18 @@ export struct SettingsPanel {
               .textAlign(TextAlign.Center)
               .fontColor(this.cursorStyle === opt.value ? Palette.base : Palette.text)
               .height(34)
-              .backgroundColor(this.cursorStyle === opt.value ? Palette.accent : Color.Transparent)
+              .backgroundColor(this.cursorStyle === opt.value ? Palette.accent
+                : (this.hoverCursorIdx === opt.value ? '#1FFFFFFF' : Color.Transparent))
               .borderRadius(8)
               .border({
                 width: 1,
-                color: this.cursorStyle === opt.value ? Palette.accent : Palette.border
+                color: this.cursorStyle === opt.value ? Palette.accent
+                  : (this.hoverCursorIdx === opt.value ? Palette.textDim : Palette.border)
               })
               .margin({ right: 4 })
+              .animation({ duration: 120, curve: Curve.EaseOut })
               .focusable(false)
+              .onHover((h: boolean) => { this.hoverCursorIdx = h ? opt.value : -1; })
               .onClick(() => {
                 this.cursorStyle = opt.value;
                 this.onCursorStyleChange(opt.value);

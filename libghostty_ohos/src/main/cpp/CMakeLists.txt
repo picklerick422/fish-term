@@ -23,6 +23,7 @@ find_library(native-vsync-lib native_vsync)
 # Source files
 set(SOURCES
     napi_init.cpp
+    crash_handler.cpp
     terminal/terminal.cpp
     terminal/terminal_state.cpp
     terminal/theme.cpp

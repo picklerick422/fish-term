@@ -1,0 +1,51 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  
+  "watcher": {
+    "ignore": [
+      "build/**",
+      ".cxx/**",
+      ".hvigor/**",
+      ".bitfun/**",
+      "prebuilt/**",
+      "node_modules/**",
+      "oh_modules/**",
+      "*.a",
+      "*.so",
+      "*.o",
+      "*.otf",
+      "*.ttf",
+      "*.hnp",
+      "*.hap",
+      "*.har",
+      "docs/superpowers/**",
+      "docs/images/**"
+    ]
+  },
+  
+  "instructions": [
+    "AGENTS.md",
+    "README.md"
+  ],
+  
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 5000
+  },
+  
+  "tools": {
+    "read": true,
+    "write": true,
+    "edit": true,
+    "bash": true,
+    "grep": true,
+    "glob": true,
+    "task": true,
+    "webfetch": true,
+    "websearch": true,
+    "todowrite": true,
+    "question": true,
+    "skill": true
+  }
+}

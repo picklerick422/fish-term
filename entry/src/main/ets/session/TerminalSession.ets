@@ -54,8 +54,13 @@ export class TerminalSession {
     this.driver.onOutput((data: string): void => {
       if (!this.stopped) {
         const title = extractOscTitle(data);
-        if (title !== null && this.titleCb) {
-          this.titleCb(title);
+        if (title !== null) {
+          console.info(`[TerminalSession] OSC title detected: "${title}"`);
+          if (this.titleCb) {
+            this.titleCb(title);
+          } else {
+            console.warn('[TerminalSession] titleCb is null, callback not registered');
+          }
         }
         this.controller.feed(data);
       }

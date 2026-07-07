@@ -3445,7 +3445,10 @@ static napi_value FocusTerminal(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+extern "C" void InstallNativeCrashHandler();
+
 static napi_value Init(napi_env env, napi_value exports) {
+    InstallNativeCrashHandler();
     napi_value exportInstance = nullptr;
     OH_NativeXComponent* nativeXComponent = nullptr;
     napi_get_named_property(env, exports, OH_NATIVE_XCOMPONENT_OBJ, &exportInstance);

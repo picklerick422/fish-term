@@ -3,21 +3,33 @@ import { BusinessError, emitter } from '@kit.BasicServicesKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { CrashHandler } from '../crash/CrashHandler';
 
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
   private bgRunning: boolean = false;
+  private crashHandler: CrashHandler | null = null;
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
+    // 初始化崩溃处理器 — 尽早注册全局异常监听
+    try {
+      this.crashHandler = new CrashHandler(this.context);
+      this.crashHandler.registerGlobalErrorHandler();
+    } catch (e) {
+      hilog.error(DOMAIN, 'testTag', 'CrashHandler init failed: %{public}s', JSON.stringify(e));
+    }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
 
   onDestroy(): void {
+    if (this.crashHandler) {
+      this.crashHandler.onDestroy();
+    }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
   }
 
@@ -61,6 +73,10 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    // 检查上次是否有崩溃
+    if (this.crashHandler) {
+      this.crashHandler.checkPendingCrash();
+    }
     // Stop the background task once we're back in the foreground; the page is
     // visible again and normal foreground execution keeps the socket alive.
     this.stopBackgroundTask();
