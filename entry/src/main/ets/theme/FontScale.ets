@@ -63,6 +63,7 @@ export const UI_FONT_OPTIONS: FontOption[] = [
   { family: 'HarmonyOS Sans', label: 'HarmonyOS Sans', category: 'ui' },
   { family: 'Noto Sans SC', label: 'Noto Sans SC', category: 'ui' },
   { family: 'Claude Sans', label: 'Claude Sans', category: 'ui' },
+  { family: 'Cascadia Code', label: 'Cascadia Code (等宽)', category: 'ui' },
   { family: 'monospace', label: 'Monospace (等宽)', category: 'ui' },
 ];
 

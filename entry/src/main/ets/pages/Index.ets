@@ -16,6 +16,10 @@ import {
   clampFontScaleBoost, clampCjkVerticalOffset, clampCharacterSpacing
 } from '../theme/FontScale';
 import { SettingsPanel } from './SettingsPanel';
+import { CrashLogPanel } from './CrashLogPanel';
+import { CrashHandler } from '../crash/CrashHandler';
+import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
+import { CrashStore } from '../crash/CrashStore';
 
 function stateLabel(s: DriverStatus): string {
   switch (s.state) {
@@ -36,11 +40,21 @@ function stateLabel(s: DriverStatus): string {
 
 // Reactive per-tab metadata that drives the tab strip. The heavy controller /
 // session live in TerminalRuntime, keyed by id in `runtimes`.
-interface TabMeta {
+// Must be @Observed class — ArkUI V1 tracks nested changes on interface fields
+// only when the whole array is reassigned AND ForEach keys differ. @Observed
+// makes property changes reliably trigger UI refresh.
+@Observed
+class TabMeta {
   id: number;
   title: string;
   state: DriverState;
   statusText: string;
+  constructor(id: number, title: string, state: DriverState, statusText: string) {
+    this.id = id;
+    this.title = title;
+    this.state = state;
+    this.statusText = statusText;
+  }
 }
 
 @Entry
@@ -64,6 +78,10 @@ struct Index {
   @State private hoverLogo: boolean = false;
   @State private hoverCloseId: number = -1;
   @State private hoverTabId: number = -1;
+  @State private renameTabId: number = -1;
+  @State private renameText: string = '';
+  @State private showRenameDialog: boolean = false;
+  @State private hoverMenuAction: string = '';
   @State private host: string = '192.168.1.10';
   @State private port: string = '8765';
   @State private token: string = '';
@@ -101,6 +119,13 @@ struct Index {
   @State private guideHover: string = '';
   // Drives the native horizontal slide between guide pages.
   private guideTabs: TabsController = new TabsController();
+  @State private showCrashLog: boolean = false;
+  @State private crashEntry: CrashLogEntry = {
+    id: '', timestamp: 0, crashType: CrashType.JS_CRASH,
+    summary: '', stackTrace: '', systemLog: '',
+    deviceInfo: { deviceModel: '', osVersion: '', appVersion: '' },
+    logFileName: '', viewed: false
+  };
   // Tab drag-reorder via horizontal PanGesture (live reorder, stays on baseline).
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
@@ -130,6 +155,10 @@ struct Index {
         familyName: 'Claude Sans',
         familySrc: $rawfile('fonts/ClaudeSans-Regular.ttf')
       });
+      fontMgr.registerFont({
+        familyName: 'Cascadia Code',
+        familySrc: $rawfile('fonts/CascadiaCode.ttf')
+      });
     } catch (e) {
       // Non-fatal: fontFamily() falls back gracefully.
     }
@@ -146,6 +175,12 @@ struct Index {
       // taps the page. Re-focus it explicitly.
       this.focusActiveTerminal();
     });
+    // 检查是否有待展示的崩溃日志
+    const pendingCrash = CrashHandler.consumePendingEntry();
+    if (pendingCrash) {
+      this.crashEntry = pendingCrash;
+      this.showCrashLog = true;
+    }
   }
 
   private loadProfile(): void {
@@ -319,7 +354,7 @@ struct Index {
   // (connect form, settings sheet, onboarding guide) — e.g. when returning from
   // the background with the connect form open.
   private canFocusTerminal(): boolean {
-    return this.tabs.length > 0 && !this.showSettings && !this.showNewConnection && !this.showGuide;
+    return this.tabs.length > 0 && !this.showSettings && !this.showNewConnection && !this.showGuide && !this.showRenameDialog;
   }
 
   // Requesting focus right after a tab switch or return-to-foreground races the
@@ -348,9 +383,9 @@ struct Index {
   private updateTabMeta(id: number, state: DriverState, statusText: string): void {
     const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
       if (t.id === id) {
-        return { id: t.id, title: t.title, state, statusText };
+        return new TabMeta(t.id, t.title, state, statusText);
       }
-      return t;
+      return new TabMeta(t.id, t.title, t.state, t.statusText);
     });
     this.tabs = next;
   }
@@ -360,11 +395,49 @@ struct Index {
     if (trimmed.length === 0) return;
     const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
       if (t.id === id) {
-        return { id: t.id, title: trimmed, state: t.state, statusText: t.statusText };
+        return new TabMeta(t.id, trimmed, t.state, t.statusText);
       }
-      return t;
+      return new TabMeta(t.id, t.title, t.state, t.statusText);
     });
     this.tabs = next;
+  }
+
+  // ----- rename dialog --------------------------------------------------------
+
+  private openRenameDialog(id: number): void {
+    const t: TabMeta | undefined = this.tabs.find((x: TabMeta) => x.id === id);
+    if (t) {
+      this.renameTabId = id;
+      this.renameText = t.title;
+      this.showRenameDialog = true;
+    }
+  }
+
+  private applyRename(): void {
+    const txt: string = this.renameText.trim();
+    if (txt.length > 0 && this.renameTabId > 0) {
+      console.info('FT_DIAG applyRename id=' + this.renameTabId + ' text=' + txt);
+      this.updateTabTitle(this.renameTabId, txt);
+      console.info('FT_DIAG applyRename after update: ' + this.tabs.map((t: TabMeta) => t.id + ':' + t.title).join(', '));
+    }
+    // Delay dismiss so @State tabs commits before bindSheet close animation.
+    setTimeout(() => {
+      this.closeRenameDialog();
+    }, 80);
+  }
+
+  private closeRenameDialog(): void {
+    this.showRenameDialog = false;
+    this.renameTabId = -1;
+    this.renameText = '';
+    this.hoverMenuAction = '';
+  }
+
+  private closeOtherTabs(keepId: number): void {
+    const ids: number[] = this.tabs.filter((t: TabMeta) => t.id !== keepId).map((t: TabMeta) => t.id);
+    for (let i: number = 0; i < ids.length; i++) {
+      this.closeTab(ids[i]);
+    }
   }
 
   // Open a new tab and start a session to the current host/port/token.
@@ -383,7 +456,7 @@ struct Index {
     this.applySettingsTo(rt.controller);
     this.runtimes.set(id, rt);
 
-    const meta: TabMeta = { id, title: '终端 ' + id, state: DriverState.Connecting, statusText: '连接中…' };
+    const meta: TabMeta = new TabMeta(id, '终端 ' + id, DriverState.Connecting, '连接中…');
     this.tabs = this.tabs.concat(meta);
     this.activeId = id;
 
@@ -692,6 +765,31 @@ struct Index {
         onDisappear: () => { this.focusActiveTerminal(); }
       })
 
+      // Invisible anchor for the crash log sheet — third bindSheet because
+      // a component can only host one bindSheet. Animation identical to settings.
+      Text('')
+        .width(0).height(0)
+        .bindSheet($$this.showCrashLog, this.buildCrashLogSheet(), {
+          preferType: SheetType.CENTER,
+          width: '50%',
+          dragBar: false,
+          showClose: false,
+          backgroundColor: Palette.base,
+          onDisappear: () => { this.focusActiveTerminal(); }
+        })
+      // Invisible anchor for the rename sheet.
+      Text('')
+        .width(0).height(0)
+        .bindSheet($$this.showRenameDialog, this.buildRenameSheet(), {
+          preferType: SheetType.CENTER,
+          width: '30%',
+          height: 220,
+          dragBar: false,
+          showClose: false,
+          backgroundColor: Palette.base,
+          onDisappear: () => { this.focusActiveTerminal(); }
+        })
+
       if (this.tabs.length === 0 || this.showNewConnection) {
         this.buildForm();
       }
@@ -794,7 +892,7 @@ struct Index {
         Row({ space: 4 }) {
           ForEach(this.tabs, (tab: TabMeta) => {
             this.buildTabChip(tab)
-          }, (tab: TabMeta) => 'chip_' + tab.id.toString())
+          }, (tab: TabMeta) => tab.id + '_' + tab.title)
 
           // "+" new tab — vertically centered in the strip
           Row() {
@@ -878,7 +976,7 @@ struct Index {
         .fontSize(8)
         .fontColor(this.dotColor(tab.state))
       Text(tab.title)
-        .fontSize(12)
+        .fontSize(Math.max(10, this.fontSize - 1))
         .fontFamily(this.uiFontFamily)
         .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
         .maxLines(1)
@@ -924,6 +1022,7 @@ struct Index {
         this.switchTab(tab.id);
       }
     })
+    .bindContextMenu(this.buildTabContextMenu(tab), ResponseType.RightClick)
     // Whole-chip horizontal PanGesture for drag-to-reorder. priorityGesture
     // wins over the parent Scroll's horizontal scroll.
     .priorityGesture(
@@ -957,13 +1056,146 @@ struct Index {
     )
   }
 
+  @Builder
+  private buildTabContextMenu(tab: TabMeta) {
+    Column() {
+      // 重命名
+      Row({ space: 8 }) {
+        Text('✎')
+          .fontSize(12)
+          .fontColor(Palette.textDim)
+        Text('重命名')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'rename' ? '#14FFFFFF' : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'rename' : ''; })
+      .onClick(() => { this.openRenameDialog(tab.id); })
+
+      // Separator with horizontal margins
+      Divider().color(Palette.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 关闭其他
+      Row({ space: 8 }) {
+        Text('✕')
+          .fontSize(12)
+          .fontColor(Palette.textDim)
+        Text('关闭其他标签页')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'close_others' ? '#1FFFFB454' : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close_others' : ''; })
+      .onClick(() => { this.closeOtherTabs(tab.id); })
+
+      // Separator
+      Divider().color(Palette.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 关闭
+      Row({ space: 8 }) {
+        Text('✕')
+          .fontSize(12)
+          .fontColor(Palette.textDim)
+        Text('关闭')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'close' ? '#1FFF6B6B' : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close' : ''; })
+      .onClick(() => { this.closeTab(tab.id); })
+    }
+    .width(160)
+    .padding(4)
+    .backgroundColor(Palette.surface)
+    .borderRadius(8)
+    .border({ width: 1, color: Palette.border })
+    .shadow({ radius: 12, color: '#66000000', offsetY: 6 })
+  }
+
   private activeMeta(): TabMeta {
     for (let i: number = 0; i < this.tabs.length; i++) {
       if (this.tabs[i].id === this.activeId) {
         return this.tabs[i];
       }
     }
-    return { id: -1, title: '', state: DriverState.Idle, statusText: '空闲' };
+    return new TabMeta(-1, '', DriverState.Idle, '空闲');
+  }
+
+  // Rename sheet — bindSheet(CENTER) native animation, matching settings panel style.
+  @Builder
+  private buildRenameSheet() {
+    Column({ space: 14 }) {
+      Text('重命名标签页')
+        .fontSize(17)
+        .fontFamily(this.uiFontFamily)
+        .fontColor(Palette.text)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      TextInput({ text: $$this.renameText, placeholder: '输入标签页名称' })
+        .fontSize(14)
+        .fontFamily(this.uiFontFamily)
+        .fontColor(Palette.text)
+        .placeholderColor(Palette.textDim)
+        .backgroundColor(Palette.inputBg)
+        .borderRadius(7)
+        .border({ width: 1, color: Palette.accent })
+        .height(42)
+        .width('100%')
+        .defaultFocus(true)
+      // Buttons
+      Row({ space: 10 }) {
+        Row() {
+          Text('取消')
+            .fontSize(13)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(Palette.text)
+        }
+        .height(38)
+        .layoutWeight(1)
+        .borderRadius(7)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(Palette.border)
+        .focusable(false)
+        .onClick(() => { this.closeRenameDialog(); })
+        Row() {
+          Text('确认')
+            .fontSize(13)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(Palette.base)
+        }
+        .height(38)
+        .layoutWeight(1)
+        .borderRadius(7)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(Palette.accent)
+        .focusable(false)
+        .onClick(() => { this.applyRename(); })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 18, bottom: 18 })
   }
 
   // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
@@ -1386,5 +1618,19 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .backgroundColor(Palette.base)
+  }
+
+  @Builder
+  private buildCrashLogSheet() {
+    CrashLogPanel({
+      entry: this.crashEntry,
+      onClose: () => { this.showCrashLog = false; },
+      onViewed: (id: string) => {
+        if (this.context) {
+          const store = new CrashStore(this.context);
+          store.markViewed(id);
+        }
+      }
+    })
   }
 }
