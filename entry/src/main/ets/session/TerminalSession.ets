@@ -40,6 +40,8 @@ export class TerminalSession {
   private readonly driver: TerminalDriver;
   private statusCb: ((s: DriverStatus) => void) | null = null;
   private titleCb: ((title: string) => void) | null = null;
+  private cwdCb: ((cwd: string) => void) | null = null;
+  private sessionIdCb: ((id: string) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -67,20 +69,31 @@ export class TerminalSession {
     });
     this.driver.onStatus((s: DriverStatus): void => {
       if (s.state === DriverState.Connected) {
-        // On a reconnect the server starts a fresh session; reset the emulator
-        // first so modes the previous session enabled (mouse tracking, alt
-        // screen, …) don't leak — otherwise the wheel gets reported as SGR
-        // mouse sequences (e.g. "65;1;1M") to the new shell. This runs before
-        // the server's replay output is fed, so the new state takes over.
-        if (this.hasConnected && !this.stopped) {
-          this.controller.resetTerminal();
-        }
+        // On reconnect the server replays its ring-buffer snapshot.
+        // Do NOT reset the emulator — that would clear the scrollback
+        // and create a visible gap between pre-disconnect history and
+        // the replay. The snapshot contains any mode-setting escape
+        // sequences from the server, so stale modes (mouse tracking,
+        // alt screen) are naturally overwritten as the replay is fed.
         this.hasConnected = true;
       }
       if (this.statusCb) {
         this.statusCb(s);
       }
     });
+    this.driver.onCwdChange((cwd: string): void => {
+      if (this.cwdCb) {
+        this.cwdCb(cwd);
+      }
+    });
+    // Forward session-id from the driver to the page so it can be persisted.
+    if (this.driver instanceof FishWebSocketDriver) {
+      (this.driver as FishWebSocketDriver).onSessionId((id: string): void => {
+        if (this.sessionIdCb) {
+          this.sessionIdCb(id);
+        }
+      });
+    }
   }
 
   onStatus(cb: (s: DriverStatus) => void): void {
@@ -89,6 +102,14 @@ export class TerminalSession {
 
   onTitleChange(cb: (title: string) => void): void {
     this.titleCb = cb;
+  }
+
+  onCwdChange(cb: (cwd: string) => void): void {
+    this.cwdCb = cb;
+  }
+
+  onSessionId(cb: (id: string) => void): void {
+    this.sessionIdCb = cb;
   }
 
   onForeground(): void {

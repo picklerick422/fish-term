@@ -82,6 +82,9 @@ Two independent channels must both move to the active tab:
 
 No automated test suite exists. Test by building in DevEco Studio and running on a real arm64 device (x86_64 emulator fails on prebuilt native libs). The `entry/build-profile.json5` pins `abiFilters: ["arm64-v8a"]`.
 
+## Serve agent(fish-agent)
+
+fish-agent在../agent-fish/fish-agent/ ，如需修改服务端内容，可以查看。
 ## Constraints
 
 - Target API: HarmonyOS 6.0.0 (API 20), compatible SDK 6.0.0

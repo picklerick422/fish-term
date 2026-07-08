@@ -14,5 +14,8 @@ export function buildFishUrl(config: FishConnectConfig, cols: number, rows: numb
   if (config.shell && config.shell.length > 0) {
     params.push('shell=' + encodeURIComponent(config.shell));
   }
+  if (config.sessionId && config.sessionId.length > 0) {
+    params.push('session_id=' + encodeURIComponent(config.sessionId));
+  }
   return `${scheme}://${config.host}:${config.port}/ws?${params.join('&')}`;
 }

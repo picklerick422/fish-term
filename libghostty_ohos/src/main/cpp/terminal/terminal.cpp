@@ -4,6 +4,7 @@
 #include <hilog/log.h>
 #include <atomic>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <inttypes.h>
 #include <iomanip>
@@ -304,13 +305,13 @@ SelectionTokenKind ClassifySelectionCodepoint(uint32_t codepoint, bool hasText)
 }
 }
 
-Terminal::Terminal(int cols, int rows)
+Terminal::Terminal(int cols, int rows, int maxScrollback)
     : m_cols(cols), m_rows(rows), m_running(false), m_vt(nullptr),
       m_renderState(nullptr), m_rowIterator(nullptr), m_rowCells(nullptr), m_renderer(nullptr) {
     ghostty_terminal_options_t opts {};
     opts.cols = static_cast<uint16_t>(cols);
     opts.rows = static_cast<uint16_t>(rows);
-    opts.max_scrollback = 10000;
+    opts.max_scrollback = static_cast<size_t>(maxScrollback > 0 ? maxScrollback : 10000);
     if (ghostty_terminal_new(nullptr, &m_vt, opts) != GHOSTTY_SUCCESS) {
         m_vt = nullptr;
         OH_LOG_ERROR(LOG_APP, "ghostty_terminal_new failed");
@@ -1006,15 +1007,21 @@ void Terminal::wheelScroll(int lines) {
             ghostty_terminal_mode_get(m_vt, kGhosttyModeDecckm, &appCursorKeys);
         }
 
-        // Check for X10/button/any-event mouse tracking (modes 1000/1002/1003).
-        // When an app enables mouse tracking it handles scroll itself via mouse
-        // wheel escape sequences — sending cursor keys would be interpreted by
-        // readline as history navigation instead of scroll.
-        bool m1000 = false, m1002 = false, m1003 = false;
-        ghostty_terminal_mode_get(m_vt, 1000, &m1000);
-        ghostty_terminal_mode_get(m_vt, 1002, &m1002);
-        ghostty_terminal_mode_get(m_vt, 1003, &m1003);
-        anyMouseTracking = m1000 || m1002 || m1003;
+        // Check for mouse tracking. Prefer the high-level data key
+        // (GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING) which is the definitive
+        // answer from ghostty; fall back to manual mode enumeration.
+        bool mouseTrackingData = false;
+        ghostty_terminal_get(m_vt, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &mouseTrackingData);
+        if (!mouseTrackingData) {
+            // Fallback: check DEC private modes 1000/1002/1003 manually.
+            bool m1000 = false, m1002 = false, m1003 = false;
+            ghostty_terminal_mode_get(m_vt, 1000, &m1000);
+            ghostty_terminal_mode_get(m_vt, 1002, &m1002);
+            ghostty_terminal_mode_get(m_vt, 1003, &m1003);
+            anyMouseTracking = m1000 || m1002 || m1003;
+        } else {
+            anyMouseTracking = true;
+        }
         if (anyMouseTracking) {
             // Mode 1006 = SGR extended mouse coordinates.
             ghostty_terminal_mode_get(m_vt, 1006, &sgrMouse);
@@ -1079,10 +1086,18 @@ void Terminal::resetState() {
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         if (!m_vt) return;
-        // Full reset (RIS): clears alt screen, mouse-tracking modes, cursor
-        // key mode, scrollback, etc. — everything a previous session may have
-        // left enabled.
-        ghostty_terminal_reset(m_vt);
+        // Soft reset via DECSTR: clears alt screen, cursor key mode, origin
+        // mode, margins, character sets, and other non-scrollback state.
+        // We deliberately avoid ghostty_terminal_reset (RIS) because it
+        // destroys the scrollback buffer, causing gaps when reconnecting to
+        // a session that has history in flight.
+        static constexpr char kDecstr[] = "\x1b[!p";
+        ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(kDecstr), sizeof(kDecstr) - 1);
+        // Also disable mouse tracking modes (1000/1002/1003/1006) that the
+        // previous session may have enabled.
+        static constexpr char kMouseOff[] =
+            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
+        ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(kMouseOff), sizeof(kMouseOff) - 1);
         m_selectionActive = false;
     }
     notifyRenderNeeded();
@@ -1399,6 +1414,41 @@ bool Terminal::hasSelection() const {
     return m_selectionActive;
 }
 
+int Terminal::getViewportTopRow() const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    return static_cast<int>(getViewportTopRowLocked());
+}
+
+bool Terminal::isCursorAtSelectionStart(int viewportRow, int viewportCol) const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_selectionActive) return false;
+    int absRow = static_cast<int>(getViewportTopRowLocked()) + viewportRow;
+    int startRow, startCol, endRow, endCol;
+    normalizeSelectionBounds(startRow, startCol, endRow, endCol);
+    // Allow ±1 column tolerance — wide-char adjustments may shift the cursor
+    // by one cell relative to the selection anchor.
+    return absRow == startRow && std::abs(viewportCol - startCol) <= 1;
+}
+
+bool Terminal::isCursorAtSelectionEnd(int viewportRow, int viewportCol) const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_selectionActive) return false;
+    int absRow = static_cast<int>(getViewportTopRowLocked()) + viewportRow;
+    int startRow, startCol, endRow, endCol;
+    normalizeSelectionBounds(startRow, startCol, endRow, endCol);
+    return absRow == endRow && std::abs(viewportCol - endCol) <= 1;
+}
+
+bool Terminal::isAlternateScreen() const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_vt) {
+        return false;
+    }
+    ghostty_terminal_screen_t screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    ghostty_terminal_get(m_vt, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
+    return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE;
+}
+
 bool Terminal::isSelectionAt(int row, int col) const {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (!m_selectionActive) {
@@ -1440,6 +1490,69 @@ void Terminal::updateSelection(int row, int col) {
         changed = absRow != m_selEndRow || nextCol != m_selEndCol;
         m_selEndRow = absRow;
         m_selEndCol = nextCol;
+    }
+    if (changed) {
+        notifyRenderNeeded();
+    }
+}
+
+void Terminal::extendSelection(int dRow, int dCol) {
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        if (!m_selectionActive) {
+            return;
+        }
+        const int viewportTop = static_cast<int>(getViewportTopRowLocked());
+        // Convert absolute end row to viewport-relative, extend, then clamp.
+        int endRowRel = m_selEndRow - viewportTop + dRow;
+        int endCol = m_selEndCol + dCol;
+        endRowRel = ClampIndex(endRowRel, m_rows);
+        endCol = ClampIndex(endCol, m_cols);
+
+        // Snap to wide-character boundaries when extending horizontally, so
+        // Shift+Left/Right moves by one visible character rather than by one
+        // cell (avoids needing two presses per CJK glyph).
+        if (dCol != 0 && endCol != m_selEndCol && m_renderState && m_vt &&
+            m_rows > 0 && m_cols > 0 &&
+            ghostty_render_state_update(m_renderState, m_vt) == GHOSTTY_SUCCESS) {
+            ghostty_row_iterator_t rowIterator = m_rowIterator;
+            ghostty_row_cells_t rowCells = m_rowCells;
+            ghostty_render_state_get(m_renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator);
+
+            for (int row = 0; row < m_rows && ghostty_render_state_row_iterator_next(rowIterator); ++row) {
+                if (row != endRowRel) {
+                    continue;
+                }
+                ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
+                for (int col = 0; col < m_cols && ghostty_render_state_row_cells_next(rowCells); ++col) {
+                    if (col != endCol) {
+                        continue;
+                    }
+                    ghostty_cell_t raw = 0;
+                    ghostty_cell_wide_t wide = GHOSTTY_CELL_WIDE_NARROW;
+                    ghostty_render_state_row_cells_get(rowCells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw);
+                    ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
+
+                    if (dCol > 0 && wide == GHOSTTY_CELL_WIDE_WIDE && endCol + 1 < m_cols) {
+                        // Extending right onto a wide character head:
+                        // also include its tail cell.
+                        endCol += 1;
+                    } else if (dCol < 0 && wide == GHOSTTY_CELL_WIDE_SPACER_TAIL && endCol > 0) {
+                        // Extending left onto a spacer tail:
+                        // skip backward to include the head cell.
+                        endCol -= 1;
+                    }
+                    break;
+                }
+                break;
+            }
+        }
+
+        const int nextAbsRow = viewportTop + endRowRel;
+        changed = nextAbsRow != m_selEndRow || endCol != m_selEndCol;
+        m_selEndRow = nextAbsRow;
+        m_selEndCol = endCol;
     }
     if (changed) {
         notifyRenderNeeded();
@@ -1677,8 +1790,12 @@ std::string Terminal::getSelectedText() const {
 }
 
 void Terminal::setMaxScrollback(int lines) {
-    // ghostty handles scrollback internally
-    (void)lines;
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    m_maxScrollback = lines;
+    // The ghostty maximal scrollback is set at terminal construction time
+    // via GhosttyTerminalOptions.max_scrollback and cannot be changed
+    // on a live terminal. Store the value so it can be used if the
+    // terminal is recreated (e.g. after a surface reset).
 }
 
 void Terminal::setTheme(const TerminalTheme& theme) {
@@ -1900,9 +2017,25 @@ void Terminal::drawFrame() {
         "FT_DIAG drawFrame frame=%{public}" PRIu64 " cursor=(%{public}d,%{public}d) vis=%{public}d leftOfCursorCp=0x%{public}X",
         frameId, cursorRow, cursorCol, cursorVisible ? 1 : 0, cellLeftOfCursor);
 
-    m_renderer->setColors(m_theme.background, m_theme.foreground);
+    m_renderer->setColors(RgbToArgb(colors.background), RgbToArgb(colors.foreground));
     m_renderer->setCursorColors(m_theme.cursorColor, m_theme.cursorText);
     m_renderer->beginFrame();
     m_renderer->renderGrid(cells, m_cols, m_rows, cursorRow, cursorCol, cursorVisible);
     m_renderer->endFrame();
+}
+
+uint32_t Terminal::getCurrentBgColor() const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_vt || !m_renderState) {
+        return 0xFF0B0D10; // fallback: Palette.base
+    }
+    if (ghostty_render_state_update(m_renderState, m_vt) != GHOSTTY_SUCCESS) {
+        return 0xFF0B0D10;
+    }
+    ghostty_render_state_colors_t colors {};
+    colors.size = sizeof(colors);
+    if (ghostty_render_state_colors_get(m_renderState, &colors) != GHOSTTY_SUCCESS) {
+        return 0xFF0B0D10;
+    }
+    return RgbToArgb(colors.background);
 }

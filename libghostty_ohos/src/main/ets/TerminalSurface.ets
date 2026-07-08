@@ -359,8 +359,21 @@ export struct TerminalSurface {
     }
   }
 
-  private requestTerminalFocus(): void {
-    focusControl.requestFocus(this.surfaceId);
+  // Request focus, retrying up to `attempts` times at ~24ms intervals.
+  // Retry is necessary because ArkUI's Visibility.Hidden→Visible commit is async;
+  // focusControl.requestFocus silently fails on a not-yet-visible XComponent.
+  private requestTerminalFocus(attempts: number = 10): void {
+    let ok: boolean = false;
+    try {
+      ok = focusControl.requestFocus(this.surfaceId);
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok && attempts > 1) {
+      setTimeout(() => {
+        this.requestTerminalFocus(attempts - 1);
+      }, 24);
+    }
   }
 
   // Host page bumped searchSignal — open (or refocus) the find overlay, but only

@@ -22,6 +22,7 @@ export interface TerminalDriver {
   stop(): void;
   onOutput(cb: (data: string) => void): void;
   onStatus(cb: (s: DriverStatus) => void): void;
+  onCwdChange(cb: (cwd: string) => void): void;
 }
 
 // Connection parameters for the fish-agent WebSocket transport.
@@ -32,4 +33,5 @@ export interface FishConnectConfig {
   tls: boolean;
   cwd?: string;
   shell?: string;
+  sessionId?: string;  // non-empty on reconnect to restore prior PTY session
 }

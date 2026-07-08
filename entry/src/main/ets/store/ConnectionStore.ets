@@ -29,6 +29,24 @@ const KEY_CJK_VERTICAL_OFFSET: string = 'cjk_vertical_offset';
 const KEY_CHARACTER_SPACING: string = 'character_spacing';
 const KEY_SHOW_CRASH_ON_STARTUP: string = 'show_crash_on_startup';
 const TOKEN_ALIAS: string = 'fish_agent_token';
+const KEY_RESTORE_TABS: string = 'restore_tabs_enabled';
+const KEY_SESSION_STATE: string = 'session_state';
+
+export interface SavedTab {
+  title: string;
+  host: string;
+  port: number;
+  token: string;
+  tls: boolean;
+  cwd?: string;
+  shell?: string;
+  sessionId?: string;  // PTY session id for server-side session persistence
+}
+
+export interface SavedSession {
+  activeIndex: number;
+  tabs: SavedTab[];
+}
 const ASSET_NOT_FOUND: number = 24000002;
 
 export interface ConnectionProfile {
@@ -341,6 +359,58 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-term save showCrashOnStartup failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async saveSession(session: SavedSession): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_SESSION_STATE, JSON.stringify(session));
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save session failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadSession(): Promise<SavedSession | null> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      const raw: string = await pref.get(KEY_SESSION_STATE, '') as string;
+      if (raw.length === 0) {
+        return null;
+      }
+      const parsed: SavedSession = JSON.parse(raw) as SavedSession;
+      if (!parsed.tabs || !Array.isArray(parsed.tabs)) {
+        return null;
+      }
+      return parsed;
+    } catch (e) {
+      console.error('fish-term load session failed: ' + JSON.stringify(e));
+      return null;
+    }
+  }
+
+  async saveRestoreTabsEnabled(enabled: boolean): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_RESTORE_TABS, enabled);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save restoreTabsEnabled failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadRestoreTabsEnabled(): Promise<boolean> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_RESTORE_TABS, true) as boolean;
+    } catch (e) {
+      console.error('fish-term load restoreTabsEnabled failed: ' + JSON.stringify(e));
+      return true;
     }
   }
 

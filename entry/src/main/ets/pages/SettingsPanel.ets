@@ -115,6 +115,7 @@ export struct SettingsPanel {
   @State private hoverCrashHistory: boolean = false;
   @State private hoverShowCrashOnStartup: boolean = false;
   @State private showCrashOnStartup: boolean = true;
+  @State private restoreTabsEnabled: boolean = true;
   @State private hoverCursorIdx: number = -1;
   @State private uiFontDropdownOpen: boolean = false;
   @State private termFontDropdownOpen: boolean = false;
@@ -206,6 +207,7 @@ export struct SettingsPanel {
     // 加载崩溃提醒偏好
     if (this.store) {
       this.store.loadShowCrashOnStartup().then((v: boolean) => { this.showCrashOnStartup = v; });
+      this.store.loadRestoreTabsEnabled().then((v: boolean) => { this.restoreTabsEnabled = v; });
     }
   }
 
@@ -1419,6 +1421,36 @@ export struct SettingsPanel {
             this.showCrashOnStartup = on;
             if (this.store) {
               this.store.saveShowCrashOnStartup(on);
+            }
+          })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(Palette.surface)
+      .borderRadius(10)
+      .border({ width: 1, color: Palette.border })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+
+    // 页签恢复开关
+    Column({ space: 0 }) {
+      this.buildSectionHeader('页签恢复')
+      Row({ space: 12 }) {
+        Text('启动时恢复上次的页签')
+          .fontSize(14)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.restoreTabsEnabled })
+          .selectedColor(Palette.accent)
+          .onChange((on: boolean) => {
+            this.restoreTabsEnabled = on;
+            if (this.store) {
+              this.store.saveRestoreTabsEnabled(on);
+              if (!on) {
+                // Clear saved session when feature is disabled.
+                this.store.saveSession({ activeIndex: 0, tabs: [] });
+              }
             }
           })
       }

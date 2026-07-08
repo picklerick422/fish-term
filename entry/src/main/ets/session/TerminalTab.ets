@@ -1,5 +1,6 @@
 import { TerminalController } from 'libghostty_ohos';
 import { TerminalSession } from './TerminalSession';
+import { FishConnectConfig } from '../transport/TerminalDriver';
 
 // Non-reactive per-tab runtime. Owns the terminal controller (one native VT +
 // its own XComponent surface) and the active driver session. These heavy objects
@@ -10,6 +11,9 @@ export class TerminalRuntime {
   readonly surfaceId: string;
   readonly controller: TerminalController;
   session: TerminalSession | null = null;
+  cwd: string = '';
+  sessionId: string = '';  // PTY session id from server, persisted for tab restore
+  connectionConfig: FishConnectConfig | null = null;
 
   constructor(id: number) {
     this.id = id;

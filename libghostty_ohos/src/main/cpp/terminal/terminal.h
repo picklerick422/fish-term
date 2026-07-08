@@ -22,7 +22,7 @@ struct TerminalSearchStatus {
 
 class Terminal {
 public:
-    Terminal(int cols, int rows);
+    Terminal(int cols, int rows, int maxScrollback = 10000);
     ~Terminal();
 
     bool start();
@@ -53,13 +53,22 @@ public:
 
     // Selection
     bool hasSelection() const;
+    bool isAlternateScreen() const;
     bool isSelectionAt(int row, int col) const;
     void startSelection(int row, int col);
     void updateSelection(int row, int col);
+    void extendSelection(int dRow, int dCol);
     void selectWordAt(int row, int col);
     void selectLineAt(int row);
     void clearSelection();
     std::string getSelectedText() const;
+    int getViewportTopRow() const;
+    // Returns true if the given viewport-relative cursor position is at the
+    // start / end of the active selection. Used to decide whether Backspace or
+    // Delete can safely erase the selected text (as opposed to the selection
+    // being in remote output far from the cursor).
+    bool isCursorAtSelectionStart(int viewportRow, int viewportCol) const;
+    bool isCursorAtSelectionEnd(int viewportRow, int viewportCol) const;
 
     // Search
     void startSearch(const std::string& query = std::string());
@@ -84,6 +93,9 @@ public:
         m_renderRequestCallback = callback;
     }
     void drawFrame();
+    // Returns the current live background color (ARGB) from the render state.
+    // This reflects OSC changes, unlike the theme default.
+    uint32_t getCurrentBgColor() const;
 
 private:
     void notifyRenderNeeded();
@@ -129,6 +141,7 @@ private:
     int m_selStartCol = 0;
     int m_selEndRow = 0;
     int m_selEndCol = 0;
+    int m_maxScrollback = 10000;
 
     struct SearchMatch {
         size_t row = 0;

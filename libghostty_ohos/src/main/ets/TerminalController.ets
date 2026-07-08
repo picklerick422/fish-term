@@ -58,6 +58,7 @@ interface TerminalNativeBridge {
   isRendererReady: () => boolean;
   getRendererError: () => string;
   focusTerminal: () => void;
+  getCurrentBgColor: () => number;
 }
 
 type TerminalConfigListener = (config: TerminalConfig, themeName: string) => void;
@@ -528,6 +529,21 @@ export class TerminalController {
       this.native.focusTerminal();
     } catch (e) {
       console.error('FT_DIAG focusTerminal: native call failed: ' + JSON.stringify(e));
+    }
+  }
+
+  // Returns the current live background color (ARGB) from the renderer.
+  // Reflects OSC color changes, unlike getThemeColors() which only returns
+  // the theme definition. Falls back to 0xFF0B0D10 (Palette.base) on error.
+  getCurrentBgColor(): number {
+    if (!this.native) {
+      return 0xFF0B0D10;
+    }
+    try {
+      return this.native.getCurrentBgColor();
+    } catch (e) {
+      console.error('FT_DIAG getCurrentBgColor failed: ' + JSON.stringify(e));
+      return 0xFF0B0D10;
     }
   }
 

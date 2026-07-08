@@ -12,6 +12,7 @@ interface ServerCtrl {
   type: string;
   dir?: string;
   error?: string;
+  id?: string;  // session id from server on first connect
 }
 
 export class FishWebSocketDriver implements TerminalDriver {
@@ -24,6 +25,7 @@ export class FishWebSocketDriver implements TerminalDriver {
   private outputCb: ((data: string) => void) | null = null;
   private statusCb: ((s: DriverStatus) => void) | null = null;
   private cwdCb: ((dir: string) => void) | null = null;
+  private sessionIdCb: ((id: string) => void) | null = null;
 
   private cols: number = 80;
   private rows: number = 24;
@@ -31,6 +33,7 @@ export class FishWebSocketDriver implements TerminalDriver {
   private manualStop: boolean = false;
   private reconnectTimer: number = -1;
   private heartbeatTimer: number = -1;
+  private sessionId: string = '';
 
   constructor(config: FishConnectConfig) {
     this.config = config;
@@ -47,6 +50,20 @@ export class FishWebSocketDriver implements TerminalDriver {
   // Optional: server pushes cwd updates; used for tab titles in later phases.
   onCwd(cb: (dir: string) => void): void {
     this.cwdCb = cb;
+  }
+
+  // TerminalDriver interface compliance.
+  onCwdChange(cb: (cwd: string) => void): void {
+    this.cwdCb = cb;
+  }
+
+  // Server sends session id on first connect; page persists it for tab restore.
+  onSessionId(cb: (id: string) => void): void {
+    this.sessionIdCb = cb;
+  }
+
+  getSessionId(): string {
+    return this.sessionId;
   }
 
   start(cols: number, rows: number): void {
@@ -128,6 +145,8 @@ export class FishWebSocketDriver implements TerminalDriver {
       this.backoff.reset();
       this.emit(DriverState.Connected);
       this.startHeartbeat();
+      // Send initial resize to trigger server-side screen redraw after reconnect.
+      this.sendText(`{"type":"resize","cols":${this.cols},"rows":${this.rows}}`);
     });
 
     ws.on('message', (_err: BusinessError, value: string | ArrayBuffer) => {
@@ -183,6 +202,11 @@ export class FishWebSocketDriver implements TerminalDriver {
     } else if (ctrl.type === 'cwd') {
       if (this.cwdCb && ctrl.dir) {
         this.cwdCb(ctrl.dir);
+      }
+    } else if (ctrl.type === 'session' && ctrl.id) {
+      this.sessionId = ctrl.id;
+      if (this.sessionIdCb) {
+        this.sessionIdCb(ctrl.id);
       }
     }
     // 'shells' / 'forked' ignored in v1.

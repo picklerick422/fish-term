@@ -231,6 +231,53 @@ constexpr OH_NativeXComponent_KeyCode LINUX_KEY_INSERT =
 constexpr OH_NativeXComponent_KeyCode LINUX_KEY_DELETE =
     static_cast<OH_NativeXComponent_KeyCode>(111);
 
+// Modifier key codes (Linux/Android key codes). Pressing these alone (e.g. Ctrl
+// to switch IME mode) must never produce a terminal sequence — otherwise a
+// spurious Ctrl+C could be synthesized when the XComponent re-dispatches a prior
+// key event with the new modifier state.
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_LEFTCTRL =
+    static_cast<OH_NativeXComponent_KeyCode>(29);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_RIGHTCTRL =
+    static_cast<OH_NativeXComponent_KeyCode>(97);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_LEFTSHIFT =
+    static_cast<OH_NativeXComponent_KeyCode>(42);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_RIGHTSHIFT =
+    static_cast<OH_NativeXComponent_KeyCode>(54);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_LEFTALT =
+    static_cast<OH_NativeXComponent_KeyCode>(56);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_RIGHTALT =
+    static_cast<OH_NativeXComponent_KeyCode>(100);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_LEFTMETA =
+    static_cast<OH_NativeXComponent_KeyCode>(125);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_RIGHTMETA =
+    static_cast<OH_NativeXComponent_KeyCode>(126);
+constexpr OH_NativeXComponent_KeyCode LINUX_KEY_CAPSLOCK =
+    static_cast<OH_NativeXComponent_KeyCode>(58);
+
+// Safety cap for IME preview-text backspace erasure. If the code-point count
+// exceeds this limit the erase is skipped and the counter is reset — a stale or
+// corrupted count would otherwise flood the terminal with backspaces and destroy
+// committed input (observed when pressing Ctrl to switch IME modes).
+constexpr size_t IME_MAX_PREVIEW_ERASE = 200;
+
+bool IsModifierKeyCode(OH_NativeXComponent_KeyCode code)
+{
+    switch (code) {
+        case LINUX_KEY_LEFTCTRL:
+        case LINUX_KEY_RIGHTCTRL:
+        case LINUX_KEY_LEFTSHIFT:
+        case LINUX_KEY_RIGHTSHIFT:
+        case LINUX_KEY_LEFTALT:
+        case LINUX_KEY_RIGHTALT:
+        case LINUX_KEY_LEFTMETA:
+        case LINUX_KEY_RIGHTMETA:
+        case LINUX_KEY_CAPSLOCK:
+            return true;
+        default:
+            return false;
+    }
+}
+
 std::u16string Utf8ToUtf16(const std::string& text)
 {
     std::u16string result;
@@ -902,21 +949,55 @@ public:
         bool capsLock = false;
         OH_NativeXComponent_GetKeyEventCapsLockState(keyEvent, &capsLock);
 
-        // Determine the target terminal for this key event. ArkUI routes hardware
-        // keys to whichever XComponent holds its focus, which does NOT move on tab
-        // switch — focusControl.requestFocus does not reroute XComponent key
-        // dispatch. Forward to g_activeImeHost (the process-wide IME owner, set on
-        // tap / RequestImeFocus) so hardware keys always land in the same terminal
-        // as IME text. The active host's m_terminal is guaranteed alive because
-        // g_activeImeHost is cleared (DetachImeLocked) before m_terminal is deleted.
+        OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent code=%{public}d shift=%{public}d ctrl=%{public}d alt=%{public}d",
+                    static_cast<int>(code),
+                    IsShiftPressed(modifiers) ? 1 : 0,
+                    IsCtrlPressed(modifiers) ? 1 : 0,
+                    IsAltPressed(modifiers) ? 1 : 0);
+
+        // Modifier keys pressed alone (Ctrl, Shift, Alt, Meta, CapsLock) must
+        // never produce a terminal sequence. The HarmonyOS XComponent may re-dispatch
+        // a prior key event with updated modifier state when a modifier key is
+        // pressed, which could synthesize spurious Ctrl+letter sequences (e.g.
+        // Ctrl to switch IME mode turning a previous 'c' into Ctrl+C).
+        if (IsModifierKeyCode(code)) {
+            OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent ignoring modifier-key code=%{public}d", static_cast<int>(code));
+            return false;
+        }
+
+        // Determine the target terminal for this key event.
         TerminalHost* targetHost = this;
         TerminalHost* activeHost = g_activeImeHost.load(std::memory_order_acquire);
         if (activeHost != nullptr && activeHost != this && activeHost->m_terminal != nullptr) {
             targetHost = activeHost;
         }
 
+        // Track physical Shift state on the target host so HandleImeMoveCursor
+        // (which fires on the IME owner) can read it when IME is active.
+        //
+        // Arrow-key events on HarmonyOS may NOT include the Shift modifier bit
+        // even when Shift is physically held, so skip arrow keys — their Shift
+        // state was already captured by the preceding non-arrow event (typically
+        // the Shift key-down itself). On non-arrow events the modifier flag is
+        // reliable: when the user releases Shift and types a letter, the flag
+        // drops to false and clears the state.
+        {
+            bool isArrowKey = false;
+            switch (code) {
+                case LINUX_KEY_LEFT: case LINUX_KEY_RIGHT:
+                case LINUX_KEY_UP:   case LINUX_KEY_DOWN:
+                case KEY_DPAD_LEFT:  case KEY_DPAD_RIGHT:
+                case KEY_DPAD_UP:    case KEY_DPAD_DOWN:
+                    isArrowKey = true;
+                    break;
+                default: break;
+            }
+            if (!isArrowKey) {
+                targetHost->m_shiftHeld.store(IsShiftPressed(modifiers), std::memory_order_relaxed);
+            }
+        }
+
         // Ctrl+Shift+C = clipboard copy; Ctrl+Shift+V = clipboard paste.
-        // Route to the target host (where the user is looking).
         if (IsCtrlPressed(modifiers) && IsShiftPressed(modifiers)) {
             if (code == LINUX_KEY_C || code == KEY_C) {
                 std::lock_guard<std::mutex> lock(targetHost->m_inputMutex);
@@ -930,10 +1011,66 @@ public:
             }
         }
 
+        // Shift+Arrow = text selection. Always handled locally, even on the
+        // alternate screen (claude code, vim, less, etc.) — consistent with
+        // Windows Terminal, iTerm2, and GNOME Terminal. Applications receive
+        // plain arrow keys; the terminal consumes Shift+Arrow.
+        //
+        // Check both the current event's modifier flags AND the persisted Shift
+        // state: on HarmonyOS the arrow-key event may not carry the Shift
+        // modifier bit even though the physical Shift key is held.
+        const bool shiftFromModifier = IsShiftPressed(modifiers);
+        const bool shiftFromFlag = targetHost->m_shiftHeld.load(std::memory_order_relaxed);
+        const bool shiftHeld = shiftFromModifier || shiftFromFlag;
+        if (shiftHeld && !IsCtrlPressed(modifiers) && !IsAltPressed(modifiers)) {
+            int dRow = 0, dCol = 0;
+            switch (code) {
+                case LINUX_KEY_LEFT:
+                case KEY_DPAD_LEFT:  dCol = -1; break;
+                case LINUX_KEY_RIGHT:
+                case KEY_DPAD_RIGHT: dCol =  1; break;
+                case LINUX_KEY_UP:
+                case KEY_DPAD_UP:    dRow = -1; break;
+                case LINUX_KEY_DOWN:
+                case KEY_DPAD_DOWN:  dRow =  1; break;
+                default: break;
+            }
+            if (dRow != 0 || dCol != 0) {
+                OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent Shift+Arrow dRow=%{public}d dCol=%{public}d", dRow, dCol);
+                Terminal* term = targetHost->m_terminal;
+                if (!term->hasSelection()) {
+                    int curRow = 0, curCol = 0;
+                    term->getCursorPosition(curRow, curCol);
+                    term->startSelection(curRow, curCol);
+                    OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent startSelection at (%{public}d,%{public}d)", curRow, curCol);
+                }
+                term->extendSelection(dRow, dCol);
+                // When Shift is detected only via the persistent flag (the
+                // event itself lacks the modifier bit), consume the flag so
+                // the next plain-arrow press after Shift release navigates
+                // instead of falsely extending the selection. When the
+                // modifier IS set the flag is refreshed on every arrow event,
+                // supporting multi-step selection while Shift stays held.
+                if (!shiftFromModifier && shiftFromFlag) {
+                    targetHost->m_shiftHeld.store(false, std::memory_order_relaxed);
+                }
+                return true;
+            }
+        }
+
         std::string sequence;
         if (!BuildKeySequence(code, modifiers, capsLock, sequence) || sequence.empty()) {
-            OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent BuildKeySequence empty for code=%{public}d", static_cast<int>(code));
+            // Modifier keys (Ctrl, Shift, Alt, Meta) produce empty sequences —
+            // do NOT clear the selection; the user may be about to press a
+            // chord like Ctrl+Shift+C for clipboard copy.
             return false;
+        }
+
+        // Any key (other than Shift+Arrow handled above) clears the active
+        // selection. This is standard terminal behaviour — the selection is a
+        // visual copy target, and typing or navigating simply dismisses it.
+        if (targetHost->m_terminal->hasSelection()) {
+            targetHost->m_terminal->clearSelection();
         }
         if (targetHost != this) {
             OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent forward seq[0]=%{public}d", static_cast<int>(sequence[0]));
@@ -1425,6 +1562,10 @@ public:
         return m_terminal ? m_terminal->getScreenContent() : std::string();
     }
 
+    uint32_t GetCurrentBgColor() const {
+        return m_terminal ? m_terminal->getCurrentBgColor() : 0xFF0B0D10;
+    }
+
     void GetCursorPosition(int& row, int& col) const {
         row = 0;
         col = 0;
@@ -1637,6 +1778,7 @@ public:
                    float fontScaleBoost, float cjkVerticalOffset, float characterSpacing) {
         m_fontSize = static_cast<float>(fontSize);
         m_fontFamily = fontFamily;  // may be empty → renderer falls back to default
+        m_configuredScrollback = scrollbackLines;
 
         if (m_renderer) {
             m_renderer->setFontSize(m_fontSize);
@@ -1932,7 +2074,7 @@ private:
             int cols = 80;
             int rows = 24;
             ComputeTerminalSize(m_windowWidth, m_windowHeight, cols, rows);
-            m_terminal = new Terminal(cols, rows);
+            m_terminal = new Terminal(cols, rows, m_configuredScrollback > 0 ? m_configuredScrollback : 10000);
             m_terminal->setRenderer(m_renderer);
             m_terminal->setRenderRequestCallback([this]() { RequestRender(); });
             m_terminal->setInputCallback([this](const std::string& data) {
@@ -2292,6 +2434,38 @@ private:
             return;
         }
 
+        const bool shiftHeld = m_shiftHeld.load(std::memory_order_relaxed);
+        OH_LOG_INFO(LOG_APP, "FT_DIAG HandleImeMoveCursor dir=%{public}d shift=%{public}d altScreen=%{public}d",
+                    static_cast<int>(direction),
+                    shiftHeld ? 1 : 0,
+                    m_terminal->isAlternateScreen() ? 1 : 0);
+
+        // Shift+Arrow = text selection. Always handled locally, even on the
+        // alternate screen — consistent with mainstream terminal emulators.
+        if (shiftHeld) {
+            int dRow = 0, dCol = 0;
+            switch (direction) {
+                case IME_DIRECTION_LEFT:  dCol = -1; break;
+                case IME_DIRECTION_RIGHT: dCol =  1; break;
+                case IME_DIRECTION_UP:    dRow = -1; break;
+                case IME_DIRECTION_DOWN:  dRow =  1; break;
+                default: return;
+            }
+            if (!m_terminal->hasSelection()) {
+                int curRow = 0, curCol = 0;
+                m_terminal->getCursorPosition(curRow, curCol);
+                m_terminal->startSelection(curRow, curCol);
+            }
+            m_terminal->extendSelection(dRow, dCol);
+            return;
+        }
+
+        // Plain arrow key (no Shift) — clear any active selection before
+        // moving the cursor so Backspace/Delete/typing works normally.
+        if (m_terminal->hasSelection()) {
+            m_terminal->clearSelection();
+        }
+
         const char* sequence = nullptr;
         size_t length = 0;
         switch (direction) {
@@ -2392,11 +2566,18 @@ private:
             m_imePreviewCodePoints = 0;
             return 0;
         }
-        // Erase any existing preview content.
+        // Erase any existing preview content. Cap the erase count so a stale or
+        // corrupted code-point counter (observed when pressing Ctrl to switch IME
+        // modes) cannot flood the terminal with backspaces and destroy committed input.
         if (m_imePreviewCodePoints > 0) {
             static constexpr char kBackspace[] = "\x7f";
-            for (size_t i = 0; i < m_imePreviewCodePoints; ++i) {
-                m_terminal->writeInput(kBackspace, 1);
+            if (m_imePreviewCodePoints > IME_MAX_PREVIEW_ERASE) {
+                OH_LOG_WARN(LOG_APP, "FT_DIAG SetPreviewText refusing to erase %{public}zu preview code points (cap=%{public}zu)",
+                            m_imePreviewCodePoints, IME_MAX_PREVIEW_ERASE);
+            } else {
+                for (size_t i = 0; i < m_imePreviewCodePoints; ++i) {
+                    m_terminal->writeInput(kBackspace, 1);
+                }
             }
             m_imePreviewCodePoints = 0;
         }
@@ -2404,7 +2585,14 @@ private:
             const std::string utf8 = Utf16ToUtf8(text, length);
             if (!utf8.empty()) {
                 m_terminal->writeInput(utf8.data(), utf8.size());
-                m_imePreviewCodePoints = Utf16CodePointCount(text, length);
+                const size_t codePoints = Utf16CodePointCount(text, length);
+                if (codePoints > IME_MAX_PREVIEW_ERASE) {
+                    OH_LOG_WARN(LOG_APP, "FT_DIAG SetPreviewText refusing to track %{public}zu preview code points (cap=%{public}zu)",
+                                codePoints, IME_MAX_PREVIEW_ERASE);
+                    m_imePreviewCodePoints = 0;
+                } else {
+                    m_imePreviewCodePoints = codePoints;
+                }
             }
         }
         return 0;
@@ -2416,8 +2604,13 @@ private:
         // the authoritative (possibly autocorrected) version.
         if (m_imePreviewCodePoints > 0 && m_terminal != nullptr) {
             static constexpr char kBackspace[] = "\x7f";
-            for (size_t i = 0; i < m_imePreviewCodePoints; ++i) {
-                m_terminal->writeInput(kBackspace, 1);
+            if (m_imePreviewCodePoints > IME_MAX_PREVIEW_ERASE) {
+                OH_LOG_WARN(LOG_APP, "FT_DIAG FinishPreview refusing to erase %{public}zu preview code points (cap=%{public}zu)",
+                            m_imePreviewCodePoints, IME_MAX_PREVIEW_ERASE);
+            } else {
+                for (size_t i = 0; i < m_imePreviewCodePoints; ++i) {
+                    m_terminal->writeInput(kBackspace, 1);
+                }
             }
             m_imePreviewCodePoints = 0;
         }
@@ -2656,6 +2849,7 @@ private:
     float m_density = 1.0f;
     float m_fontSize = 14.0f;
     std::string m_fontFamily;
+    int m_configuredScrollback = 0;  // 0 = use Terminal default (10000)
 
     float m_lastTouchY = 0.0f;
     bool m_isTouching = false;
@@ -2708,6 +2902,8 @@ private:
     std::string m_pendingContextMenuRequest;
     bool m_pendingCopyRequest = false;
     bool m_pendingPasteRequest = false;
+    // Tracks physical Shift key state for selection via IME MoveCursor callbacks.
+    std::atomic<bool> m_shiftHeld{false};
     napi_threadsafe_function m_inputTsfn = nullptr;
     InputMethod_TextEditorProxy* m_imeTextEditorProxy = nullptr;
     InputMethod_InputMethodProxy* m_imeInputMethodProxy = nullptr;
@@ -2975,6 +3171,14 @@ static napi_value GetScreenContent(napi_env env, napi_callback_info info) {
     napi_value result;
     const std::string content = host ? host->GetScreenContent() : std::string();
     napi_create_string_utf8(env, content.c_str(), content.length(), &result);
+    return result;
+}
+
+static napi_value GetCurrentBgColor(napi_env env, napi_callback_info info) {
+    size_t argc = 0;
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
+    napi_value result;
+    napi_create_uint32(env, host ? host->GetCurrentBgColor() : 0xFF0B0D10, &result);
     return result;
 }
 
@@ -3496,6 +3700,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"drainPendingFrame", nullptr, DrainPendingFrame, nullptr, nullptr, nullptr, napi_default, host},
         {"resizeTerminal", nullptr, ResizeTerminal, nullptr, nullptr, nullptr, napi_default, host},
         {"getScreenContent", nullptr, GetScreenContent, nullptr, nullptr, nullptr, napi_default, host},
+        {"getCurrentBgColor", nullptr, GetCurrentBgColor, nullptr, nullptr, nullptr, napi_default, host},
         {"getCursorPosition", nullptr, GetCursorPosition, nullptr, nullptr, nullptr, napi_default, host},
         {"getTerminalSize", nullptr, GetTerminalSize, nullptr, nullptr, nullptr, napi_default, host},
         {"getCellMetrics", nullptr, GetCellMetrics, nullptr, nullptr, nullptr, napi_default, host},

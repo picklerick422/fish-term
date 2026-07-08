@@ -1,12 +1,12 @@
 import { common } from '@kit.AbilityKit';
 import { emitter } from '@kit.BasicServicesKit';
-import { font } from '@kit.ArkUI';
+import { font, curves, window } from '@kit.ArkUI';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { TerminalRuntime } from '../session/TerminalTab';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
-import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS } from '../store/ConnectionStore';
+import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS, SavedSession, SavedTab } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
 import {
   DEFAULT_FONT_SIZE, clampFontSize,
@@ -109,11 +109,15 @@ struct Index {
   @State private fontScaleBoost: number = DEFAULT_FONT_SCALE_BOOST;
   @State private cjkVerticalOffset: number = DEFAULT_CJK_VERTICAL_OFFSET;
   @State private characterSpacing: number = DEFAULT_CHARACTER_SPACING;
+  @State private restoreTabsEnabled: boolean = true;
+  @State private restoreChecked: boolean = false;
   // Bumped on Ctrl+Shift+F to open the find overlay on the active terminal.
   @State private searchSignal: number = 0;
   // First-run onboarding guide.
   @State private showGuide: boolean = false;
   @State private guideStep: number = 0;
+  // Background mask opacity for fade-in/out animation.
+  @State private guideBgOpacity: number = 0;
   // Hover states for guide button and guide card buttons
   @State private hoverGuide: boolean = false;
   @State private guideHover: string = '';
@@ -134,6 +138,7 @@ struct Index {
   private didDrag: boolean = false;
   private lastDragEnd: number = 0;
   private chipWidths: Map<number, number> = new Map<number, number>();
+  private saveDebounceTimer: number = -1;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -165,15 +170,26 @@ struct Index {
 
     this.loadProfile();
     this.loadSettings();
+    this.loadRestoreTabsAndRestore();
     emitter.on({ eventId: 10086 }, () => {
       this.runtimes.forEach((rt: TerminalRuntime) => {
         rt.session?.onForeground();
       });
-      // Returning to the foreground: the window regains focus but the active
-      // terminal surface does not automatically reclaim keyboard focus, so the
-      // first keystrokes would be dropped (or routed nowhere) until the user
-      // taps the page. Re-focus it explicitly.
       this.focusActiveTerminal();
+    });
+    // Window-level focus listener: when the window gains focus (e.g. Alt+Tab back,
+    // clicking the title bar after another app), re-route hardware keyboard to the
+    // active terminal. Uses 'windowEvent' with WINDOW_ACTIVE — the only focus
+    // signal available on API 20. Without this, keystrokes land on the last-focused
+    // ArkUI widget (a tab chip, a button) and Ctrl-key events are misrouted.
+    window.getLastWindow(this.context).then((appWindow: window.Window) => {
+      appWindow.on('windowEvent', (eventType: window.WindowEventType) => {
+        if (eventType === window.WindowEventType.WINDOW_ACTIVE) {
+          this.focusActiveTerminal();
+        }
+      });
+    }).catch((_err: Object) => {
+      // Non-fatal: the emitter event above is the primary path.
     });
     // 检查是否有待展示的崩溃日志（仅在用户未关闭崩溃提醒时显示）
     if (this.store) {
@@ -187,6 +203,57 @@ struct Index {
         }
       });
     }
+  }
+
+  private loadRestoreTabsAndRestore(): void {
+    const store: ConnectionStore | null = this.store;
+    if (!store) {
+      this.restoreChecked = true;
+      return;
+    }
+    store.loadRestoreTabsEnabled().then((enabled: boolean): void => {
+      this.restoreTabsEnabled = enabled;
+      if (!enabled) {
+        this.restoreChecked = true;
+        return;
+      }
+      store.loadSession().then((session: SavedSession | null): void => {
+        if (!session || session.tabs.length === 0) {
+          this.restoreChecked = true;
+          return;
+        }
+        // Hide connection form — tabs are being restored.
+        this.showNewConnection = false;
+        for (let i: number = 0; i < session.tabs.length; i++) {
+          const t: SavedTab = session.tabs[i];
+          this.openTab({
+            host: t.host,
+            port: t.port,
+            token: t.token,
+            tls: t.tls,
+            cwd: t.cwd,
+            shell: t.shell,
+            sessionId: t.sessionId
+          }, t.title);
+        }
+        // Restore active tab by saved index.
+        if (session.activeIndex >= 0 && session.activeIndex < this.tabs.length) {
+          this.activeId = this.tabs[session.activeIndex].id;
+          this.focusActiveTerminal();
+        }
+        this.restoreChecked = true;
+        // Re-apply saved titles after a short delay to survive any async
+        // callbacks that fire during session startup (status events, etc.).
+        setTimeout(() => {
+          for (let i: number = 0; i < this.tabs.length && i < session.tabs.length; i++) {
+            const savedTitle: string = session.tabs[i].title;
+            if (savedTitle.length > 0) {
+              this.updateTabTitle(this.tabs[i].id, savedTitle);
+            }
+          }
+        }, 500);
+      });
+    });
   }
 
   private loadProfile(): void {
@@ -228,8 +295,7 @@ struct Index {
     });
     store.loadOnboarded().then((done: boolean): void => {
       if (!done) {
-        this.showGuide = true;
-        this.guideStep = 0;
+        this.openGuide();
       }
     });
     store.loadFontFamily(DEFAULT_UI_FONT, true).then((f: string): void => {
@@ -252,16 +318,49 @@ struct Index {
     });
   }
 
-  private finishGuide(): void {
-    this.showGuide = false;
+  // Guide appear/disappear animation — replicates the native bindSheet(CENTER)
+  // motion: card slides up + fades in, background mask fades in/out.
+  private readonly guideAnimCurve = curves.cubicBezierCurve(0.32, 0.72, 0.0, 1.0);
+
+  private openGuide(): void {
+    this.showGuide = true;
     this.guideStep = 0;
-    if (this.store) {
-      this.store.saveOnboarded(true);
-    }
+    animateTo({ duration: 280, curve: this.guideAnimCurve }, () => {
+      this.guideBgOpacity = 1;
+    });
+  }
+
+  // Animate out, then tear down DOM after the transition finishes.
+  private closeGuide(then?: () => void): void {
+    animateTo({ duration: 250, curve: this.guideAnimCurve }, () => {
+      this.showGuide = false;
+      this.guideBgOpacity = 0;
+    });
+    setTimeout(() => {
+      this.guideStep = 0;
+      if (then) {
+        then();
+      }
+    }, 260);
+  }
+
+  private finishGuide(): void {
+    this.closeGuide(() => {
+      if (this.store) {
+        this.store.saveOnboarded(true);
+      }
+    });
   }
 
   aboutToDisappear(): void {
     emitter.off(10086);
+    this.stopLiveBgPolling();
+    // Flush any pending debounced save immediately before tearing down.
+    if (this.saveDebounceTimer >= 0) {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = -1;
+    }
+    this.doSaveSession();
     this.runtimes.forEach((rt: TerminalRuntime) => {
       rt.session?.stop();
     });
@@ -314,13 +413,63 @@ struct Index {
   // active tab can match the terminal exactly. Needs a bound native controller;
   // falls back to the previous value when none is available yet.
   private refreshThemeBg(): void {
-    this.runtimes.forEach((rt: TerminalRuntime) => {
-      const colors: string[] = rt.controller.getThemeColors(this.themeName);
-      if (colors && colors.length >= 2 && colors[0].length > 0) {
-        this.themeBg = colors[0];
-        this.themeFg = colors[1];
-      }
-    });
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (!rt) {
+      return;
+    }
+    const colors: string[] = rt.controller.getThemeColors(this.themeName);
+    if (colors && colors.length >= 2 && colors[0].length > 0) {
+      this.themeBg = colors[0];
+      this.themeFg = colors[1];
+    }
+  }
+
+  // Poll the active controller's live background color and update the tab
+  // strip / terminal card if it changed (e.g. via OSC 11 from opencode).
+  private liveBgTimer: number = -1;
+  private startLiveBgPolling(): void {
+    if (this.liveBgTimer >= 0) {
+      return;
+    }
+    this.liveBgTimer = setInterval(() => {
+      this.syncLiveBackground();
+    }, 500) as number;
+  }
+  private stopLiveBgPolling(): void {
+    if (this.liveBgTimer >= 0) {
+      clearInterval(this.liveBgTimer);
+      this.liveBgTimer = -1;
+    }
+  }
+  private syncLiveBackground(): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (!rt || this.showSettings || this.showRenameDialog) {
+      return;
+    }
+    const liveArgb: number = rt.controller.getCurrentBgColor();
+    const live: string = Index.argbToHex(liveArgb);
+    if (live.length > 0 && live !== this.themeBg) {
+      this.themeBg = live;
+      this.themeFg = Index.contrastFg(liveArgb);
+    }
+  }
+
+  // #RRGGBB from ARGB number
+  static argbToHex(argb: number): string {
+    const r: number = (argb >> 16) & 0xFF;
+    const g: number = (argb >> 8) & 0xFF;
+    const b: number = argb & 0xFF;
+    return '#' + [r, g, b].map((c: number) => c.toString(16).padStart(2, '0').toUpperCase()).join('');
+  }
+
+  // Simple luminance heuristic for contrast foreground.
+  static contrastFg(argb: number): string {
+    const r: number = (argb >> 16) & 0xFF;
+    const g: number = (argb >> 8) & 0xFF;
+    const b: number = argb & 0xFF;
+    // Perceived brightness (sRGB weights)
+    const lum: number = 0.299 * r + 0.587 * g + 0.114 * b;
+    return lum > 140 ? Palette.base : Palette.text;
   }
 
   // ----- tab lifecycle -------------------------------------------------------
@@ -352,8 +501,20 @@ struct Index {
     //     a tap. Without this, IME text keeps going to the previously tapped tab
     //     and returning from background never re-raises the keyboard.
     console.info('FT_DIAG focusActiveTerminal surfaceId=' + rt.surfaceId);
-    this.requestSurfaceFocus(rt.surfaceId, 8);
+    this.requestSurfaceFocus(rt.surfaceId, 16);
     rt.controller.focusTerminal();
+    // Safety net: if the XComponent still hasn't accepted focus after all retries
+    // (e.g. returning from background with a slow window compositor), try once
+    // more after a longer delay. Without this, keyboard events leak to other
+    // ArkUI elements and Ctrl+key combos may be misrouted.
+    setTimeout(() => {
+      const currentRt: TerminalRuntime | null = this.activeRuntime();
+      if (currentRt && currentRt.surfaceId === rt.surfaceId) {
+        try {
+          focusControl.requestFocus(rt.surfaceId);
+        } catch (_) {}
+      }
+    }, 500);
   }
 
   // Don't pull focus to a terminal when an overlay that needs the keyboard is up
@@ -446,15 +607,78 @@ struct Index {
     }
   }
 
-  // Open a new tab and start a session to the current host/port/token.
-  private openTab(): void {
-    const host: string = this.host.trim();
-    const token: string = this.token.trim();
-    const port: number = Number(this.port);
-    if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535 || token.length === 0) {
-      // Missing creds — fall back to the connect form by clearing all tabs.
-      this.formError = '请先填写连接信息';
+  // Debounced save — collects the latest snapshot and writes once after 250ms
+  // of inactivity. This prevents the race where multiple async saveSession()
+  // calls complete out of order and a stale snapshot overwrites the latest one.
+  private saveSession(): void {
+    if (this.saveDebounceTimer >= 0) {
+      clearTimeout(this.saveDebounceTimer);
+    }
+    this.saveDebounceTimer = setTimeout(() => {
+      this.saveDebounceTimer = -1;
+      this.doSaveSession();
+    }, 250) as number;
+  }
+
+  private doSaveSession(): void {
+    const store: ConnectionStore | null = this.store;
+    if (!store || !this.restoreTabsEnabled) {
       return;
+    }
+    let activeIndex: number = 0;
+    const savedTabs: SavedTab[] = [];
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      const meta: TabMeta = this.tabs[i];
+      if (meta.id === this.activeId) {
+        activeIndex = i;
+      }
+      const rt: TerminalRuntime | undefined = this.runtimes.get(meta.id);
+      if (!rt || !rt.connectionConfig) {
+        continue;
+      }
+      savedTabs.push({
+        title: meta.title,
+        host: rt.connectionConfig.host,
+        port: rt.connectionConfig.port,
+        token: rt.connectionConfig.token,
+        tls: rt.connectionConfig.tls,
+        cwd: rt.cwd.length > 0 ? rt.cwd : rt.connectionConfig.cwd,
+        shell: rt.connectionConfig.shell,
+        sessionId: rt.sessionId.length > 0 ? rt.sessionId : undefined
+      });
+    }
+    store.saveSession({ activeIndex, tabs: savedTabs });
+  }
+
+  // Open a new tab and start a session. When overrideConfig is provided
+  // (session restore), it uses those params instead of the form fields.
+  // initialTitle overrides the default title for session restore.
+  private openTab(overrideConfig?: FishConnectConfig, initialTitle?: string): void {
+    let host: string;
+    let port: number;
+    let token: string;
+    let tls: boolean;
+    let cwd: string | undefined;
+    let shell: string | undefined;
+    let sessionId: string | undefined;
+
+    if (overrideConfig) {
+      host = overrideConfig.host;
+      port = overrideConfig.port;
+      token = overrideConfig.token;
+      tls = overrideConfig.tls;
+      cwd = overrideConfig.cwd;
+      shell = overrideConfig.shell;
+      sessionId = overrideConfig.sessionId;
+    } else {
+      host = this.host.trim();
+      token = this.token.trim();
+      port = Number(this.port);
+      tls = this.tls;
+      if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535 || token.length === 0) {
+        this.formError = '请先填写连接信息';
+        return;
+      }
     }
 
     const id: number = this.nextId++;
@@ -462,24 +686,47 @@ struct Index {
     this.applySettingsTo(rt.controller);
     this.runtimes.set(id, rt);
 
-    const meta: TabMeta = new TabMeta(id, '终端 ' + id, DriverState.Connecting, '连接中…');
+    const cfg: FishConnectConfig = { host, port, token, tls, cwd, shell, sessionId };
+    rt.connectionConfig = cfg;
+    if (cwd) {
+      rt.cwd = cwd;
+    }
+    if (sessionId) {
+      rt.sessionId = sessionId;
+    }
+
+    const tabTitle: string = initialTitle ?? ((cwd && cwd.length > 0)
+      ? (cwd.split('/').pop() || ('终端 ' + id))
+      : ('终端 ' + id));
+    const meta: TabMeta = new TabMeta(id, tabTitle, DriverState.Connecting, '连接中…');
     this.tabs = this.tabs.concat(meta);
     this.activeId = id;
 
-    const cfg: FishConnectConfig = { host, port, token, tls: this.tls };
     const session: TerminalSession = new TerminalSession(rt.controller, new FishWebSocketDriver(cfg));
     session.onStatus((s: DriverStatus): void => {
       this.updateTabMeta(id, s.state, stateLabel(s));
+      this.saveSession();
     });
     session.onTitleChange((title: string): void => {
       this.updateTabTitle(id, title);
+      this.saveSession();
+    });
+    session.onCwdChange((dir: string): void => {
+      rt.cwd = dir;
+      this.saveSession();
+    });
+    session.onSessionId((id: string): void => {
+      rt.sessionId = id;
+      this.saveSession();
     });
     rt.session = session;
     session.start();
     this.focusActiveTerminal();
+    this.saveSession();
     // Native bind happens in the surface's onLoad; poll briefly so the tab/
     // content background can pick up the real theme bg once it's available.
     setTimeout(() => { this.refreshThemeBg(); }, 250);
+    this.startLiveBgPolling();
   }
 
   private switchTab(id: number): void {
@@ -489,6 +736,10 @@ struct Index {
     }
     this.activeId = id;
     this.focusActiveTerminal();
+    this.saveSession();
+    // Immediately sync the background — the new active tab may have different
+    // colors (e.g. opencode altered its background via OSC).
+    setTimeout(() => { this.syncLiveBackground(); }, 100);
   }
 
   // Ctrl+1..9 — jump to the Nth tab (1-based). Out-of-range is ignored.
@@ -619,6 +870,10 @@ struct Index {
       if (this.activeId === id) {
         this.activeId = this.tabs.length > 0 ? this.tabs[this.tabs.length - 1].id : -1;
       }
+      if (this.tabs.length === 0) {
+        this.stopLiveBgPolling();
+      }
+      this.saveSession();
     }, 0);
   }
 
@@ -750,7 +1005,7 @@ struct Index {
           }
           .layoutWeight(1)
           .backgroundColor(this.themeBg)
-          .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 10, bottomRight: 10 })
+          .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 10, bottomRight: 10 })
           .clip(true)
         }
       }
@@ -768,7 +1023,13 @@ struct Index {
         dragBar: false,
         showClose: false,
         backgroundColor: Palette.base,
-        onDisappear: () => { this.focusActiveTerminal(); }
+        onDisappear: () => {
+          // Reset the flag even when dismissed via swipe / back gesture rather
+          // than the explicit Close button, so canFocusTerminal() won't block
+          // future focusActiveTerminal() calls (the "Ctrl clears input" bug).
+          this.showSettings = false;
+          this.focusActiveTerminal();
+        }
       })
 
       // Invisible anchor for the crash log sheet — third bindSheet because
@@ -781,7 +1042,10 @@ struct Index {
           dragBar: false,
           showClose: false,
           backgroundColor: Palette.base,
-          onDisappear: () => { this.focusActiveTerminal(); }
+          onDisappear: () => {
+            this.showCrashLog = false;
+            this.focusActiveTerminal();
+          }
         })
       // Invisible anchor for the rename sheet.
       Text('')
@@ -793,10 +1057,13 @@ struct Index {
           dragBar: false,
           showClose: false,
           backgroundColor: Palette.base,
-          onDisappear: () => { this.focusActiveTerminal(); }
+          onDisappear: () => {
+            this.showRenameDialog = false;
+            this.focusActiveTerminal();
+          }
         })
 
-      if (this.tabs.length === 0 || this.showNewConnection) {
+      if (this.restoreChecked && (this.tabs.length === 0 || this.showNewConnection)) {
         this.buildForm();
       }
 
@@ -946,7 +1213,7 @@ struct Index {
       .justifyContent(FlexAlign.Center)
       .focusable(false)
       .onHover((h: boolean) => { this.hoverGuide = h; })
-      .onClick(() => { this.guideStep = 0; this.showGuide = true; })
+      .onClick(() => { this.openGuide(); })
 
       // Settings button — borderless, same visual weight as system controls.
       // Hover highlight lives on a smaller inner box (not the full 40×40 hit
@@ -978,9 +1245,6 @@ struct Index {
   @Builder
   private buildTabChip(tab: TabMeta) {
     Row({ space: 7 }) {
-      Text('●')
-        .fontSize(8)
-        .fontColor(this.dotColor(tab.state))
       Text(tab.title)
         .fontSize(Math.max(10, this.fontSize - 1))
         .fontFamily(this.uiFontFamily)
@@ -1285,7 +1549,7 @@ struct Index {
       onFontScaleBoostChange: (v: number) => { this.applyFontScaleBoost(v); },
       onCjkVerticalOffsetChange: (v: number) => { this.applyCjkVerticalOffset(v); },
       onCharacterSpacingChange: (v: number) => { this.applyCharacterSpacing(v); },
-      onReplayGuide: () => { this.showSettings = false; this.guideStep = 0; this.showGuide = true; },
+      onReplayGuide: () => { this.showSettings = false; this.openGuide(); },
       onClose: () => { this.showSettings = false; }
     })
   }
@@ -1297,8 +1561,8 @@ struct Index {
   private guideTitle(step: number): string {
     switch (step) {
       case 0: return '欢迎使用 fish-term';
-      case 1: return '第 1 步 · 运行 fish-agent';
-      case 2: return '第 2 步 · 获取连接信息';
+      case 1: return '第 1 步 · 安装 fish-agent';
+      case 2: return '第 2 步 · 启动服务 & 获取连接信息';
       case 3: return '第 3 步 · 新建连接';
       default: return '第 4 步 · 开始使用';
     }
@@ -1309,9 +1573,9 @@ struct Index {
       case 0:
         return 'fish-term 是一个连接到 fish-agent 的 HarmonyOS 终端。\n只需几步就能在手机/平板上获得完整的远程终端体验。';
       case 1:
-        return '在你的电脑或服务器上下载并运行 fish-agent：\n\n  ./fish-agent --listen 0.0.0.0:8765\n\n它会启动一个 WebSocket 服务，等待终端接入。';
+        return 'fish-agent 基于 wand-agent 修改，是一个 Go 编写的 WebSocket PTY 代理。\n\n安装方式一：下载预编译二进制（Linux）\n\n  # ARM64（树莓派/ARM 服务器）\n  curl -LO https://github.com/<repo>/releases/latest/download/fish-agent-linux-arm64\n\n  # x86_64（普通 PC/服务器）\n  curl -LO https://github.com/<repo>/releases/latest/download/fish-agent-linux-amd64\n\n  chmod +x fish-agent-linux-*\n\n安装方式二：从源码编译\n\n  git clone <repo-url> && cd fish-agent\n  go build -buildvcs=false -o fish-agent .\n\n编译完成后将 fish-agent 复制到任意目录即可运行。';
       case 2:
-        return '启动后 fish-agent 会输出三项信息：\n\n  · 主机地址 host（如 192.168.1.10）\n  · 端口 port（默认 8765）\n  · 访问 token（用于鉴权）\n\n确保设备与该主机在同一网络可达。';
+        return '启动 fish-agent：\n\n  ./fish-agent --host 0.0.0.0 --port 8765 --token <你的token>\n\n参数说明：\n  --host  监听地址，默认 0.0.0.0（所有网卡）\n  --port  监听端口，默认 8765\n  --token  鉴权令牌，客户端连接时需携带\n\n启动后会输出 host、port、token 三项信息。\n用 ip addr 查看服务器 IP，确保设备和服务器在同一网络可达。\n如开启防火墙，请放行对应端口。';
       case 3:
         return '回到 fish-term，在首页填入 host / 端口 / token，\n如需加密传输可打开 TLS(wss)，点击「连接」即可开启第一个终端标签页。';
       default:
@@ -1340,6 +1604,8 @@ struct Index {
 
   // One guide page (image + title + description), inside a Scroll so a tall
   // page (e.g. the shortcuts summary) can scroll within the fixed Tabs height.
+  // The image is pinned to the top of the scroll area so its top edge stays at
+  // the same position across all steps during horizontal swipe.
   @Builder
   private guideBody(step: number) {
     Scroll() {
@@ -1360,7 +1626,7 @@ struct Index {
         .backgroundColor(Palette.inputBg)
         .borderRadius(12)
         .border({ width: 1, color: Palette.border })
-        .margin({ bottom: 18 })
+        .margin({ top: 0, bottom: 18 })
 
         Text(this.guideTitle(step))
           .fontSize(20)
@@ -1378,17 +1644,28 @@ struct Index {
           .width('100%')
       }
       .width('100%')
+      .padding({ top: 0 })
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.None)
+    .align(Alignment.Top)
   }
 
   @Builder
   private buildGuide() {
-    Column() {
+    Stack({ alignContent: Alignment.Center }) {
+      // Background mask — fades in/out independently via guideBgOpacity.
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#000000')
+        .opacity(this.guideBgOpacity * 0.8)
+        .onClick(() => { /* absorb clicks, close on background tap disabled */ })
+
+      // Card
       Column() {
         // Sliding page area: native Tabs gives a smooth horizontal slide. Swipe
         // between pages is also enabled. Native bar hidden; buttons/dots drive it.
@@ -1467,13 +1744,17 @@ struct Index {
       .backgroundColor(Palette.base)
       .borderRadius(16)
       .border({ width: 1, color: Palette.border })
+      // Slide-up + fade transition matching bindSheet(CENTER) feel.
+      .transition(TransitionEffect.asymmetric(
+        TransitionEffect.translate({ y: 60 }).combine(TransitionEffect.OPACITY)
+          .animation({ duration: 280, curve: this.guideAnimCurve }),
+        TransitionEffect.translate({ y: 60 }).combine(TransitionEffect.OPACITY)
+          .animation({ duration: 250, curve: this.guideAnimCurve })
+      ))
     }
     .width('100%')
     .height('100%')
     .padding(24)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor('#CC000000')
   }
 
   @Builder
