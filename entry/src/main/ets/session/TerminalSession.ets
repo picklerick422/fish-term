@@ -9,14 +9,21 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 // so connect/disconnect never unmount the surface (which is what crashed before).
 // Extract the last OSC 0/2 window title from a chunk of terminal output.
 // Matches: ESC ] (0|1|2) ; <text> BEL
+//
+// Only scans the first 64 KB of data — OSC window titles always appear near
+// the start of a session (shell prompt, etc.).  Scanning megabytes of replay
+// data for title sequences blocks the main thread (ANR) because String.indexOf
+// on 5 MB strings is CPU-bound.
 function extractOscTitle(data: string): string | null {
+  const SCAN_LIMIT: number = 65536; // 64 KB
+  const scanEnd: number = Math.min(data.length, SCAN_LIMIT);
   let last: string | null = null;
   let i = 0;
-  while (i < data.length) {
+  while (i < scanEnd) {
     const esc = data.indexOf('\x1b]', i);
-    if (esc < 0) break;
+    if (esc < 0 || esc >= scanEnd) break;
     const semi = data.indexOf(';', esc + 2);
-    if (semi < 0) break;
+    if (semi < 0 || semi >= scanEnd) break;
     const ps = data.substring(esc + 2, semi);
     if (ps === '0' || ps === '1' || ps === '2') {
       const bel = data.indexOf('\x07', semi + 1);
@@ -24,7 +31,7 @@ function extractOscTitle(data: string): string | null {
       let end = -1;
       if (bel >= 0 && (st < 0 || bel < st)) end = bel;
       else if (st >= 0) end = st;
-      if (end >= 0) {
+      if (end >= 0 && end < scanEnd) {
         last = data.substring(semi + 1, end);
         i = end + 1;
         continue;
@@ -64,7 +71,10 @@ export class TerminalSession {
             console.warn('[TerminalSession] titleCb is null, callback not registered');
           }
         }
-        this.controller.feed(data);
+        // Feed in chunks when the data is large (e.g. server ring-buffer
+        // replay on reconnect).  Processing megabytes synchronously on the
+        // main thread blocks rendering and triggers the system ANR watchdog.
+        this.feedChunked(data);
       }
     });
     this.driver.onStatus((s: DriverStatus): void => {
@@ -111,6 +121,11 @@ export class TerminalSession {
   onSessionId(cb: (id: string) => void): void {
     this.sessionIdCb = cb;
   }
+
+  // Max bytes to feed to the terminal emulator in one synchronous call.
+  // Beyond this threshold data is split into chunks with setTimeout yields
+  // between them so the main thread stays responsive (avoids THREAD_BLOCK_6S).
+  private static readonly FEED_CHUNK_BYTES: number = 262144; // 256 KB
 
   onForeground(): void {
     if (this.driver instanceof FishWebSocketDriver) {
@@ -165,6 +180,31 @@ export class TerminalSession {
     this.controller.setSizeListener(null);
     this.started = false;
     this.driver.stop();
+  }
+
+  // Feed terminal output in chunks when it exceeds FEED_CHUNK_BYTES.
+  // The terminal parser is a state machine — partial escape sequences at
+  // chunk boundaries are safely resumed by the next chunk.  Yielding via
+  // setTimeout(0) keeps the main thread responsive during bulk data
+  // (e.g. server ring-buffer replay on reconnect).
+  private feedChunked(data: string): void {
+    if (data.length <= TerminalSession.FEED_CHUNK_BYTES) {
+      this.controller.feed(data);
+      return;
+    }
+    let offset: number = 0;
+    const feedNext = (): void => {
+      if (this.stopped || offset >= data.length) {
+        return;
+      }
+      const end: number = Math.min(offset + TerminalSession.FEED_CHUNK_BYTES, data.length);
+      this.controller.feed(data.substring(offset, end));
+      offset = end;
+      if (offset < data.length) {
+        setTimeout(feedNext, 0);
+      }
+    };
+    feedNext();
   }
 
   private startWhenSized(): void {

@@ -170,7 +170,11 @@ struct Index {
 
     this.loadProfile();
     this.loadSettings();
-    this.loadRestoreTabsAndRestore();
+    // Defer tab restore to a macrotask so the first frame can render the
+    // startup loading indicator before Promise callbacks block the thread.
+    // Without this, all microtasks (preferences reads → openTab() × N)
+    // complete before the first paint and the loading UI never appears.
+    setTimeout(() => { this.loadRestoreTabsAndRestore(); }, 10);
     emitter.on({ eventId: 10086 }, () => {
       this.runtimes.forEach((rt: TerminalRuntime) => {
         rt.session?.onForeground();
@@ -224,8 +228,39 @@ struct Index {
         }
         // Hide connection form — tabs are being restored.
         this.showNewConnection = false;
-        for (let i: number = 0; i < session.tabs.length; i++) {
-          const t: SavedTab = session.tabs[i];
+
+        // Restore tabs one at a time via setTimeout, yielding the main thread
+        // between each so the loading indicator stays animated and the system
+        // doesn't flag the app as unresponsive (ANR).
+        let ri: number = 0;
+        const restoreNext = (): void => {
+          if (ri >= session.tabs.length) {
+            // All tabs created — finalize.
+            if (session.activeIndex >= 0 && session.activeIndex < this.tabs.length) {
+              this.activeId = this.tabs[session.activeIndex].id;
+              this.focusActiveTerminal();
+            }
+            // Delay revealing the tab strip so native terminal surfaces have
+            // time to mount their renderers and draw the first frame.  Without
+            // this the user sees a brief flash of black surfaces and status
+            // banners between the loading indicator and the first content.
+            setTimeout(() => {
+              this.restoreChecked = true;
+              // Re-apply saved titles after another short delay to survive any
+              // async callbacks that fire during session startup (status events,
+              // OSC title detection, etc.).
+              setTimeout(() => {
+                for (let i: number = 0; i < this.tabs.length && i < session.tabs.length; i++) {
+                  const savedTitle: string = session.tabs[i].title;
+                  if (savedTitle.length > 0) {
+                    this.updateTabTitle(this.tabs[i].id, savedTitle);
+                  }
+                }
+              }, 500);
+            }, 400);
+            return;
+          }
+          const t: SavedTab = session.tabs[ri];
           this.openTab({
             host: t.host,
             port: t.port,
@@ -235,23 +270,10 @@ struct Index {
             shell: t.shell,
             sessionId: t.sessionId
           }, t.title);
-        }
-        // Restore active tab by saved index.
-        if (session.activeIndex >= 0 && session.activeIndex < this.tabs.length) {
-          this.activeId = this.tabs[session.activeIndex].id;
-          this.focusActiveTerminal();
-        }
-        this.restoreChecked = true;
-        // Re-apply saved titles after a short delay to survive any async
-        // callbacks that fire during session startup (status events, etc.).
-        setTimeout(() => {
-          for (let i: number = 0; i < this.tabs.length && i < session.tabs.length; i++) {
-            const savedTitle: string = session.tabs[i].title;
-            if (savedTitle.length > 0) {
-              this.updateTabTitle(this.tabs[i].id, savedTitle);
-            }
-          }
-        }, 500);
+          ri++;
+          setTimeout(restoreNext, 10);
+        };
+        restoreNext();
       });
     });
   }
@@ -501,20 +523,20 @@ struct Index {
     //     a tap. Without this, IME text keeps going to the previously tapped tab
     //     and returning from background never re-raises the keyboard.
     console.info('FT_DIAG focusActiveTerminal surfaceId=' + rt.surfaceId);
-    this.requestSurfaceFocus(rt.surfaceId, 16);
+    // Primary retry wave — 20 attempts × 50ms = 1 000ms coverage.
+    this.requestSurfaceFocus(rt.surfaceId, 20);
     rt.controller.focusTerminal();
-    // Safety net: if the XComponent still hasn't accepted focus after all retries
-    // (e.g. returning from background with a slow window compositor), try once
-    // more after a longer delay. Without this, keyboard events leak to other
-    // ArkUI elements and Ctrl+key combos may be misrouted.
+    // Secondary wave: starts after a 600ms delay (once the primary wave has run
+    // ~12 of its 20 attempts) and overlaps with the tail of the primary wave,
+    // then continues for another 500ms after the primary finishes. Together they
+    // cover ~1 500ms, which is enough for the slowest return-from-background
+    // surface restore paths observed on HarmonyOS devices.
     setTimeout(() => {
       const currentRt: TerminalRuntime | null = this.activeRuntime();
       if (currentRt && currentRt.surfaceId === rt.surfaceId) {
-        try {
-          focusControl.requestFocus(rt.surfaceId);
-        } catch (_) {}
+        this.requestSurfaceFocus(rt.surfaceId, 10);
       }
-    }, 500);
+    }, 600);
   }
 
   // Don't pull focus to a terminal when an overlay that needs the keyboard is up
@@ -529,22 +551,29 @@ struct Index {
   // focusable yet, so focusControl.requestFocus() silently fails and keystrokes
   // keep going to the previously focused surface. Retry until it takes, aborting
   // if the active tab changes underneath us (rapid switching).
+  //
+  // IMPORTANT: focusControl.requestFocus() on HarmonyOS may return true without
+  // actually establishing focus (false positive). Always retry for the full
+  // attempt count regardless of the return value — never trust a single
+  // true/false. 20 retries × 50ms = 1 000ms coverage, which gives the ArkUI
+  // render pipeline and the native XComponent surface enough time to settle
+  // after visibility transitions and return-from-background restore.
   private requestSurfaceFocus(surfaceId: string, attempts: number): void {
     setTimeout(() => {
       const rt: TerminalRuntime | null = this.activeRuntime();
       if (!rt || rt.surfaceId !== surfaceId) {
         return;
       }
-      let ok: boolean = false;
       try {
-        ok = focusControl.requestFocus(surfaceId);
+        focusControl.requestFocus(surfaceId);
       } catch (_) {
-        ok = false;
+        // best-effort — we retry regardless
       }
-      if (!ok && attempts > 1) {
-        this.requestSurfaceFocus(surfaceId, attempts - 1);
+      const remaining: number = attempts - 1;
+      if (remaining > 0) {
+        this.requestSurfaceFocus(surfaceId, remaining);
       }
-    }, 24);
+    }, 50);
   }
 
   private updateTabMeta(id: number, state: DriverState, statusText: string): void {
@@ -989,48 +1018,77 @@ struct Index {
 
   build() {
     Stack() {
-      Column() {
-        if (this.tabs.length > 0) {
-          this.buildTabStrip();
-          // Terminal content as a rounded card. The frame (Palette.surface,
-          // same color as the strip) shows on left/right/bottom because the
-          // parent Column pads those sides. Cross-axis stretch fills the rest,
-          // so no width('100%') is set (that would overflow the padding and
-          // clip the right border).
-          Stack({ alignContent: Alignment.Top }) {
-            ForEach(this.tabs, (tab: TabMeta) => {
-              this.buildSurface(tab.id);
-            }, (tab: TabMeta) => tab.id.toString())
-            this.buildStatusBanner()
+      if (!this.restoreChecked) {
+        // Startup loading — full-screen centered indicator shown while reading
+        // saved sessions from preferences and restoring connections.  Stays
+        // visible until ALL tabs are created, not just the first one.
+        Column() {
+          Column({ space: 16 }) {
+            Image($r('app.media.app_logo'))
+              .width(72)
+              .height(72)
+              .borderRadius(16)
+
+            LoadingProgress()
+              .width(32)
+              .height(32)
+              .color(Palette.accent)
+
+            Text('连接中...')
+              .fontSize(15)
+              .fontFamily(this.uiFontFamily)
+              .fontColor(Palette.textDim)
           }
-          .layoutWeight(1)
-          .backgroundColor(this.themeBg)
-          .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 10, bottomRight: 10 })
-          .clip(true)
+          .alignItems(HorizontalAlign.Center)
         }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(Palette.base)
+      } else {
+        Column() {
+          if (this.tabs.length > 0) {
+            this.buildTabStrip();
+            // Terminal content as a rounded card. The frame (Palette.surface,
+            // same color as the strip) shows on left/right/bottom because the
+            // parent Column pads those sides. Cross-axis stretch fills the rest,
+            // so no width('100%') is set (that would overflow the padding and
+            // clip the right border).
+            Stack({ alignContent: Alignment.Top }) {
+              ForEach(this.tabs, (tab: TabMeta) => {
+                this.buildSurface(tab.id);
+              }, (tab: TabMeta) => tab.id.toString())
+              this.buildStatusBanner()
+            }
+            .layoutWeight(1)
+            .backgroundColor(this.themeBg)
+            .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 10, bottomRight: 10 })
+            .clip(true)
+          }
+        }
+        .width('100%')
+        .height('100%')
+        // Frame: Palette.surface border on left / right / bottom. The top frame
+        // above the tabs is produced inside the (full-height) strip by making
+        // the tab chips shorter than the strip — so the strip stays aligned with
+        // the system window controls.
+        .padding({ left: 8, right: 8, bottom: 8 })
+        .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
+          preferType: SheetType.CENTER,
+          width: '50%',
+          height: 600,
+          dragBar: false,
+          showClose: false,
+          backgroundColor: Palette.base,
+          onDisappear: () => {
+            // Reset the flag even when dismissed via swipe / back gesture rather
+            // than the explicit Close button, so canFocusTerminal() won't block
+            // future focusActiveTerminal() calls (the "Ctrl clears input" bug).
+            this.showSettings = false;
+            this.focusActiveTerminal();
+          }
+        })
       }
-      .width('100%')
-      .height('100%')
-      // Frame: Palette.surface border on left / right / bottom. The top frame
-      // above the tabs is produced inside the (full-height) strip by making
-      // the tab chips shorter than the strip — so the strip stays aligned with
-      // the system window controls.
-      .padding({ left: 8, right: 8, bottom: 8 })
-      .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
-        preferType: SheetType.CENTER,
-        width: '50%',
-        height: 600,
-        dragBar: false,
-        showClose: false,
-        backgroundColor: Palette.base,
-        onDisappear: () => {
-          // Reset the flag even when dismissed via swipe / back gesture rather
-          // than the explicit Close button, so canFocusTerminal() won't block
-          // future focusActiveTerminal() calls (the "Ctrl clears input" bug).
-          this.showSettings = false;
-          this.focusActiveTerminal();
-        }
-      })
 
       // Invisible anchor for the crash log sheet — third bindSheet because
       // a component can only host one bindSheet. Animation identical to settings.

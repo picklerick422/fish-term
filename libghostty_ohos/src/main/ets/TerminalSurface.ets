@@ -198,6 +198,20 @@ export struct TerminalSurface {
         // single XComponent owns keyboard, IME, scrolling, selection and paste.
         this.requestTerminalFocus();
       })
+      // Event-driven focus restoration: when this XComponent transitions from
+      // Hidden to Visible (tab switch or return-from-background), request ArkUI
+      // focus immediately. Unlike the retry-loop in focusActiveTerminal(), this
+      // fires AFTER the ArkUI render pass commits the visibility change, so the
+      // XComponent is guaranteed to be in the render tree and focusable. Without
+      // this, focusControl.requestFocus() may silently fail or return a false
+      // positive, leaving hardware keys (digits, arrows, Ctrl sequences) routed
+      // to the wrong surface — and a lone Ctrl press can then trigger IME mode
+      // switch callbacks that erase committed terminal input.
+      .onVisibleAreaChange([0.0, 1.0], (isVisible: boolean, _currentRatio: number) => {
+        if (isVisible && this.isActiveTab) {
+          this.requestTerminalFocus();
+        }
+      })
       .focusable(this.isActiveTab)
       .focusOnTouch(this.isActiveTab)
       .defaultFocus(this.isActiveTab)
@@ -359,20 +373,25 @@ export struct TerminalSurface {
     }
   }
 
-  // Request focus, retrying up to `attempts` times at ~24ms intervals.
+  // Request focus, retrying up to `attempts` times at ~50ms intervals.
   // Retry is necessary because ArkUI's Visibility.Hidden→Visible commit is async;
   // focusControl.requestFocus silently fails on a not-yet-visible XComponent.
-  private requestTerminalFocus(attempts: number = 10): void {
-    let ok: boolean = false;
+  //
+  // IMPORTANT: focusControl.requestFocus() on HarmonyOS may return true without
+  // actually establishing focus (false positive). Always retry for the full
+  // attempt count regardless of the return value. 15 retries × 50ms = 750ms
+  // coverage.
+  private requestTerminalFocus(attempts: number = 15): void {
     try {
-      ok = focusControl.requestFocus(this.surfaceId);
+      focusControl.requestFocus(this.surfaceId);
     } catch (_) {
-      ok = false;
+      // best-effort — we retry regardless
     }
-    if (!ok && attempts > 1) {
+    const remaining: number = attempts - 1;
+    if (remaining > 0) {
       setTimeout(() => {
-        this.requestTerminalFocus(attempts - 1);
-      }, 24);
+        this.requestTerminalFocus(remaining);
+      }, 50);
     }
   }
 
