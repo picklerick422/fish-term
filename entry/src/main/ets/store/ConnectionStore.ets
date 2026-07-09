@@ -31,6 +31,7 @@ const KEY_SHOW_CRASH_ON_STARTUP: string = 'show_crash_on_startup';
 const TOKEN_ALIAS: string = 'fish_agent_token';
 const KEY_RESTORE_TABS: string = 'restore_tabs_enabled';
 const KEY_SESSION_STATE: string = 'session_state';
+const KEY_TAB_COMPACT: string = 'tab_compact';
 
 export interface SavedTab {
   title: string;
@@ -400,6 +401,28 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error('fish-term save restoreTabsEnabled failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async saveTabCompact(compact: boolean): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_TAB_COMPACT, compact);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save tabCompact failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async loadTabCompact(): Promise<boolean> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_TAB_COMPACT, false) as boolean;
+    } catch (e) {
+      console.error('fish-term load tabCompact failed: ' + JSON.stringify(e));
+      return false;
     }
   }
 
