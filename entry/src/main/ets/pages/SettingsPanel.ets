@@ -88,6 +88,8 @@ export struct SettingsPanel {
   onFontScaleBoostChange: (v: number) => void = (_v: number) => {};
   onCjkVerticalOffsetChange: (v: number) => void = (_v: number) => {};
   onCharacterSpacingChange: (v: number) => void = (_v: number) => {};
+  @Prop tabCompact: boolean = false;
+  onTabCompactChange: (v: boolean) => void = (_v: boolean) => {};
   onReplayGuide: () => void = () => {};
   onClose: () => void = () => {};
 
@@ -1451,6 +1453,34 @@ export struct SettingsPanel {
                 // Clear saved session when feature is disabled.
                 this.store.saveSession({ activeIndex: 0, tabs: [] });
               }
+            }
+          })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(Palette.surface)
+      .borderRadius(10)
+      .border({ width: 1, color: Palette.border })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+
+    // 页签紧凑显示开关
+    Column({ space: 0 }) {
+      this.buildSectionHeader('页签显示')
+      Row({ space: 12 }) {
+        Text('紧凑显示（等宽均分）')
+          .fontSize(14)
+          .fontColor(Palette.text)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.tabCompact })
+          .selectedColor(Palette.accent)
+          .focusable(false)
+          .onChange((on: boolean) => {
+            this.tabCompact = on;
+            this.onTabCompactChange(on);
+            if (this.store) {
+              this.store.saveTabCompact(on);
             }
           })
       }

@@ -115,6 +115,7 @@ struct Index {
   @State private searchSignal: number = 0;
   // First-run onboarding guide.
   @State private showGuide: boolean = false;
+  @State private tabCompact: boolean = false;
   @State private guideStep: number = 0;
   // Background mask opacity for fade-in/out animation.
   @State private guideBgOpacity: number = 0;
@@ -138,6 +139,9 @@ struct Index {
   private didDrag: boolean = false;
   private lastDragEnd: number = 0;
   private chipWidths: Map<number, number> = new Map<number, number>();
+  private tabScroller: Scroller = new Scroller();
+  @State private showOverflow: boolean = false;
+  @State private hoverOverflow: boolean = false;
   private saveDebounceTimer: number = -1;
 
   aboutToAppear(): void {
@@ -217,6 +221,9 @@ struct Index {
     }
     store.loadRestoreTabsEnabled().then((enabled: boolean): void => {
       this.restoreTabsEnabled = enabled;
+      store.loadTabCompact().then((v: boolean): void => {
+        this.tabCompact = v;
+      });
       if (!enabled) {
         this.restoreChecked = true;
         return;
@@ -337,6 +344,9 @@ struct Index {
     });
     store.loadCharacterSpacing(DEFAULT_CHARACTER_SPACING).then((v: number): void => {
       this.characterSpacing = v;
+    });
+    store.loadTabCompact().then((v: boolean): void => {
+      this.tabCompact = v;
     });
   }
 
@@ -769,6 +779,10 @@ struct Index {
     // Immediately sync the background — the new active tab may have different
     // colors (e.g. opencode altered its background via OSC).
     setTimeout(() => { this.syncLiveBackground(); }, 100);
+    // Auto-scroll the tab strip so the newly active chip is visible.
+    if (!this.tabCompact) {
+      setTimeout(() => { this.scrollToTab(id); }, 50);
+    }
   }
 
   // Ctrl+1..9 — jump to the Nth tab (1-based). Out-of-range is ignored.
@@ -811,6 +825,21 @@ struct Index {
     let sum: number = 0;
     this.chipWidths.forEach((w: number) => { sum += w; });
     return Math.max(48, sum / this.chipWidths.size);
+  }
+
+  // Scroll the tab strip horizontally so that the chip for `id` is visible.
+  // Used after keyboard-switch (Ctrl+Tab / Ctrl+1..9) and overflow-menu clicks.
+  private scrollToTab(id: number): void {
+    const index: number = this.tabs.findIndex((t: TabMeta) => t.id === id);
+    if (index < 0) {
+      return;
+    }
+    // Approximate offset: each chip width averaged, plus gaps.
+    const chipW: number = this.avgChipWidth();
+    const gap: number = 4;
+    const targetX: number = index * (chipW + gap);
+    // Scroll so the chip lands near the left edge with a little padding.
+    this.tabScroller.scrollTo({ xOffset: Math.max(0, targetX - chipW), yOffset: 0, animation: true });
   }
 
   // Move the dragged chip one slot in `dir` (±1). Returns false at the edges.
@@ -1062,7 +1091,7 @@ struct Index {
             }
             .layoutWeight(1)
             .backgroundColor(this.themeBg)
-            .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 10, bottomRight: 10 })
+            .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 10, bottomRight: 10 })
             .clip(true)
           }
         }
@@ -1123,6 +1152,40 @@ struct Index {
 
       if (this.restoreChecked && (this.tabs.length === 0 || this.showNewConnection)) {
         this.buildForm();
+      }
+
+      // Overflow menu overlay — tab list dropdown
+      if (this.showOverflow) {
+        // Semi-transparent backdrop — tap anywhere to dismiss
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#00000000')
+          .focusable(false)
+          .onClick(() => { this.showOverflow = false; })
+        // Dropdown panel anchored near the right side of the tab strip
+        Column({ space: 0 }) {
+          Scroll() {
+            Column({ space: 2 }) {
+              ForEach(this.tabs, (tab: TabMeta) => {
+                this.buildOverflowItem(tab)
+              }, (tab: TabMeta) => 'overflow_' + tab.id)
+            }
+            .width('100%')
+            .padding(4)
+          }
+          .scrollable(ScrollDirection.Vertical)
+          .scrollBar(BarState.Off)
+          .constraintSize({ maxHeight: 320 })
+          .width('100%')
+        }
+        .width(200)
+        .backgroundColor(Palette.surface)
+        .borderRadius(8)
+        .border({ width: 1, color: Palette.border })
+        .shadow({ radius: 12, color: '#66000000', offsetY: 6 })
+        .position({ right: 140, top: 40 })
+        .zIndex(100)
       }
 
       if (this.showGuide) {
@@ -1219,40 +1282,106 @@ struct Index {
         .onHover((h: boolean) => { this.hoverLogo = h; })
         .onClick(() => { this.settingsInitialTab = 3; this.showSettings = true; })
 
-      Scroll() {
+      if (!this.tabCompact) {
+        // Non-compact: horizontal scroll, variable width chips
+        Scroll(this.tabScroller) {
+          Stack({ alignContent: Alignment.BottomStart }) {
+            // Transparent filler: covers the full Scroll viewport height so
+            // axis events fire regardless of where the mouse is over the strip
+            // — without this, events only bubble up through chip children in
+            // the lower portion and the upper empty area is dead.
+            Row()
+              .width('100%')
+              .height(40)
+
+            Row({ space: 4 }) {
+              ForEach(this.tabs, (tab: TabMeta) => {
+                this.buildTabChip(tab)
+              }, (tab: TabMeta) => tab.id + '_' + tab.title)
+            }
+            .height(40)
+            .padding({ right: 4 })
+            .alignItems(VerticalAlign.Bottom)
+          }
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .layoutWeight(1)
+        .align(Alignment.Start)
+        .onAxisEvent((event?: AxisEvent) => {
+          if (event) {
+            const dy: number = event.getVerticalAxisValue();
+            if (Math.abs(dy) > 0) {
+              this.tabScroller.scrollBy(dy, 0);
+            }
+          }
+        })
+
+        // "+" new tab — fixed outside scroll area, slightly below center
+        Row() {
+          Text('+')
+            .fontSize(16)
+            .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
+            .animation({ duration: 120, curve: Curve.EaseOut })
+        }
+        .width(24)
+        .height(24)
+        .margin({ top: 4 })
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(5)
+        .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
+        .animation({ duration: 120, curve: Curve.EaseOut })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverAddTab = h; })
+        .onClick(() => { this.openTab(); })
+
+        // Overflow menu button — shown only in non-compact mode
+        Row() {
+          Text('▼')
+            .fontSize(9)
+            .fontColor(this.hoverOverflow ? Palette.textDim : '#606878')
+            .animation({ duration: 120, curve: Curve.EaseOut })
+        }
+        .width(24)
+        .height(24)
+        .margin({ top: 4 })
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(5)
+        .backgroundColor(this.hoverOverflow ? '#1FFFFFFF' : Color.Transparent)
+        .animation({ duration: 120, curve: Curve.EaseOut })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverOverflow = h; })
+        .onClick(() => { this.showOverflow = !this.showOverflow; })
+      } else {
+        // Compact: equal-width chips, no scroll, all tabs visible
         Row({ space: 4 }) {
           ForEach(this.tabs, (tab: TabMeta) => {
             this.buildTabChip(tab)
           }, (tab: TabMeta) => tab.id + '_' + tab.title)
-
-          // "+" new tab — vertically centered in the strip
-          Row() {
-            Text('+')
-              .fontSize(16)
-              .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
-              .animation({ duration: 120, curve: Curve.EaseOut })
-          }
-          .width(24)
-          .height(24)
-          .margin({ bottom: 5 })
-          .justifyContent(FlexAlign.Center)
-          .borderRadius(5)
-          .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
-          .animation({ duration: 120, curve: Curve.EaseOut })
-          .focusable(false)
-          .onHover((h: boolean) => { this.hoverAddTab = h; })
-          .onClick(() => { this.openTab(); })
         }
         .height(40)
-        .padding({ right: 8 })
-        // Bottom-align so the active tab's flat bottom edge sits flush on the
-        // terminal card below it — that's what makes them visually fuse.
+        .padding({ right: 4 })
         .alignItems(VerticalAlign.Bottom)
+        .layoutWeight(1)
+
+        // "+" new tab — fixed outside chip row, same position as non-compact
+        Row() {
+          Text('+')
+            .fontSize(16)
+            .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
+            .animation({ duration: 120, curve: Curve.EaseOut })
+        }
+        .width(24)
+        .height(24)
+        .margin({ top: 4 })
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(5)
+        .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
+        .animation({ duration: 120, curve: Curve.EaseOut })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverAddTab = h; })
+        .onClick(() => { this.openTab(); })
       }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-      .layoutWeight(1)
-      .align(Alignment.Start)
 
       // Guide help button — line-art circled "?" matching the system controls
       Row() {
@@ -1309,6 +1438,7 @@ struct Index {
         .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(this.tabCompact ? 1 : 0)
       // ✕ turns red on hover to signal "this will close"
       Text('✕')
         .fontSize(11)
@@ -1319,7 +1449,8 @@ struct Index {
         .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
         .onClick(() => { this.closeTab(tab.id); })
     }
-    .height(tab.id === this.activeId ? 30 : 24)
+    .height(tab.id === this.activeId ? 32 : 26)
+    .layoutWeight(this.tabCompact ? 1 : 0)
     .padding({ left: 12, right: 10 })
     .borderRadius(tab.id === this.activeId
       ? { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
@@ -1470,6 +1601,44 @@ struct Index {
     return new TabMeta(-1, '', DriverState.Idle, '空闲');
   }
 
+  // Overflow menu item — shown in the dropdown when ▼ is clicked.
+  @Builder
+  private buildOverflowItem(tab: TabMeta) {
+    Row({ space: 8 }) {
+      // Status dot
+      Circle({ width: 6, height: 6 })
+        .fill(this.dotColor(tab.state))
+      // Title — truncated with ellipsis
+      Text(tab.title)
+        .fontSize(13)
+        .fontFamily(this.uiFontFamily)
+        .fontColor(tab.id === this.activeId ? Palette.accent : Palette.text)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      // Close button
+      Text('✕')
+        .fontSize(10)
+        .fontColor(this.hoverCloseId === tab.id ? Palette.danger : Palette.textDim)
+        .focusable(false)
+        .onClick(() => {
+          this.closeTab(tab.id);
+          this.showOverflow = false;
+        })
+    }
+    .width('100%')
+    .height(32)
+    .padding({ left: 10, right: 8 })
+    .borderRadius(5)
+    .backgroundColor(tab.id === this.activeId ? '#14FFFFFF' : Color.Transparent)
+    .focusable(false)
+    .onClick(() => {
+      this.switchTab(tab.id);
+      this.scrollToTab(tab.id);
+      this.showOverflow = false;
+    })
+  }
+
   // Rename sheet — bindSheet(CENTER) native animation, matching settings panel style.
   @Builder
   private buildRenameSheet() {
@@ -1596,6 +1765,8 @@ struct Index {
       fontScaleBoost: this.fontScaleBoost,
       cjkVerticalOffset: this.cjkVerticalOffset,
       characterSpacing: this.characterSpacing,
+      tabCompact: this.tabCompact,
+      onTabCompactChange: (v: boolean) => { this.tabCompact = v; },
       onThemeChange: (n: string) => { this.themeName = n; this.broadcastTheme(); },
       onCursorStyleChange: (v: number) => { this.cursorStyle = v; this.broadcastConfig(); },
       onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
