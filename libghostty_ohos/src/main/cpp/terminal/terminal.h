@@ -62,6 +62,11 @@ public:
     void selectLineAt(int row);
     void clearSelection();
     std::string getSelectedText() const;
+    // Count visible characters (non-empty, non-spacer cells) in the active
+    // selection. If excludeEnd is true, the cell at the normalized end bound
+    // is excluded (used for Backspace which deletes left of cursor). Returns
+    // 0 for multi-row selections or when no selection is active.
+    size_t getSelectionCharCount(bool excludeEnd) const;
     int getViewportTopRow() const;
     // Returns true if the given viewport-relative cursor position is at the
     // start / end of the active selection. Used to decide whether Backspace or

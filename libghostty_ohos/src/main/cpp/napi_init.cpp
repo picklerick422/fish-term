@@ -956,13 +956,17 @@ public:
                     IsAltPressed(modifiers) ? 1 : 0);
 
         // Modifier keys pressed alone (Ctrl, Shift, Alt, Meta, CapsLock) must
-        // never produce a terminal sequence. The HarmonyOS XComponent may re-dispatch
-        // a prior key event with updated modifier state when a modifier key is
-        // pressed, which could synthesize spurious Ctrl+letter sequences (e.g.
-        // Ctrl to switch IME mode turning a previous 'c' into Ctrl+C).
+        // never produce a terminal sequence.
         if (IsModifierKeyCode(code)) {
             OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent ignoring modifier-key code=%{public}d", static_cast<int>(code));
             return false;
+        }
+
+        // A legitimate hardware key invalidates any stale IME preview-text
+        // tracking. If the IME later calls SetPreviewText (e.g. during a mode
+        // switch triggered by Ctrl), it should not erase committed input.
+        if (m_imePreviewCodePoints > 0) {
+            m_imePreviewCodePoints = 0;
         }
 
         // Determine the target terminal for this key event.
@@ -1066,11 +1070,120 @@ public:
             return false;
         }
 
-        // Any key (other than Shift+Arrow handled above) clears the active
-        // selection. This is standard terminal behaviour — the selection is a
-        // visual copy target, and typing or navigating simply dismisses it.
+        // ── Selection delete / replace ──────────────────────────────
+        // When the user has an active selection with the cursor at one of
+        // its boundaries, Backspace / Delete erase the selected text and a
+        // printable character replaces it (editor-like behaviour).
+        //
+        // We skip delete/replace for:
+        //   * Alternate-screen apps (vim, less, …) — they own key handling.
+        //   * Multi-row selections — newlines embedded in the text can't be
+        //     erased by simple Backspace/Delete repeats.
+        //   * Selections where the cursor is not at a boundary — the selected
+        //     text is in remote / scrollback output, not adjacent to cursor.
+        //   * Ctrl / Alt held — control codes or Meta prefixes.
         if (targetHost->m_terminal->hasSelection()) {
-            targetHost->m_terminal->clearSelection();
+            Terminal* term = targetHost->m_terminal;
+            bool handled = false;
+
+            if (!term->isAlternateScreen()) {
+                int curRow = 0, curCol = 0;
+                term->getCursorPosition(curRow, curCol);
+
+                const bool cursorAtStart = term->isCursorAtSelectionStart(curRow, curCol);
+                const bool cursorAtEnd   = term->isCursorAtSelectionEnd(curRow, curCol);
+                const bool atBoundary    = cursorAtStart || cursorAtEnd;
+
+                if (atBoundary && !IsCtrlPressed(modifiers) && !IsAltPressed(modifiers)) {
+                    const bool isBackspaceKey =
+                        code == LINUX_KEY_BACKSPACE || code == KEY_DEL;
+                    const bool isDeleteKey =
+                        code == LINUX_KEY_DELETE || code == KEY_FORWARD_DEL;
+                    // "Printable" = the escape sequence is a single ASCII
+                    // byte in 0x20–0x7E.  Backspace (\x7f), Delete (\x1b[3~),
+                    // Enter (\r), Tab (\t), arrows, F-keys etc. are excluded.
+                    const bool isPrintableChar =
+                        sequence.size() == 1 &&
+                        static_cast<unsigned char>(sequence[0]) >= 0x20 &&
+                        static_cast<unsigned char>(sequence[0]) <= 0x7E;
+
+                    bool doDelete = false;
+                    bool doReplace = false;
+                    bool useBackwardDelete = false;
+
+                    if (isBackspaceKey && cursorAtEnd) {
+                        // Backspace deletes LEFT of cursor → need cursor at
+                        // the rightmost end of the selection.
+                        doDelete = true;
+                        useBackwardDelete = true;
+                    } else if (isDeleteKey && cursorAtStart) {
+                        // Forward-delete deletes RIGHT of cursor → need
+                        // cursor at the leftmost start of the selection.
+                        doDelete = true;
+                        useBackwardDelete = false;
+                    } else if (isPrintableChar && atBoundary) {
+                        doDelete = true;
+                        doReplace = true;
+                        // Cursor at end   → Backspace  (selection to left)
+                        // Cursor at start → Fwd-delete (selection to right)
+                        // Single-cell sel  → either works, default Backspace
+                        useBackwardDelete = cursorAtEnd;
+                    }
+
+                    size_t selCpCount = 0;
+                    if (doDelete) {
+                        // Count visible characters (non-empty, non-spacer cells)
+                        // in the selection, excluding the cursor cell when
+                        // appropriate. This is more accurate than counting code
+                        // points from getSelectedText() because the latter
+                        // replaces empty cells with spaces.
+                        //
+                        // useBackwardDelete == true  → cursor at end,
+                        //   selection to the left → exclude cursor cell at end
+                        // useBackwardDelete == false → cursor at start,
+                        //   selection to the right → include all cells
+                        const size_t charCount =
+                            term->getSelectionCharCount(useBackwardDelete);
+
+                        if (charCount > 0 && charCount <= 200) {
+                            if (useBackwardDelete) {
+                                for (size_t i = 0; i < charCount; ++i) {
+                                    term->writeInput("\x7f", 1);
+                                }
+                            } else {
+                                for (size_t i = 0; i < charCount; ++i) {
+                                    term->writeInput("\x1b[3~", 4);
+                                }
+                            }
+                            handled = true;
+                            selCpCount = charCount;
+                        }
+
+                        if (handled) {
+                            term->clearSelection();
+
+                            if (!doReplace) {
+                                // Pure delete — key consumed.
+                                OH_LOG_INFO(LOG_APP,
+                                    "FT_DIAG sel-delete code=%{public}d cpCount=%{public}zu",
+                                    static_cast<int>(code), selCpCount);
+                                return true;
+                            }
+                            // Replace — fall through so the character that
+                            // BuildKeySequence already produced is sent below.
+                            OH_LOG_INFO(LOG_APP,
+                                "FT_DIAG sel-replace code=%{public}d cpCount=%{public}zu",
+                                static_cast<int>(code), selCpCount);
+                        }
+                    }
+                }
+            }
+
+            // If we didn't handle the selection above, clear it without
+            // consuming the key (standard terminal behaviour).
+            if (!handled) {
+                term->clearSelection();
+            }
         }
         if (targetHost != this) {
             OH_LOG_INFO(LOG_APP, "FT_DIAG DispatchKeyEvent forward seq[0]=%{public}d", static_cast<int>(sequence[0]));
@@ -1828,20 +1941,35 @@ public:
     void RequestImeFocus() {
         std::lock_guard<std::mutex> surfaceLock(m_surfaceMutex);
         m_wantsIme = true;
+        // Clear any stale IME preview tracking. When focus moves to a new
+        // terminal (tab switch, return-from-background), the previous host's
+        // preview code-point count is meaningless. If the IME later fires
+        // SetPreviewText on this host (e.g. during a Ctrl-triggered mode
+        // switch while ArkUI focus hasn't been restored yet), a non-zero
+        // m_imePreviewCodePoints would erase committed terminal input with
+        // spurious backspaces.
+        m_imePreviewCodePoints = 0;
         // Move the single process-wide IME attachment to this terminal so
-        // InsertImeText / DeleteBackward etc. route here. Do NOT show the
-        // soft keyboard — raising it causes the IME to consume ALL hardware
-        // key events, and the IME drops digits, arrows, and control keys
-        // that the terminal needs via DispatchKeyEvent. The keyboard is
-        // raised only on explicit touch (DispatchTouchEvent → ShowImeLocked
-        // with TOUCH/MOUSE reason).
-        //
-        // This mirrors ShowImeLocked without the ShowTextInputOnceLocked call.
+        // InsertImeText / DeleteBackward etc. route here.
         if (m_imeInputMethodProxy != nullptr && g_activeImeHost.load() != this) {
             m_imeInputMethodProxy = nullptr;
         }
         if (m_imeInputMethodProxy == nullptr) {
             AttachImeLocked();
+        }
+        // If the native surface is already ready (past OnSurfaceShow), also
+        // try to show the keyboard. This is a second-chance retry for the
+        // return-from-background case where OnSurfaceShow's own ShowImeLocked
+        // may have fired before the IME service was ready — ShowTextInput
+        // silently fails on an invalid input client and the keyboard stays
+        // hidden. On tab switch the surface is also ready, so this raises the
+        // keyboard on the new active tab, matching the user's expectation
+        // that focus follows them across tabs.
+        if (m_surfaceReady && m_imeInputMethodProxy != nullptr) {
+            const bool ok = ShowTextInputOnceLocked(IME_REQUEST_REASON_OTHER);
+            if (ok) {
+                m_imeVisible = true;
+            }
         }
         NotifyImeStateLocked();
     }
@@ -2341,6 +2469,32 @@ private:
         if (!m_wantsIme || m_terminal == nullptr || text == nullptr || length == 0) {
             return;
         }
+
+        // If there is an active selection with the cursor at a boundary,
+        // delete the selected text first (IME composition replaces it).
+        if (m_terminal->hasSelection() && !m_terminal->isAlternateScreen()) {
+            int curRow = 0, curCol = 0;
+            m_terminal->getCursorPosition(curRow, curCol);
+            const bool atEnd = m_terminal->isCursorAtSelectionEnd(curRow, curCol);
+            const bool atStart = m_terminal->isCursorAtSelectionStart(curRow, curCol);
+            if (atEnd || atStart) {
+                // useBackwardDelete param: true = exclude cursor cell at end
+                const size_t count = m_terminal->getSelectionCharCount(atEnd);
+                if (count > 0 && count <= 200) {
+                    if (atEnd) {
+                        for (size_t i = 0; i < count; ++i) {
+                            m_terminal->writeInput("\x7f", 1);
+                        }
+                    } else {
+                        for (size_t i = 0; i < count; ++i) {
+                            m_terminal->writeInput("\x1b[3~", 4);
+                        }
+                    }
+                }
+                m_terminal->clearSelection();
+            }
+        }
+
         const std::string utf8 = Utf16ToUtf8(text, length);
         if (!utf8.empty()) {
             m_terminal->writeInput(utf8.data(), utf8.size());
@@ -2352,6 +2506,27 @@ private:
         if (!m_wantsIme || m_terminal == nullptr || length <= 0) {
             return;
         }
+
+        // If there is an active selection with the cursor at the start
+        // boundary, erase the selected text instead of the IME's length.
+        if (m_terminal->hasSelection() && !m_terminal->isAlternateScreen()) {
+            int curRow = 0, curCol = 0;
+            m_terminal->getCursorPosition(curRow, curCol);
+            if (m_terminal->isCursorAtSelectionStart(curRow, curCol)) {
+                // Forward-delete at cursor start: include all selected cells.
+                const size_t count = m_terminal->getSelectionCharCount(false);
+                if (count > 0 && count <= 200) {
+                    for (size_t i = 0; i < count; ++i) {
+                        m_terminal->writeInput("\x1b[3~", 4);
+                    }
+                }
+                m_terminal->clearSelection();
+                return;
+            }
+            // Cursor not at start boundary — just clear selection.
+            m_terminal->clearSelection();
+        }
+
         for (int32_t i = 0; i < length; ++i) {
             static constexpr char kDeleteSeq[] = "\x1b[3~";
             m_terminal->writeInput(kDeleteSeq, sizeof(kDeleteSeq) - 1);
@@ -2363,6 +2538,27 @@ private:
         if (!m_wantsIme || m_terminal == nullptr || length <= 0) {
             return;
         }
+
+        // If there is an active selection with the cursor at the end
+        // boundary, erase the selected text instead of the IME's length.
+        if (m_terminal->hasSelection() && !m_terminal->isAlternateScreen()) {
+            int curRow = 0, curCol = 0;
+            m_terminal->getCursorPosition(curRow, curCol);
+            if (m_terminal->isCursorAtSelectionEnd(curRow, curCol)) {
+                // Backspace at cursor end: exclude cursor cell at end.
+                const size_t count = m_terminal->getSelectionCharCount(true);
+                if (count > 0 && count <= 200) {
+                    for (size_t i = 0; i < count; ++i) {
+                        m_terminal->writeInput("\x7f", 1);
+                    }
+                }
+                m_terminal->clearSelection();
+                return;
+            }
+            // Cursor not at end boundary — just clear selection.
+            m_terminal->clearSelection();
+        }
+
         for (int32_t i = 0; i < length; ++i) {
             static constexpr char kBackspace[] = "\x7f";
             m_terminal->writeInput(kBackspace, sizeof(kBackspace) - 1);
@@ -2565,6 +2761,33 @@ private:
         if (!m_wantsIme || m_terminal == nullptr) {
             m_imePreviewCodePoints = 0;
             return 0;
+        }
+
+        // If there is an active selection with the cursor at a boundary,
+        // delete the selected text before writing any IME preview content.
+        // This must happen FIRST — once IME text hits the terminal and the
+        // shell echoes it back through feedOutput, the selection is cleared
+        // and we lose the chance to replace it.
+        if (m_terminal->hasSelection() && !m_terminal->isAlternateScreen()) {
+            int curRow = 0, curCol = 0;
+            m_terminal->getCursorPosition(curRow, curCol);
+            const bool atEnd = m_terminal->isCursorAtSelectionEnd(curRow, curCol);
+            const bool atStart = m_terminal->isCursorAtSelectionStart(curRow, curCol);
+            if (atEnd || atStart) {
+                const size_t count = m_terminal->getSelectionCharCount(atEnd);
+                if (count > 0 && count <= 200) {
+                    if (atEnd) {
+                        for (size_t i = 0; i < count; ++i) {
+                            m_terminal->writeInput("\x7f", 1);
+                        }
+                    } else {
+                        for (size_t i = 0; i < count; ++i) {
+                            m_terminal->writeInput("\x1b[3~", 4);
+                        }
+                    }
+                }
+                m_terminal->clearSelection();
+            }
         }
         // Erase any existing preview content. Cap the erase count so a stale or
         // corrupted code-point counter (observed when pressing Ctrl to switch IME

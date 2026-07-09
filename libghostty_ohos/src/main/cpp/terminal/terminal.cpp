@@ -1439,6 +1439,62 @@ bool Terminal::isCursorAtSelectionEnd(int viewportRow, int viewportCol) const {
     return absRow == endRow && std::abs(viewportCol - endCol) <= 1;
 }
 
+size_t Terminal::getSelectionCharCount(bool excludeEnd) const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_selectionActive || !m_renderState || !m_vt) return 0;
+    if (ghostty_render_state_update(m_renderState, m_vt) != GHOSTTY_SUCCESS) return 0;
+
+    int startRow, startCol, endRow, endCol;
+    normalizeSelectionBounds(startRow, startCol, endRow, endCol);
+
+    // Single-row selections only.
+    if (startRow != endRow) return 0;
+
+    const int viewportTop = static_cast<int>(getViewportTopRowLocked());
+    const int viewportRow = startRow - viewportTop;
+    if (viewportRow < 0 || viewportRow >= m_rows) return 0;
+
+    ghostty_row_iterator_t rowIterator = m_rowIterator;
+    ghostty_row_cells_t rowCells = m_rowCells;
+    ghostty_render_state_get(m_renderState,
+        GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator);
+
+    // Seek to the selection row.
+    for (int row = 0; row <= viewportRow; ++row) {
+        if (!ghostty_render_state_row_iterator_next(rowIterator)) return 0;
+    }
+
+    ghostty_render_state_row_get(rowIterator,
+        GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
+
+    size_t count = 0;
+    for (int col = 0; col < m_cols; ++col) {
+        if (!ghostty_render_state_row_cells_next(rowCells)) break;
+        if (col < startCol || col > endCol) continue;
+        if (excludeEnd && col == endCol) continue;
+
+        ghostty_cell_t raw = 0;
+        bool hasText = false;
+        ghostty_cell_wide_t wide = GHOSTTY_CELL_WIDE_NARROW;
+        uint32_t codepoint = 0;
+
+        ghostty_render_state_row_cells_get(rowCells,
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_HAS_TEXT, &hasText);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
+
+        // Skip CJK spacer cells — the lead cell already represents the glyph.
+        if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL ||
+            wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) continue;
+        // Skip empty cells.
+        if (!hasText || codepoint == 0) continue;
+
+        ++count;
+    }
+    return count;
+}
+
 bool Terminal::isAlternateScreen() const {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (!m_vt) {
