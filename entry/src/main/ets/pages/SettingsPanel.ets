@@ -92,6 +92,14 @@ export struct SettingsPanel {
   onCharacterSpacingChange: (v: number) => void = (_v: number) => {};
   @Prop tabCompact: boolean = false;
   onTabCompactChange: (v: boolean) => void = (_v: boolean) => {};
+  @Prop notifyEnabled: boolean = true;
+  @Prop notifyCompleted: boolean = true;
+  @Prop notifyAwaiting: boolean = true;
+  @Prop notifyBackgroundOnly: boolean = true;
+  onNotifyEnabledChange: (v: boolean) => void = (_v: boolean) => {};
+  onNotifyCompletedChange: (v: boolean) => void = (_v: boolean) => {};
+  onNotifyAwaitingChange: (v: boolean) => void = (_v: boolean) => {};
+  onNotifyBackgroundOnlyChange: (v: boolean) => void = (_v: boolean) => {};
   onReplayGuide: () => void = () => {};
   onClose: () => void = () => {};
 
@@ -300,6 +308,7 @@ export struct SettingsPanel {
         this.buildTabButton('终端', 1)
         this.buildTabButton('快捷键', 2)
         this.buildTabButton('关于', 3)
+        this.buildTabButton('通知', 4)
       }
       .width('100%')
       .height(40)
@@ -313,6 +322,7 @@ export struct SettingsPanel {
         TabContent() { this.settingsPage(1) }
         TabContent() { this.settingsPage(2) }
         TabContent() { this.settingsPage(3) }
+        TabContent() { this.settingsPage(4) }
       }
       .barHeight(0)
       .scrollable(false)
@@ -455,8 +465,10 @@ export struct SettingsPanel {
           this.buildTerminalTab()
         } else if (t === 2) {
           this.buildShortcutsTab()
-        } else {
+        } else if (t === 3) {
           this.buildAboutTab()
+        } else if (t === 4) {
+          this.buildNotificationTab()
         }
       }
       .width('100%')
@@ -1564,5 +1576,115 @@ export struct SettingsPanel {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
 
+  }
+
+  @Builder
+  private buildNotificationTab() {
+    Column({ space: 8 }) {
+      // Master switch
+      Column({ space: 0 }) {
+        this.buildSectionHeader('通知开关')
+        Row({ space: 12 }) {
+          Text('启用通知')
+            .fontSize(14)
+            .fontColor(Palette.text)
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.notifyEnabled })
+            .selectedColor(Palette.accent)
+            .focusable(false)
+            .onChange((on: boolean) => {
+              this.notifyEnabled = on;
+              this.onNotifyEnabledChange(on);
+            })
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: Palette.border })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      // Task completed notification
+      Column({ space: 0 }) {
+        this.buildSectionHeader('任务完成')
+        Row({ space: 12 }) {
+          Text('任务完成时通知')
+            .fontSize(14)
+            .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.notifyCompleted })
+            .selectedColor(Palette.accent)
+            .focusable(false)
+            .enabled(this.notifyEnabled)
+            .onChange((on: boolean) => {
+              this.notifyCompleted = on;
+              this.onNotifyCompletedChange(on);
+            })
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: Palette.border })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      // Task awaiting input notification
+      Column({ space: 0 }) {
+        this.buildSectionHeader('任务暂停')
+        Row({ space: 12 }) {
+          Text('任务需要输入时通知')
+            .fontSize(14)
+            .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.notifyAwaiting })
+            .selectedColor(Palette.accent)
+            .focusable(false)
+            .enabled(this.notifyEnabled)
+            .onChange((on: boolean) => {
+              this.notifyAwaiting = on;
+              this.onNotifyAwaitingChange(on);
+            })
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: Palette.border })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      // Background-only switch
+      Column({ space: 0 }) {
+        this.buildSectionHeader('通知策略')
+        Row({ space: 12 }) {
+          Text('仅在应用后台时通知')
+            .fontSize(14)
+            .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.notifyBackgroundOnly })
+            .selectedColor(Palette.accent)
+            .focusable(false)
+            .enabled(this.notifyEnabled)
+            .onChange((on: boolean) => {
+              this.notifyBackgroundOnly = on;
+              this.onNotifyBackgroundOnlyChange(on);
+            })
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(Palette.surface)
+        .borderRadius(10)
+        .border({ width: 1, color: Palette.border })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
   }
 }
