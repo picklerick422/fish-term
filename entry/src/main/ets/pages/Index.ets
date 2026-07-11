@@ -20,6 +20,10 @@ import { CrashLogPanel } from './CrashLogPanel';
 import { CrashHandler } from '../crash/CrashHandler';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
+import { TaskEvent, TaskEventType } from '../notifications/TaskEvent';
+import { TaskDetector } from '../notifications/TaskDetector';
+import { NotificationService } from '../notifications/NotificationService';
+import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/ConnectionStore';
 
 function stateLabel(s: DriverStatus): string {
   switch (s.state) {
@@ -49,11 +53,13 @@ class TabMeta {
   title: string;
   state: DriverState;
   statusText: string;
-  constructor(id: number, title: string, state: DriverState, statusText: string) {
+  taskEventType?: TaskEventType;
+  constructor(id: number, title: string, state: DriverState, statusText: string, taskEventType?: TaskEventType) {
     this.id = id;
     this.title = title;
     this.state = state;
     this.statusText = statusText;
+    this.taskEventType = taskEventType;
   }
 }
 
@@ -142,10 +148,25 @@ struct Index {
   @State private showOverflow: boolean = false;
   @State private hoverOverflow: boolean = false;
   private saveDebounceTimer: number = -1;
+  private detector: TaskDetector = new TaskDetector();
+  private notifyService: NotificationService = new NotificationService();
+  @State private notifyPrefs: NotificationPrefs = DEFAULT_NOTIFICATION_PREFS;
+  @State private isForeground: boolean = true;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.store = new ConnectionStore(this.context);
+
+    // Initialize notification service with app context
+    this.notifyService.setContext(this.context);
+
+    // Load notification preferences
+    if (this.store) {
+      this.store.loadNotificationPrefs().then((prefs: NotificationPrefs): void => {
+        this.notifyPrefs = prefs;
+        this.notifyService.updatePrefs(prefs);
+      });
+    }
 
     // Register bundled custom fonts in the active UI context.
     // font.registerFont() was deprecated from API 18 — must use UIContext.getFont().
@@ -192,7 +213,10 @@ struct Index {
     window.getLastWindow(this.context).then((appWindow: window.Window) => {
       appWindow.on('windowEvent', (eventType: window.WindowEventType) => {
         if (eventType === window.WindowEventType.WINDOW_ACTIVE) {
+          this.isForeground = true;
           this.focusActiveTerminal();
+        } else if (eventType === window.WindowEventType.WINDOW_INACTIVE) {
+          this.isForeground = false;
         }
       });
     }).catch((_err: Object) => {
@@ -395,6 +419,7 @@ struct Index {
     this.runtimes.forEach((rt: TerminalRuntime) => {
       rt.session?.stop();
     });
+    this.notifyService.dismissAll();
     this.runtimes.clear();
   }
 
@@ -588,9 +613,9 @@ struct Index {
   private updateTabMeta(id: number, state: DriverState, statusText: string): void {
     const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
       if (t.id === id) {
-        return new TabMeta(t.id, t.title, state, statusText);
+        return new TabMeta(t.id, t.title, state, statusText, t.taskEventType);
       }
-      return new TabMeta(t.id, t.title, t.state, t.statusText);
+      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
     });
     this.tabs = next;
   }
@@ -600,11 +625,45 @@ struct Index {
     if (trimmed.length === 0) return;
     const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
       if (t.id === id) {
-        return new TabMeta(t.id, trimmed, t.state, t.statusText);
+        return new TabMeta(t.id, trimmed, t.state, t.statusText, t.taskEventType);
       }
-      return new TabMeta(t.id, t.title, t.state, t.statusText);
+      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
     });
     this.tabs = next;
+  }
+
+  // Set a task event indicator on a tab chip (colored dot).
+  private setTabTaskEvent(id: number, eventType: TaskEventType): void {
+    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
+      if (t.id === id) {
+        return new TabMeta(t.id, t.title, t.state, t.statusText, eventType);
+      }
+      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
+    });
+    this.tabs = next;
+  }
+
+  // Clear the task event indicator when the user switches to a tab.
+  private clearTabTaskEvent(id: number): void {
+    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
+      if (t.id === id) {
+        return new TabMeta(t.id, t.title, t.state, t.statusText, undefined);
+      }
+      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
+    });
+    this.tabs = next;
+  }
+
+  // Called when TaskDetector detects a task state change.
+  // Updates the tab indicator and optionally publishes a system notification.
+  private handleTaskEvent(event: TaskEvent): void {
+    console.info(`[Index] TaskEvent: tab=${event.tabId} type=${event.type} detail=${event.detail}`);
+
+    // Always update the tab chip indicator (foreground visual)
+    this.setTabTaskEvent(event.tabId, event.type);
+
+    // Delegate to notification service for system notification (respects prefs + foreground)
+    this.notifyService.handle(event, this.isForeground);
   }
 
   // ----- rename dialog --------------------------------------------------------
@@ -757,6 +816,20 @@ struct Index {
       rt.sessionId = id;
       this.saveSession();
     });
+    // Wire task detector to session output for notification analysis
+    const tabId: number = id;
+    const tabTitleRef: string = tabTitle;
+    session.onTaskData((data: string): void => {
+      const event: TaskEvent | null = this.detector.detect(data, tabId, tabTitleRef);
+      if (event !== null) {
+        // Update the event with the current tab title (may have changed via OSC)
+        const t: TabMeta | undefined = this.tabs.find((x: TabMeta) => x.id === tabId);
+        if (t) {
+          event.tabTitle = t.title;
+        }
+        this.handleTaskEvent(event);
+      }
+    });
     rt.session = session;
     session.start();
     this.focusActiveTerminal();
@@ -773,6 +846,9 @@ struct Index {
       return;
     }
     this.activeId = id;
+    // Dismiss notification and clear task indicator for the newly active tab
+    this.clearTabTaskEvent(id);
+    this.notifyService.dismiss(id);
     this.focusActiveTerminal();
     this.saveSession();
     // Immediately sync the background — the new active tab may have different
@@ -907,6 +983,7 @@ struct Index {
     }
     // Stop the driver immediately so no more output/input flows.
     rt.session?.stop();
+    this.notifyService.dismiss(id);
 
     const remaining: TabMeta[] = this.tabs.filter((t: TabMeta) => t.id !== id);
 
@@ -1433,7 +1510,14 @@ struct Index {
 
   @Builder
   private buildTabChip(tab: TabMeta) {
-    Row({ space: 7 }) {
+    Row({ space: 6 }) {
+      // Task event indicator dot (before tab title)
+      // Cyan dot = task completed, warm dot = task awaiting input
+      if (tab.taskEventType !== undefined && tab.taskEventType !== null) {
+        Circle({ width: 6, height: 6 })
+          .fill(tab.taskEventType === TaskEventType.TASK_COMPLETED ? Palette.accent : Palette.warn)
+          .focusable(false)
+      }
       Text(tab.title)
         .fontSize(Math.max(10, this.fontSize - 1))
         .fontFamily(this.uiFontFamily)
@@ -1785,6 +1869,38 @@ struct Index {
       characterSpacing: this.characterSpacing,
       tabCompact: this.tabCompact,
       onTabCompactChange: (v: boolean) => { this.tabCompact = v; },
+      notifyEnabled: this.notifyPrefs.enabled,
+      notifyCompleted: this.notifyPrefs.taskCompleted,
+      notifyAwaiting: this.notifyPrefs.taskAwaitingInput,
+      notifyBackgroundOnly: this.notifyPrefs.onlyWhenBackground,
+      onNotifyEnabledChange: (v: boolean) => {
+        this.notifyPrefs.enabled = v;
+        this.notifyService.updatePrefs(this.notifyPrefs);
+        if (this.store) {
+          this.store.saveNotificationPrefs(this.notifyPrefs);
+        }
+      },
+      onNotifyCompletedChange: (v: boolean) => {
+        this.notifyPrefs.taskCompleted = v;
+        this.notifyService.updatePrefs(this.notifyPrefs);
+        if (this.store) {
+          this.store.saveNotificationPrefs(this.notifyPrefs);
+        }
+      },
+      onNotifyAwaitingChange: (v: boolean) => {
+        this.notifyPrefs.taskAwaitingInput = v;
+        this.notifyService.updatePrefs(this.notifyPrefs);
+        if (this.store) {
+          this.store.saveNotificationPrefs(this.notifyPrefs);
+        }
+      },
+      onNotifyBackgroundOnlyChange: (v: boolean) => {
+        this.notifyPrefs.onlyWhenBackground = v;
+        this.notifyService.updatePrefs(this.notifyPrefs);
+        if (this.store) {
+          this.store.saveNotificationPrefs(this.notifyPrefs);
+        }
+      },
       onThemeChange: (n: string) => { this.themeName = n; this.broadcastTheme(); },
       onCursorStyleChange: (v: number) => { this.cursorStyle = v; this.broadcastConfig(); },
       onCursorBlinkChange: (v: boolean) => { this.cursorBlink = v; this.broadcastConfig(); },
