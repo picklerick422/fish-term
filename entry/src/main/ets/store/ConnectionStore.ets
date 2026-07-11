@@ -32,6 +32,11 @@ const TOKEN_ALIAS: string = 'fish_agent_token';
 const KEY_RESTORE_TABS: string = 'restore_tabs_enabled';
 const KEY_SESSION_STATE: string = 'session_state';
 const KEY_TAB_COMPACT: string = 'tab_compact';
+// Notification preferences
+const KEY_NOTIFY_ENABLED: string = 'notify_enabled';
+const KEY_NOTIFY_COMPLETED: string = 'notify_completed';
+const KEY_NOTIFY_AWAITING: string = 'notify_awaiting';
+const KEY_NOTIFY_BACKGROUND_ONLY: string = 'notify_background_only';
 
 export interface SavedTab {
   title: string;
@@ -48,6 +53,21 @@ export interface SavedSession {
   activeIndex: number;
   tabs: SavedTab[];
 }
+
+export interface NotificationPrefs {
+  enabled: boolean;
+  taskCompleted: boolean;
+  taskAwaitingInput: boolean;
+  onlyWhenBackground: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  enabled: true,
+  taskCompleted: true,
+  taskAwaitingInput: true,
+  onlyWhenBackground: true,
+};
+
 const ASSET_NOT_FOUND: number = 24000002;
 
 export interface ConnectionProfile {
@@ -482,5 +502,52 @@ export class ConnectionStore {
         console.error('fish-termclear token failed: ' + JSON.stringify(e));
       }
     }
+  }
+
+  // Load all notification preferences at once.
+  async loadNotificationPrefs(): Promise<NotificationPrefs> {
+    try {
+      const p = await preferences.getPreferences(this.context, PREF_NAME);
+      const enabled: boolean = await p.get(KEY_NOTIFY_ENABLED, true) as boolean;
+      const taskCompleted: boolean = await p.get(KEY_NOTIFY_COMPLETED, true) as boolean;
+      const taskAwaitingInput: boolean = await p.get(KEY_NOTIFY_AWAITING, true) as boolean;
+      const onlyWhenBackground: boolean = await p.get(KEY_NOTIFY_BACKGROUND_ONLY, true) as boolean;
+      return { enabled, taskCompleted, taskAwaitingInput, onlyWhenBackground };
+    } catch (_e) {
+      return DEFAULT_NOTIFICATION_PREFS;
+    }
+  }
+
+  // Save individual notification preference flags.
+  async saveNotifyEnabled(v: boolean): Promise<void> {
+    try {
+      const p = await preferences.getPreferences(this.context, PREF_NAME);
+      await p.put(KEY_NOTIFY_ENABLED, v);
+      await p.flush();
+    } catch (_e) { /* degrade gracefully */ }
+  }
+
+  async saveNotifyCompleted(v: boolean): Promise<void> {
+    try {
+      const p = await preferences.getPreferences(this.context, PREF_NAME);
+      await p.put(KEY_NOTIFY_COMPLETED, v);
+      await p.flush();
+    } catch (_e) { /* degrade gracefully */ }
+  }
+
+  async saveNotifyAwaiting(v: boolean): Promise<void> {
+    try {
+      const p = await preferences.getPreferences(this.context, PREF_NAME);
+      await p.put(KEY_NOTIFY_AWAITING, v);
+      await p.flush();
+    } catch (_e) { /* degrade gracefully */ }
+  }
+
+  async saveNotifyBackgroundOnly(v: boolean): Promise<void> {
+    try {
+      const p = await preferences.getPreferences(this.context, PREF_NAME);
+      await p.put(KEY_NOTIFY_BACKGROUND_ONLY, v);
+      await p.flush();
+    } catch (_e) { /* degrade gracefully */ }
   }
 }
