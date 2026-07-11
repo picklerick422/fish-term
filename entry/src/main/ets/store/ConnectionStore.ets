@@ -504,50 +504,32 @@ export class ConnectionStore {
     }
   }
 
-  // Load all notification preferences at once.
   async loadNotificationPrefs(): Promise<NotificationPrefs> {
     try {
-      const p = await preferences.getPreferences(this.context, PREF_NAME);
-      const enabled: boolean = await p.get(KEY_NOTIFY_ENABLED, true) as boolean;
-      const taskCompleted: boolean = await p.get(KEY_NOTIFY_COMPLETED, true) as boolean;
-      const taskAwaitingInput: boolean = await p.get(KEY_NOTIFY_AWAITING, true) as boolean;
-      const onlyWhenBackground: boolean = await p.get(KEY_NOTIFY_BACKGROUND_ONLY, true) as boolean;
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      const enabled: boolean = await pref.get(KEY_NOTIFY_ENABLED, true) as boolean;
+      const taskCompleted: boolean = await pref.get(KEY_NOTIFY_COMPLETED, true) as boolean;
+      const taskAwaitingInput: boolean = await pref.get(KEY_NOTIFY_AWAITING, true) as boolean;
+      const onlyWhenBackground: boolean = await pref.get(KEY_NOTIFY_BACKGROUND_ONLY, true) as boolean;
       return { enabled, taskCompleted, taskAwaitingInput, onlyWhenBackground };
-    } catch (_e) {
+    } catch (e) {
+      console.error(`Failed to load notification preferences. Code: ${(e as Object).toString()}`);
       return DEFAULT_NOTIFICATION_PREFS;
     }
   }
 
-  // Save individual notification preference flags.
-  async saveNotifyEnabled(v: boolean): Promise<void> {
+  async saveNotificationPrefs(prefs: NotificationPrefs): Promise<void> {
     try {
-      const p = await preferences.getPreferences(this.context, PREF_NAME);
-      await p.put(KEY_NOTIFY_ENABLED, v);
-      await p.flush();
-    } catch (_e) { /* degrade gracefully */ }
-  }
-
-  async saveNotifyCompleted(v: boolean): Promise<void> {
-    try {
-      const p = await preferences.getPreferences(this.context, PREF_NAME);
-      await p.put(KEY_NOTIFY_COMPLETED, v);
-      await p.flush();
-    } catch (_e) { /* degrade gracefully */ }
-  }
-
-  async saveNotifyAwaiting(v: boolean): Promise<void> {
-    try {
-      const p = await preferences.getPreferences(this.context, PREF_NAME);
-      await p.put(KEY_NOTIFY_AWAITING, v);
-      await p.flush();
-    } catch (_e) { /* degrade gracefully */ }
-  }
-
-  async saveNotifyBackgroundOnly(v: boolean): Promise<void> {
-    try {
-      const p = await preferences.getPreferences(this.context, PREF_NAME);
-      await p.put(KEY_NOTIFY_BACKGROUND_ONLY, v);
-      await p.flush();
-    } catch (_e) { /* degrade gracefully */ }
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_NOTIFY_ENABLED, prefs.enabled);
+      await pref.put(KEY_NOTIFY_COMPLETED, prefs.taskCompleted);
+      await pref.put(KEY_NOTIFY_AWAITING, prefs.taskAwaitingInput);
+      await pref.put(KEY_NOTIFY_BACKGROUND_ONLY, prefs.onlyWhenBackground);
+      await pref.flush();
+    } catch (e) {
+      console.error(`Failed to save notification preferences. Code: ${(e as Object).toString()}`);
+    }
   }
 }
