@@ -91,6 +91,9 @@ export default class EntryAbility extends UIAbility {
     // the server kills the PTY — so reconnecting lands on a fresh shell. Keeping
     // the task alive holds the existing connection (and terminal state) open.
     this.startBackgroundTask();
+    // Notify the page that the app went to background so notification logic
+    // can switch from tab indicators to system notifications.
+    emitter.emit({ eventId: 10087 });
   }
 
   private startBackgroundTask(): void {

@@ -200,10 +200,14 @@ struct Index {
     // complete before the first paint and the loading UI never appears.
     setTimeout(() => { this.loadRestoreTabsAndRestore(); }, 10);
     emitter.on({ eventId: 10086 }, () => {
+      this.isForeground = true;
       this.runtimes.forEach((rt: TerminalRuntime) => {
         rt.session?.onForeground();
       });
       this.focusActiveTerminal();
+    });
+    emitter.on({ eventId: 10087 }, () => {
+      this.isForeground = false;
     });
     // Window-level focus listener: when the window gains focus (e.g. Alt+Tab back,
     // clicking the title bar after another app), re-route hardware keyboard to the
@@ -213,10 +217,7 @@ struct Index {
     window.getLastWindow(this.context).then((appWindow: window.Window) => {
       appWindow.on('windowEvent', (eventType: window.WindowEventType) => {
         if (eventType === window.WindowEventType.WINDOW_ACTIVE) {
-          this.isForeground = true;
           this.focusActiveTerminal();
-        } else if (eventType === window.WindowEventType.WINDOW_INACTIVE) {
-          this.isForeground = false;
         }
       });
     }).catch((_err: Object) => {
