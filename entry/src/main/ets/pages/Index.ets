@@ -1197,6 +1197,21 @@ struct Index {
     // Frame color matches the strip — forms a consistent border on
     // left / right / bottom of the terminal card.
     .backgroundColor(Palette.surface)
+    // Mouse-wheel horizontal scroll for the tab strip (non-compact only).
+    // Captured at the root Stack because the Scroll component consumes axis
+    // events internally and their onAxisEvent is unreliable. We filter by
+    // y < 40 so only wheel events over the tab strip are intercepted.
+    .onAxisEvent((event?: AxisEvent) => {
+      if (event && !this.tabCompact && this.tabs.length > 0) {
+        const localY: number = event.y;
+        if (localY >= 0 && localY <= 40) {
+          const dy: number = event.getVerticalAxisValue();
+          if (Math.abs(dy) > 0) {
+            this.tabScroller.scrollBy(dy, 0);
+          }
+        }
+      }
+    })
     // App-level keyboard shortcuts. All use Ctrl+Shift to avoid conflicting
     // with: (a) terminal escape sequences that use bare Ctrl (Ctrl+W, Ctrl+T,
     // Ctrl+1~9 are meaningful to shells/readline); (b) IME mode-switch keys
@@ -1285,37 +1300,25 @@ struct Index {
       if (!this.tabCompact) {
         // Non-compact: horizontal scroll, variable width chips
         Scroll(this.tabScroller) {
-          Stack({ alignContent: Alignment.BottomStart }) {
-            // Transparent filler: covers the full Scroll viewport height so
-            // axis events fire regardless of where the mouse is over the strip
-            // — without this, events only bubble up through chip children in
-            // the lower portion and the upper empty area is dead.
-            Row()
-              .width('100%')
-              .height(40)
+          Column() {
+            Blank()
+              .layoutWeight(1)
+              .backgroundColor('#01000000')
 
             Row({ space: 4 }) {
               ForEach(this.tabs, (tab: TabMeta) => {
                 this.buildTabChip(tab)
               }, (tab: TabMeta) => tab.id + '_' + tab.title)
             }
-            .height(40)
             .padding({ right: 4 })
             .alignItems(VerticalAlign.Bottom)
           }
+          .height(40)
         }
         .scrollable(ScrollDirection.Horizontal)
         .scrollBar(BarState.Off)
         .layoutWeight(1)
         .align(Alignment.Start)
-        .onAxisEvent((event?: AxisEvent) => {
-          if (event) {
-            const dy: number = event.getVerticalAxisValue();
-            if (Math.abs(dy) > 0) {
-              this.tabScroller.scrollBy(dy, 0);
-            }
-          }
-        })
 
         // "+" new tab — fixed outside scroll area, slightly below center
         Row() {

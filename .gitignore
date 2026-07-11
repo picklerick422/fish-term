@@ -38,6 +38,15 @@ tmp/
 *.tgz
 *.tar.xz
 
+# Native build artifacts (kept locally but excluded from AI context)
+*.so
+*.a
+*.o
+*.obj
+*.dll
+*.dylib
+*.exe
+
 # Generated upstream terminal archive
 libghostty_ohos/prebuilt/*/libghostty_vt.a
 
@@ -71,3 +80,9 @@ libghostty_ohos/example/README.md
 
 # 二进制打包产物
 entry/src/main/ets/hnp/
+
+# App Store / test screenshots (not needed for code edits)
+AGC/
+
+# Claude worktrees are auto-created by Claude Code; don't let AI scan duplicates
+.claude/worktrees/

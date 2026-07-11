@@ -9,7 +9,8 @@
         "buildOption": {
           "strictMode": {
             "caseSensitiveCheck": true
-          }
+          },
+          "debuggable": false
         },
         "signingConfig": "default"
       }

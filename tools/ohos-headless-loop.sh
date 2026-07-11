@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HDC_BIN="${OHOS_HDC:-$HOME/Library/OpenHarmony/Sdk/20/toolchains/hdc}"
 HVIGOR_BIN="${OHOS_HVIGOR:-/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js}"
+OHOS_BUILD_MODE="${OHOS_BUILD_MODE:-debug}"
 APP_BUNDLE="${OHOS_APP_BUNDLE:-com.wiedymi.libghosttyohos.example}"
 APP_ABILITY="${OHOS_APP_ABILITY:-EntryAbility}"
 HAP_PATH="${OHOS_HAP_PATH:-$ROOT_DIR/example/build/default/outputs/default/example-default-signed.hap}"
@@ -25,6 +26,7 @@ Commands:
 Environment overrides:
   OHOS_HDC
   OHOS_HVIGOR
+  OHOS_BUILD_MODE    Build mode: debug (default) or release. Use release for store packages.
   OHOS_APP_BUNDLE
   OHOS_APP_ABILITY
   OHOS_HAP_PATH
@@ -68,8 +70,8 @@ check_target() {
 
 build_app() {
   require_bin "$HVIGOR_BIN" "hvigor"
-  echo "==> Building app"
-  (cd "$ROOT_DIR" && "$HVIGOR_BIN" assembleApp -m project --no-daemon)
+  echo "==> Building app (mode: $OHOS_BUILD_MODE)"
+  (cd "$ROOT_DIR" && "$HVIGOR_BIN" assembleApp -m project --mode "$OHOS_BUILD_MODE" --no-daemon)
 }
 
 install_app() {

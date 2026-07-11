@@ -37,7 +37,7 @@ fish-term — HarmonyOS terminal app on Ghostty's VT library.
 ```sh
 ohpm install                              # Dependencies
 ./tools/build-ghostty-vt-docker.sh       # Rebuild native lib
-hvigor.js assembleApp -m project         # Full build (needs signing config)
+hvigor.js assembleApp -m project --mode release   # Full build for release/store upload (needs signing config)
 ```
 
 ## Change Rules

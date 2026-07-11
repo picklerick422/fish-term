@@ -44,6 +44,19 @@ from a native filesystem (or inside DevEco). A ready-to-run script lives at
 Root `build-profile.json5` intentionally omits signing config. Add a local signing
 profile in DevEco (Project Structure → Signing Configs) before running on a device.
 
+## Release build for app store
+
+When packaging for upload, build in **release** mode so the packaged `module.json`
+does not contain `"debug": true` (store validation rejects debug packages).
+
+DevEco Studio: **Build → Build APP(s) / HAP(s) → Release**.
+
+CLI:
+```sh
+/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
+  assembleApp -m project --mode release --no-daemon
+```
+
 ## Run
 
 Open the project root in DevEco Studio → wait for sync → select the `entry` module

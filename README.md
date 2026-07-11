@@ -17,7 +17,9 @@ HarmonyOS terminal emulator built on Ghostty's VT library.
 ohpm install
 
 # Build the project (via DevEco Studio or CLI)
-/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleApp -m project --no-daemon
+# Use --mode release for app-store upload; debug mode injects "debug": true
+# into the packaged module.json and will be rejected by the store.
+/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleApp -m project --mode release --no-daemon
 ```
 
 ### Rebuild Native Library
