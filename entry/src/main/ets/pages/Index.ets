@@ -87,7 +87,6 @@ struct Index {
   @State private token: string = '';
   @State private tls: boolean = false;
   @State private rememberToken: boolean = false;
-  @State private showToken: boolean = false;
   @State private fontSize: number = DEFAULT_FONT_SIZE;
   @State private lineSpacing: number = DEFAULT_LINE_SPACING;
   @State private formError: string = '';
@@ -1759,6 +1758,22 @@ struct Index {
       statusText: this.activeMeta().statusText,
       statusColor: this.dotColor(this.activeMeta().state),
       hostLabel: this.host + ':' + this.port,
+      token: this.token,
+      onTokenChange: (newToken: string) => {
+        this.token = newToken;
+        if (this.store) {
+          const profile: ConnectionProfile = {
+            host: this.host.trim(),
+            port: this.port.trim(),
+            tls: this.tls,
+            rememberToken: this.rememberToken,
+            token: newToken
+          };
+          this.store.save(profile);
+        }
+        this.showSettings = false;
+        this.openTab();
+      },
       themeName: this.themeName,
       cursorStyle: this.cursorStyle,
       cursorBlink: this.cursorBlink,
@@ -2062,7 +2077,7 @@ struct Index {
           TextInput({ text: this.token, placeholder: 'token' })
             .layoutWeight(1)
             .height(44)
-            .type(this.showToken ? InputType.Normal : InputType.Password)
+            .type(InputType.Password)
             .fontColor(Palette.text)
             .placeholderColor(Palette.textDim)
             .backgroundColor(Palette.inputBg)
@@ -2074,14 +2089,6 @@ struct Index {
             .onBlur(() => { if (this.focusedField === 'token') { this.focusedField = ''; } })
             .onChange((v: string) => { this.token = v; })
             .onSubmit(() => { this.connectFromForm(); })
-          Button(this.showToken ? '隐藏' : '显示')
-            .height(44)
-            .width(56)
-            .fontSize(13)
-            .backgroundColor(Palette.inputBg)
-            .fontColor(Palette.textDim)
-            .borderRadius(8)
-            .onClick(() => { this.showToken = !this.showToken; })
         }
         .width('100%')
 

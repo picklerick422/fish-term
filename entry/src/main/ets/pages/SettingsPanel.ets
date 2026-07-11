@@ -68,6 +68,8 @@ export struct SettingsPanel {
   @Prop statusText: string = '空闲';
   @Prop statusColor: string = '#8A94A6';
   @Prop hostLabel: string = '';
+  @Prop token: string = '';
+  onTokenChange: (token: string) => void = (_token: string) => {};
   @Prop themeName: string = '';
   @Prop cursorStyle: number = 0;
   @Prop cursorBlink: boolean = true;
@@ -116,6 +118,8 @@ export struct SettingsPanel {
   @State private hoverReplayGuide: boolean = false;
   @State private hoverCrashHistory: boolean = false;
   @State private hoverShowCrashOnStartup: boolean = false;
+  @State private hoverUpdateToken: boolean = false;
+  @State private tokenDraft: string = '';
   @State private showCrashOnStartup: boolean = true;
   @State private restoreTabsEnabled: boolean = true;
   @State private hoverCursorIdx: number = -1;
@@ -185,6 +189,7 @@ export struct SettingsPanel {
     this.syncLineSpacingDraft();
     this.syncScaleParamsDraft();
     this.tab = this.initialTab;
+    this.tokenDraft = this.token;
     const all: string[] = this.controller.getThemeList();
     // Pin recommended themes (that actually exist) to the top, rest follow.
     const present: Set<string> = new Set<string>();
@@ -1359,6 +1364,72 @@ export struct SettingsPanel {
 
   @Builder
   private buildTerminalTab() {
+    // 连接认证 — 修改 token 并自动新建页签
+    Column({ space: 0 }) {
+      this.buildSectionHeader('连接认证')
+      Column({ space: 12 }) {
+        // 当前连接信息
+        Row() {
+          Text('当前连接')
+            .fontSize(13)
+            .fontColor(Palette.textDim)
+          Text(this.hostLabel.length > 0 ? this.hostLabel : '—')
+            .fontSize(13)
+            .fontColor(Palette.text)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ left: 8 })
+        }
+        .width('100%')
+
+        // Token 输入
+        TextInput({ text: this.tokenDraft, placeholder: '输入新 token' })
+          .width('100%')
+          .height(40)
+          .type(InputType.Password)
+          .fontSize(13)
+          .fontColor(Palette.text)
+          .placeholderColor(Palette.textDim)
+          .backgroundColor(Palette.inputBg)
+          .caretColor(Palette.accent)
+          .borderRadius(8)
+          .borderWidth(1)
+          .borderColor(Palette.border)
+          .onChange((v: string) => { this.tokenDraft = v; })
+
+        // 更新按钮
+        Row() {
+          Text('更新 Token 并新建连接')
+            .fontSize(14)
+            .fontColor(this.tokenDraft.trim().length > 0 ? Palette.accent : Palette.textDim)
+        }
+        .width('100%')
+        .height(42)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.hoverUpdateToken ? '#1FFFFFFF' : Color.Transparent)
+        .borderRadius(8)
+        .border({ width: 1, color: this.tokenDraft.trim().length > 0 ? Palette.accent : Palette.border })
+        .animation({ duration: 120, curve: Curve.EaseOut })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverUpdateToken = h; })
+        .onClick(() => {
+          const t: string = this.tokenDraft.trim();
+          if (t.length > 0) {
+            this.onTokenChange(t);
+          }
+        })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(Palette.surface)
+      .borderRadius(10)
+      .border({ width: 1, color: Palette.border })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+
     // Scrollback lines section
     Column({ space: 0 }) {
       this.buildSectionHeader('滚动缓冲行数')
@@ -1492,5 +1563,6 @@ export struct SettingsPanel {
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
+
   }
 }
