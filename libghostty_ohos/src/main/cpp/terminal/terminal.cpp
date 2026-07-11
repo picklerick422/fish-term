@@ -393,10 +393,37 @@ void Terminal::feedOutput(const char* data, size_t len) {
                 len, (data && len > 0) ? static_cast<unsigned>(static_cast<unsigned char>(data[0])) : 0u);
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (m_vt && data && len > 0) {
+        // Snapshot scrollback state before processing output, so we can
+        // adjust selection coordinates if the viewport scrolls.
+        size_t oldViewportTop = 0;
+        if (m_selectionActive) {
+            oldViewportTop = getViewportTopRowLocked();
+        }
+
         ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(data), len);
-        // Clear any active selection: content has changed and the selection
-        // coordinates would now point to different text (standard terminal behaviour).
-        m_selectionActive = false;
+
+        // Preserve the selection across output. Absolute row coordinates are
+        // stable through scrolling (ghostty uses a ring buffer), so the
+        // selection still points to the same text content. We shift the
+        // coordinates by the scroll delta and only clear if the selected
+        // region falls completely outside the valid scrollback range.
+        if (m_selectionActive) {
+            size_t newViewportTop = getViewportTopRowLocked();
+            int64_t delta = static_cast<int64_t>(newViewportTop) - static_cast<int64_t>(oldViewportTop);
+            m_selStartRow += static_cast<int>(delta);
+            m_selEndRow += static_cast<int>(delta);
+
+            // Validate that the selection is still within the scrollback.
+            // Ghostty may trim old rows when max_scrollback is exceeded;
+            // if the selection range has been trimmed away, clear it.
+            const ghostty_terminal_scrollbar_t scrollbar = getScrollbarLocked();
+            const int64_t totalRows = static_cast<int64_t>(scrollbar.total);
+            const int64_t maxSb = static_cast<int64_t>(m_maxScrollback > 0 ? m_maxScrollback : 10000);
+            const int64_t minValidRow = std::max<int64_t>(0, totalRows - maxSb);
+            if (m_selEndRow < static_cast<int>(minValidRow) || m_selStartRow >= static_cast<int>(totalRows)) {
+                m_selectionActive = false;
+            }
+        }
     }
     notifyRenderNeeded();
 }
