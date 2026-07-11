@@ -49,6 +49,7 @@ export class TerminalSession {
   private titleCb: ((title: string) => void) | null = null;
   private cwdCb: ((cwd: string) => void) | null = null;
   private sessionIdCb: ((id: string) => void) | null = null;
+  private taskDataCb: ((data: string) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -75,6 +76,10 @@ export class TerminalSession {
         // replay on reconnect).  Processing megabytes synchronously on the
         // main thread blocks rendering and triggers the system ANR watchdog.
         this.feedChunked(data);
+        // Forward raw output to task detector for notification analysis
+        if (this.taskDataCb) {
+          this.taskDataCb(data);
+        }
       }
     });
     this.driver.onStatus((s: DriverStatus): void => {
@@ -120,6 +125,12 @@ export class TerminalSession {
 
   onSessionId(cb: (id: string) => void): void {
     this.sessionIdCb = cb;
+  }
+
+  // Register a callback that receives the raw terminal output chunks.
+  // TaskDetector hooks into this to analyze output for task state changes.
+  onTaskData(cb: (data: string) => void): void {
+    this.taskDataCb = cb;
   }
 
   // Max bytes to feed to the terminal emulator in one synchronous call.
