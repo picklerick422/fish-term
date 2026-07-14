@@ -37,6 +37,7 @@ const KEY_NOTIFY_ENABLED: string = 'notify_enabled';
 const KEY_NOTIFY_COMPLETED: string = 'notify_completed';
 const KEY_NOTIFY_AWAITING: string = 'notify_awaiting';
 const KEY_NOTIFY_BACKGROUND_ONLY: string = 'notify_background_only';
+const KEY_NOTIFY_BELL: string = 'notify_bell';
 
 export interface SavedTab {
   title: string;
@@ -59,6 +60,7 @@ export interface NotificationPrefs {
   taskCompleted: boolean;
   taskAwaitingInput: boolean;
   onlyWhenBackground: boolean;
+  bellEnabled: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -66,6 +68,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   taskCompleted: true,
   taskAwaitingInput: true,
   onlyWhenBackground: true,
+  bellEnabled: false,  // Bell is too noisy — off by default
 };
 
 const ASSET_NOT_FOUND: number = 24000002;
@@ -512,7 +515,8 @@ export class ConnectionStore {
       const taskCompleted: boolean = await pref.get(KEY_NOTIFY_COMPLETED, true) as boolean;
       const taskAwaitingInput: boolean = await pref.get(KEY_NOTIFY_AWAITING, true) as boolean;
       const onlyWhenBackground: boolean = await pref.get(KEY_NOTIFY_BACKGROUND_ONLY, true) as boolean;
-      return { enabled, taskCompleted, taskAwaitingInput, onlyWhenBackground };
+      const bellEnabled: boolean = await pref.get(KEY_NOTIFY_BELL, false) as boolean;
+      return { enabled, taskCompleted, taskAwaitingInput, onlyWhenBackground, bellEnabled };
     } catch (e) {
       console.error(`Failed to load notification preferences. Code: ${(e as Object).toString()}`);
       return DEFAULT_NOTIFICATION_PREFS;
@@ -527,6 +531,7 @@ export class ConnectionStore {
       await pref.put(KEY_NOTIFY_COMPLETED, prefs.taskCompleted);
       await pref.put(KEY_NOTIFY_AWAITING, prefs.taskAwaitingInput);
       await pref.put(KEY_NOTIFY_BACKGROUND_ONLY, prefs.onlyWhenBackground);
+      await pref.put(KEY_NOTIFY_BELL, prefs.bellEnabled);
       await pref.flush();
     } catch (e) {
       console.error(`Failed to save notification preferences. Code: ${(e as Object).toString()}`);

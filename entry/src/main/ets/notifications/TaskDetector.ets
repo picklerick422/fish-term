@@ -23,11 +23,16 @@ const AWAITING_PATTERNS: RegExp[] = [
 const MAX_DETAIL_LENGTH: number = 80;
 
 export class TaskDetector {
+  // Whether to treat the BEL character (\x07) as a task-completion signal.
+  // Defaults to false because many terminal operations (vim, backspace,
+  // tab-completion failures, etc.) ring the bell, causing false positives.
+  bellEnabled: boolean = false;
+
   // Analyze a chunk of terminal output.
   // Returns a TaskEvent if a task state change is detected, null otherwise.
   detect(data: string, tabId: number, tabTitle: string): TaskEvent | null {
-    // 1. Bell detection — primary and most reliable signal
-    if (data.indexOf('\x07') >= 0) {
+    // 1. Bell detection — optional, controlled by preference
+    if (this.bellEnabled && data.indexOf('\x07') >= 0) {
       return {
         type: TaskEventType.TASK_COMPLETED,
         tabId: tabId,

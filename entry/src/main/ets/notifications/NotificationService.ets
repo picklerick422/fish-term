@@ -11,6 +11,36 @@ import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/Connecti
 const NOTIFICATION_BASE_ID: number = 1000;
 const DEDUP_MS: number = 30000;
 
+// Option entry used by the test-notification UI selectors.
+export interface OptionEntry {
+  label: string;
+  value: number;
+}
+
+// Test notification parameter bundle — exposed so the settings panel can
+// configure every dimension for debugging.
+export interface TestNotifyOptions {
+  slotType: number;       // notificationManager.SlotType
+  contentType: number;    // notificationManager.ContentType
+  title: string;
+  text: string;
+}
+
+// Slot-type options presented in the test UI.
+export const SLOT_TYPE_OPTIONS: OptionEntry[] = [
+  { label: '社交通信', value: 1 } as OptionEntry,   // SOCIAL_COMMUNICATION
+  { label: '服务提醒', value: 2 } as OptionEntry,   // SERVICE_INFORMATION
+  { label: '内容资讯', value: 3 } as OptionEntry,   // CONTENT_INFORMATION
+  { label: '其他类型', value: 0xFFFF } as OptionEntry, // OTHER_TYPES
+];
+
+// Content-type options presented in the test UI.
+export const CONTENT_TYPE_OPTIONS: OptionEntry[] = [
+  { label: '基础文本', value: 0 } as OptionEntry,  // NOTIFICATION_CONTENT_BASIC_TEXT
+  { label: '长文本', value: 1 } as OptionEntry,    // NOTIFICATION_CONTENT_LONG_TEXT
+  { label: '多行文本', value: 2 } as OptionEntry,  // NOTIFICATION_CONTENT_MULTILINE
+];
+
 export class NotificationService {
   private context: common.UIAbilityContext | null = null;
   // Dedup map: "tabId_eventType" -> last notify timestamp
@@ -54,6 +84,68 @@ export class NotificationService {
     return true;
   }
 
+  // Publish a test notification with full control over slot, content type,
+  // title and text — bypasses prefs and dedup. Returns the notification id.
+  publishTest(opts: TestNotifyOptions): number {
+    const slotType: number = opts.slotType;
+    this.ensureSlot(slotType);
+
+    const id: number = NOTIFICATION_BASE_ID;
+    let content: notificationManager.NotificationContent;
+
+    if (opts.contentType === 1) {
+      // Long text
+      content = {
+        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_LONG_TEXT,
+        longText: {
+          title: opts.title,
+          text: opts.text,
+          longText: opts.text,
+          additionalText: '',
+          briefText: opts.title,
+          expandedTitle: opts.title
+        }
+      };
+    } else if (opts.contentType === 2) {
+      // Multi-line
+      const lines: string[] = opts.text.split('\n');
+      content = {
+        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_MULTILINE,
+        multiLine: {
+          title: opts.title,
+          text: opts.text,
+          additionalText: '',
+          briefText: opts.title,
+          longTitle: opts.title,
+          lines: lines
+        }
+      };
+    } else {
+      // Basic text (default)
+      content = {
+        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+        normal: {
+          title: opts.title,
+          text: opts.text,
+          additionalText: ''
+        }
+      };
+    }
+
+    const notificationRequest: notificationManager.NotificationRequest = {
+      id: id,
+      content: content,
+      notificationSlotType: slotType as notificationManager.SlotType
+    };
+
+    notificationManager.publish(notificationRequest).then((): void => {
+      console.info(`[NotificationService] Test published: slot=${slotType} content=${opts.contentType}`);
+    }).catch((err: Error): void => {
+      console.error(`[NotificationService] Test publish failed: ${err.message}`);
+    });
+    return id;
+  }
+
   // Dismiss notification for a specific tab (called when user switches to tab).
   dismiss(tabId: number): void {
     notificationManager.cancel(NOTIFICATION_BASE_ID + tabId);
@@ -91,13 +183,35 @@ export class NotificationService {
     this.lastNotify.set(key, Date.now());
   }
 
+  private createdSlots: Set<number> = new Set();
+
+  // Ensure a notification slot of the given type exists.
+  // HarmonyOS requires a slot (channel) — without it publish fails with 1600005.
+  private ensureSlot(slotType: number): void {
+    if (this.createdSlots.has(slotType)) {
+      return;
+    }
+    this.createdSlots.add(slotType);
+
+    // ArkTS strict mode requires the enum value, not a bare number.
+    const st: notificationManager.SlotType = slotType as notificationManager.SlotType;
+    notificationManager.addSlot(st).then((): void => {
+      console.info(`[NotificationService] Slot created (type=${slotType})`);
+    }).catch((err: Error): void => {
+      console.error(`[NotificationService] addSlot(type=${slotType}) failed: ${err.message}`);
+    });
+  }
+
   private publish(event: TaskEvent): void {
+    this.ensureSlot(2); // SERVICE_INFORMATION for task notifications
+
     const title: string = event.type === TaskEventType.TASK_COMPLETED
       ? `「${event.tabTitle}」执行完成`
       : `「${event.tabTitle}」需要输入`;
 
     const notificationRequest: notificationManager.NotificationRequest = {
       id: NOTIFICATION_BASE_ID + event.tabId,
+      notificationSlotType: notificationManager.SlotType.SERVICE_INFORMATION,
       content: {
         notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
         normal: {
@@ -108,11 +222,18 @@ export class NotificationService {
       }
     };
 
+    // Log notification enable status (one-time) to aid debugging.
+    notificationManager.isNotificationEnabled().then((enabled: boolean): void => {
+      console.info(`[NotificationService] isNotificationEnabled = ${enabled}`);
+    }).catch((_err: Error): void => {
+      // Best-effort diagnostic, ignore errors
+    });
+
     notificationManager.publish(notificationRequest).then((): void => {
       console.info(`[NotificationService] Published: tab=${event.tabId} type=${event.type}`);
       this.activeTabIds.add(event.tabId);
     }).catch((err: Error): void => {
-      console.error(`[NotificationService] Publish failed: ${err.message}`);
+      console.error(`[NotificationService] Publish failed: ${err.message} (code may be in err)`);
     });
   }
 }

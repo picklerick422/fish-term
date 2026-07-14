@@ -20,7 +20,7 @@ import { CrashLogPanel } from './CrashLogPanel';
 import { CrashHandler } from '../crash/CrashHandler';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
-import { TaskEvent, TaskEventType } from '../notifications/TaskEvent';
+import { TaskEvent } from '../notifications/TaskEvent';
 import { TaskDetector } from '../notifications/TaskDetector';
 import { NotificationService } from '../notifications/NotificationService';
 import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/ConnectionStore';
@@ -53,13 +53,11 @@ class TabMeta {
   title: string;
   state: DriverState;
   statusText: string;
-  taskEventType?: TaskEventType;
-  constructor(id: number, title: string, state: DriverState, statusText: string, taskEventType?: TaskEventType) {
+  constructor(id: number, title: string, state: DriverState, statusText: string) {
     this.id = id;
     this.title = title;
     this.state = state;
     this.statusText = statusText;
-    this.taskEventType = taskEventType;
   }
 }
 
@@ -165,6 +163,7 @@ struct Index {
       this.store.loadNotificationPrefs().then((prefs: NotificationPrefs): void => {
         this.notifyPrefs = prefs;
         this.notifyService.updatePrefs(prefs);
+        this.detector.bellEnabled = prefs.bellEnabled;
       });
     }
 
@@ -614,9 +613,9 @@ struct Index {
   private updateTabMeta(id: number, state: DriverState, statusText: string): void {
     const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
       if (t.id === id) {
-        return new TabMeta(t.id, t.title, state, statusText, t.taskEventType);
+        return new TabMeta(t.id, t.title, state, statusText);
       }
-      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
+      return new TabMeta(t.id, t.title, t.state, t.statusText);
     });
     this.tabs = next;
   }
@@ -626,44 +625,17 @@ struct Index {
     if (trimmed.length === 0) return;
     const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
       if (t.id === id) {
-        return new TabMeta(t.id, trimmed, t.state, t.statusText, t.taskEventType);
+        return new TabMeta(t.id, trimmed, t.state, t.statusText);
       }
-      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
-    });
-    this.tabs = next;
-  }
-
-  // Set a task event indicator on a tab chip (colored dot).
-  private setTabTaskEvent(id: number, eventType: TaskEventType): void {
-    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
-      if (t.id === id) {
-        return new TabMeta(t.id, t.title, t.state, t.statusText, eventType);
-      }
-      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
-    });
-    this.tabs = next;
-  }
-
-  // Clear the task event indicator when the user switches to a tab.
-  private clearTabTaskEvent(id: number): void {
-    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
-      if (t.id === id) {
-        return new TabMeta(t.id, t.title, t.state, t.statusText, undefined);
-      }
-      return new TabMeta(t.id, t.title, t.state, t.statusText, t.taskEventType);
+      return new TabMeta(t.id, t.title, t.state, t.statusText);
     });
     this.tabs = next;
   }
 
   // Called when TaskDetector detects a task state change.
-  // Updates the tab indicator and optionally publishes a system notification.
+  // Delegates to NotificationService for system notification (background only via prefs).
   private handleTaskEvent(event: TaskEvent): void {
     console.info(`[Index] TaskEvent: tab=${event.tabId} type=${event.type} detail=${event.detail}`);
-
-    // Always update the tab chip indicator (foreground visual)
-    this.setTabTaskEvent(event.tabId, event.type);
-
-    // Delegate to notification service for system notification (respects prefs + foreground)
     this.notifyService.handle(event, this.isForeground);
   }
 
@@ -843,12 +815,12 @@ struct Index {
 
   private switchTab(id: number): void {
     if (id === this.activeId) {
+      this.notifyService.dismiss(id);
       this.focusActiveTerminal();
       return;
     }
     this.activeId = id;
-    // Dismiss notification and clear task indicator for the newly active tab
-    this.clearTabTaskEvent(id);
+    // Dismiss notification for the newly active tab
     this.notifyService.dismiss(id);
     this.focusActiveTerminal();
     this.saveSession();
@@ -1512,13 +1484,6 @@ struct Index {
   @Builder
   private buildTabChip(tab: TabMeta) {
     Row({ space: 6 }) {
-      // Task event indicator dot (before tab title)
-      // Cyan dot = task completed, warm dot = task awaiting input
-      if (tab.taskEventType !== undefined && tab.taskEventType !== null) {
-        Circle({ width: 6, height: 6 })
-          .fill(tab.taskEventType === TaskEventType.TASK_COMPLETED ? Palette.accent : Palette.warn)
-          .focusable(false)
-      }
       Text(tab.title)
         .fontSize(Math.max(10, this.fontSize - 1))
         .fontFamily(this.uiFontFamily)
@@ -1874,6 +1839,7 @@ struct Index {
       notifyCompleted: this.notifyPrefs.taskCompleted,
       notifyAwaiting: this.notifyPrefs.taskAwaitingInput,
       notifyBackgroundOnly: this.notifyPrefs.onlyWhenBackground,
+      notifyBell: this.notifyPrefs.bellEnabled,
       onNotifyEnabledChange: (v: boolean) => {
         this.notifyPrefs.enabled = v;
         this.notifyService.updatePrefs(this.notifyPrefs);
@@ -1901,6 +1867,16 @@ struct Index {
         if (this.store) {
           this.store.saveNotificationPrefs(this.notifyPrefs);
         }
+      },
+      onNotifyBellChange: (v: boolean) => {
+        this.notifyPrefs.bellEnabled = v;
+        this.detector.bellEnabled = v;
+        if (this.store) {
+          this.store.saveNotificationPrefs(this.notifyPrefs);
+        }
+      },
+      onTestNotification: (slotType: number, contentType: number, title: string, text: string) => {
+        this.notifyService.publishTest({ slotType, contentType, title, text });
       },
       onThemeChange: (n: string) => { this.themeName = n; this.broadcastTheme(); },
       onCursorStyleChange: (v: number) => { this.cursorStyle = v; this.broadcastConfig(); },
