@@ -61,49 +61,66 @@ export struct ConnectionForm {
 
       Column({ space: 14 }) {
         Row({ space: 10 }) {
-          TextInput({ text: this.host, placeholder: '主机 host' })
-            .layoutWeight(2)
-            .height(44)
-            .fontColor(this.uiTheme.textPrimary)
-            .placeholderColor(this.uiTheme.textDim)
-            .backgroundColor(this.uiTheme.bgInput)
-            .caretColor(this.uiTheme.accent)
-            .borderRadius(RADIUS_CONTROL)
-            .borderWidth(1)
-            .borderColor(this.focusedField === 'host' ? this.uiTheme.accent : this.uiTheme.border)
-            // Focus glow — transparent under refined (accent ring only there).
-            .shadow(this.focusedField === 'host'
-              ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
-              : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
-            .onFocus(() => { this.focusedField = 'host'; })
-            .onBlur(() => { if (this.focusedField === 'host') { this.focusedField = ''; } })
-            .onChange((v: string) => { this.host = v; })
-            .onSubmit(() => { this.onConnect(); })
-          TextInput({ text: this.port, placeholder: '端口' })
-            .layoutWeight(1)
-            .height(44)
-            .type(InputType.Number)
-            .fontColor(this.uiTheme.textPrimary)
-            .placeholderColor(this.uiTheme.textDim)
-            .backgroundColor(this.uiTheme.bgInput)
-            .caretColor(this.uiTheme.accent)
-            .borderRadius(RADIUS_CONTROL)
-            .borderWidth(1)
-            .borderColor(this.focusedField === 'port' ? this.uiTheme.accent : this.uiTheme.border)
-            .shadow(this.focusedField === 'port'
-              ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
-              : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
-            .onFocus(() => { this.focusedField = 'port'; })
-            .onBlur(() => { if (this.focusedField === 'port') { this.focusedField = ''; } })
-            .onChange((v: string) => { this.port = v; })
-            .onSubmit(() => { this.onConnect(); })
+          Column({ space: 6 }) {
+            Text('主机')
+              .fontSize(12)
+              .fontColor(this.uiTheme.textDim)
+            TextInput({ text: this.host, placeholder: '主机 host' })
+              .width('100%')
+              .height(36)
+              .fontColor(this.uiTheme.textPrimary)
+              .placeholderColor(this.uiTheme.textDim)
+              .backgroundColor(this.uiTheme.bgInput)
+              .caretColor(this.uiTheme.accent)
+              .borderRadius(RADIUS_CONTROL)
+              .borderWidth(1)
+              .borderColor(this.focusedField === 'host' ? this.uiTheme.accent : this.uiTheme.border)
+              // Focus glow — transparent under refined (accent ring only there).
+              .shadow(this.focusedField === 'host'
+                ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+                : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
+              .onFocus(() => { this.focusedField = 'host'; })
+              .onBlur(() => { if (this.focusedField === 'host') { this.focusedField = ''; } })
+              .onChange((v: string) => { this.host = v; })
+              .onSubmit(() => { this.onConnect(); })
+          }
+          .layoutWeight(2)
+          .alignItems(HorizontalAlign.Start)
+          Column({ space: 6 }) {
+            Text('端口')
+              .fontSize(12)
+              .fontColor(this.uiTheme.textDim)
+            TextInput({ text: this.port, placeholder: '端口' })
+              .width('100%')
+              .height(36)
+              .type(InputType.Number)
+              .fontColor(this.uiTheme.textPrimary)
+              .placeholderColor(this.uiTheme.textDim)
+              .backgroundColor(this.uiTheme.bgInput)
+              .caretColor(this.uiTheme.accent)
+              .borderRadius(RADIUS_CONTROL)
+              .borderWidth(1)
+              .borderColor(this.focusedField === 'port' ? this.uiTheme.accent : this.uiTheme.border)
+              .shadow(this.focusedField === 'port'
+                ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+                : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
+              .onFocus(() => { this.focusedField = 'port'; })
+              .onBlur(() => { if (this.focusedField === 'port') { this.focusedField = ''; } })
+              .onChange((v: string) => { this.port = v; })
+              .onSubmit(() => { this.onConnect(); })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
         }
         .width('100%')
 
-        Row({ space: 10 }) {
+        Column({ space: 6 }) {
+          Text('token')
+            .fontSize(12)
+            .fontColor(this.uiTheme.textDim)
           TextInput({ text: this.token, placeholder: 'token' })
-            .layoutWeight(1)
-            .height(44)
+            .width('100%')
+            .height(36)
             .type(InputType.Password)
             .fontColor(this.uiTheme.textPrimary)
             .placeholderColor(this.uiTheme.textDim)
@@ -121,6 +138,7 @@ export struct ConnectionForm {
             .onSubmit(() => { this.onConnect(); })
         }
         .width('100%')
+        .alignItems(HorizontalAlign.Start)
 
         Row() {
           Text('TLS (wss)')
@@ -132,6 +150,7 @@ export struct ConnectionForm {
             .onChange((on: boolean) => { this.tls = on; })
         }
         .width('100%')
+        .height(36)
 
         Row() {
           Text('记住 token（加密存储）')
@@ -143,17 +162,19 @@ export struct ConnectionForm {
             .onChange((on: boolean) => { this.rememberToken = on; })
         }
         .width('100%')
+        .height(36)
 
-        if (this.formError.length > 0) {
-          Text('⚠ ' + this.formError)
-            .fontSize(13)
-            .fontColor(this.uiTheme.danger)
-            .width('100%')
-        }
+        // Always rendered — reserves 18vp even when empty so the layout does
+        // not jump when an error appears/clears.
+        Text(this.formError)
+          .fontSize(12)
+          .fontColor(this.uiTheme.danger)
+          .height(18)
+          .width('100%')
 
         Button('连 接')
           .width('100%')
-          .height(46)
+          .height(40)
           .fontSize(16)
           .fontColor(this.uiTheme.textOnAccent)
           // backgroundColor kept as a solid fallback; the degenerate gradient

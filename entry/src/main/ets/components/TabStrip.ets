@@ -314,11 +314,12 @@ export struct TabStrip {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(this.tabCompact ? 1 : 0)
-      // ✕ turns red on hover to signal "this will close"
+      // ✕ turns red on hover to signal "this will close"; rests at 0.6 opacity
       Text('✕')
         .fontSize(11)
         .fontColor(this.hoverCloseId === tab.id ? this.uiTheme.danger
           : (tab.id === this.activeId ? this.themeFg : this.uiTheme.textDim))
+        .opacity(this.hoverCloseId === tab.id ? 1.0 : 0.6)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
@@ -485,53 +486,60 @@ export struct TabStrip {
     .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 6 })
   }
 
-  // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
-  // settings icon and the system caption buttons it sits beside.
+  // Line-art help icon (hollow circle + "?") — same stroke weight / hover
+  // behavior as the settings icon and the system caption buttons it sits beside.
+  // Unified icon spec (Task 8): 18×18 viewport, 1.8 stroke, textDim → textPrimary on hover.
   @Builder
   private helpIcon() {
     Stack({ alignContent: Alignment.Center }) {
-      Circle({ width: 15, height: 15 })
+      Circle({ width: 16, height: 16 })
         .fill(Color.Transparent)
         .stroke(this.hoverGuide ? this.uiTheme.textPrimary : this.uiTheme.textDim)
-        .strokeWidth(1)
+        .strokeWidth(1.8)
       Text('?')
         .fontSize(10)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.hoverGuide ? this.uiTheme.textPrimary : this.uiTheme.textDim)
     }
-    .width(15)
-    .height(15)
+    .width(18)
+    .height(18)
     .animation({ duration: 120, curve: Curve.EaseOut })
   }
 
   // Thin-line "sliders" icon, monochrome to match the system window-control
-  // buttons (minimize / maximize / close) it sits beside: same light-gray
-  // stroke weight, hollow knobs, no fill, no accent color.
+  // buttons (minimize / maximize / close) it sits beside: hollow knobs, no
+  // fill, no accent color. Unified icon spec (Task 8): 18×18 viewport, 1.8
+  // stroke, textDim → textPrimary on hover.
   @Builder
   private settingsIcon() {
-    Column({ space: 5 }) {
+    Column({ space: 6 }) {
       // top slider: knob on the right
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(14).height(1).borderRadius(0.5).backgroundColor(this.uiTheme.textDim)
-        Circle({ width: 4.5, height: 4.5 })
+        Row().width(18).height(1.8).borderRadius(0.9)
+          .backgroundColor(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
+        Circle({ width: 5.5, height: 5.5 })
           .fill(this.uiTheme.bgSurface)
-          .stroke(this.uiTheme.textDim)
-          .strokeWidth(1)
-          .margin({ left: 7 })
+          .stroke(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
+          .strokeWidth(1.8)
+          .margin({ left: 9 })
       }
-      .width(14).height(4.5)
+      .width(18).height(5.5)
 
       // bottom slider: knob on the left
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(14).height(1).borderRadius(0.5).backgroundColor(this.uiTheme.textDim)
-        Circle({ width: 4.5, height: 4.5 })
+        Row().width(18).height(1.8).borderRadius(0.9)
+          .backgroundColor(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
+        Circle({ width: 5.5, height: 5.5 })
           .fill(this.uiTheme.bgSurface)
-          .stroke(this.uiTheme.textDim)
-          .strokeWidth(1)
-          .margin({ left: 2.5 })
+          .stroke(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
+          .strokeWidth(1.8)
+          .margin({ left: 3.5 })
       }
-      .width(14).height(4.5)
+      .width(18).height(5.5)
     }
+    .width(18)
+    .height(18)
     .justifyContent(FlexAlign.Center)
+    .animation({ duration: 120, curve: Curve.EaseOut })
   }
 }

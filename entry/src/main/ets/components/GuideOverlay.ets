@@ -69,9 +69,104 @@ export struct GuideOverlay {
     }
   }
 
-  // Placeholder filename for the screenshot to drop in for each step.
-  private guideImageName(step: number): string {
-    return 'guide_' + step + '.png';
+  // Per-step illustration panel. The art is pure ArkUI geometry in token
+  // colors (no image assets, no literal hex). Each mock depicts the step's
+  // actual guideTitle content:
+  //   0 欢迎 → 迷你终端窗口; 1 安装 fish-agent → 命令行; 2 启动服务/获取连接信息
+  //   → 输出行; 3 新建连接 → 连接表单; 4 开始使用 → 快捷键键帽
+  @Builder
+  private guideArt(step: number) {
+    Stack({ alignContent: Alignment.Center }) {
+      if (step === 0) {
+        // 欢迎:迷你终端窗口 —— 窗口圆点 + 文本行 + 光标
+        Column({ space: 6 }) {
+          Row({ space: 5 }) {
+            Circle({ width: 6, height: 6 }).fill(this.uiTheme.danger)
+            Circle({ width: 6, height: 6 }).fill(this.uiTheme.warn)
+            Circle({ width: 6, height: 6 }).fill(this.uiTheme.success)
+          }
+          .width('100%')
+          Column({ space: 5 }) {
+            Row().width(120).height(7).backgroundColor(this.uiTheme.bgSurface).borderRadius(3)
+            Row().width(86).height(7).backgroundColor(this.uiTheme.bgSurface).borderRadius(3)
+            Row({ space: 4 }) {
+              Row().width(40).height(7).backgroundColor(this.uiTheme.bgSurface).borderRadius(3)
+              Row().width(7).height(9).backgroundColor(this.uiTheme.accent).borderRadius(1)
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width(180)
+        .padding(10)
+        .backgroundColor(this.uiTheme.bgElevated)
+        .borderRadius(8)
+        .border({ width: 1, color: this.uiTheme.border })
+        .alignItems(HorizontalAlign.Start)
+      } else if (step === 1) {
+        // 安装:三行命令(提示符 + 命令条)
+        Column({ space: 8 }) {
+          Row({ space: 6 }) {
+            Text('$').fontSize(10).fontFamily('monospace').fontColor(this.uiTheme.accent)
+            Row().width(150).height(10).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          }
+          Row({ space: 6 }) {
+            Text('$').fontSize(10).fontFamily('monospace').fontColor(this.uiTheme.accent)
+            Row().width(110).height(10).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          }
+          Row({ space: 6 }) {
+            Text('$').fontSize(10).fontFamily('monospace').fontColor(this.uiTheme.accent)
+            Row().width(60).height(10).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+      } else if (step === 2) {
+        // 启动服务:启动输出(host/port/token 三行信息)
+        Column({ space: 8 }) {
+          Row({ space: 6 }) {
+            Circle({ width: 8, height: 8 }).fill(this.uiTheme.success)
+            Row().width(140).height(12).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          }
+          Row({ space: 6 }) {
+            Circle({ width: 8, height: 8 }).fill(this.uiTheme.accent)
+            Row().width(110).height(12).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          }
+          Row({ space: 6 }) {
+            Circle({ width: 8, height: 8 }).fill(this.uiTheme.accent)
+            Row().width(90).height(12).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          }
+        }
+      } else if (step === 3) {
+        // 新建连接:两条输入条 + 一条渐变主按钮
+        Column({ space: 8 }) {
+          Row().width(160).height(14).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          Row().width(160).height(14).backgroundColor(this.uiTheme.bgElevated).borderRadius(4)
+          Row().width(160).height(16).borderRadius(4)
+            .linearGradient({ angle: 90, colors: this.uiTheme.accentGradient
+              ? [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]]
+              : [[this.uiTheme.accent, 0.0], [this.uiTheme.accent, 1.0]] })
+        }
+      } else {
+        // 开始使用:快捷键键帽(Ctrl+Shift+T 新建标签)
+        Row({ space: 6 }) {
+          Text('Ctrl').fontSize(10).fontColor(this.uiTheme.textDim)
+            .padding(6).backgroundColor(this.uiTheme.bgElevated).borderRadius(5)
+            .border({ width: 1, color: this.uiTheme.border })
+          Text('Shift').fontSize(10).fontColor(this.uiTheme.textDim)
+            .padding(6).backgroundColor(this.uiTheme.bgElevated).borderRadius(5)
+            .border({ width: 1, color: this.uiTheme.border })
+          Text('T').fontSize(10).fontColor(this.uiTheme.accent)
+            .padding(6).backgroundColor(this.uiTheme.bgElevated).borderRadius(5)
+            .border({ width: 1, color: this.uiTheme.accent })
+        }
+      }
+    }
+    .width('100%')
+    .height(180)
+    .backgroundColor(this.uiTheme.bgInput)
+    .borderRadius(12)
+    .border({ width: 1, color: this.uiTheme.border })
+    .margin({ bottom: 18 })
   }
 
   // Navigate the guide. The native Tabs slide animation handles the motion;
@@ -88,31 +183,16 @@ export struct GuideOverlay {
     this.guideTabs.changeIndex(target);
   }
 
-  // One guide page (image + title + description), inside a Scroll so a tall
+  // One guide page (art + title + description), inside a Scroll so a tall
   // page (e.g. the shortcuts summary) can scroll within the fixed Tabs height.
-  // The image is pinned to the top of the scroll area so its top edge stays at
-  // the same position across all steps during horizontal swipe.
+  // The art panel is pinned to the top of the scroll area so its top edge stays
+  // at the same position across all steps during horizontal swipe.
   @Builder
   private guideBody(step: number) {
     Scroll() {
       Column() {
-        // Image placeholder — replace with real screenshots later.
-        Stack({ alignContent: Alignment.Center }) {
-          Column({ space: 6 }) {
-            Text('🖼')
-              .fontSize(34)
-              .fontColor(this.uiTheme.textDim)
-            Text('图片占位 · ' + this.guideImageName(step))
-              .fontSize(12)
-              .fontColor(this.uiTheme.textDim)
-          }
-        }
-        .width('100%')
-        .height(180)
-        .backgroundColor(this.uiTheme.bgInput)
-        .borderRadius(12)
-        .border({ width: 1, color: this.uiTheme.border })
-        .margin({ top: 0, bottom: 18 })
+        // ArkUI-drawn mini mock matching the step's content (no image assets).
+        this.guideArt(step)
 
         Text(this.guideTitle(step))
           .fontSize(20)

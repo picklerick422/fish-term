@@ -2,7 +2,7 @@
 
 import { pasteboard } from '@kit.BasicServicesKit';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
-import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL, RADIUS_SHEET } from '../theme/UiTheme';
 
 function typeLabel(t: CrashType): string {
   switch (t) {
@@ -125,7 +125,11 @@ export struct CrashLogPanel {
       this.buildBottomButtons()
     }
     .width('100%')
-    .backgroundColor(this.uiTheme.bgBase)
+    // Unified sheet shell (Task 8): bgSurface card + sheet radius + 1px border + shadow.
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_SHEET)
+    .border({ width: 1, color: this.uiTheme.border })
+    .shadow({ radius: 32, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 8 })
   }
 
   // === 崩溃信息 ===

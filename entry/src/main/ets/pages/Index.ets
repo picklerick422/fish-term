@@ -7,7 +7,7 @@ import { TerminalRuntime } from '../session/TerminalTab';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS, SavedSession, SavedTab } from '../store/ConnectionStore';
-import { UiTheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL, toSurfaceTheme } from '../theme/UiTheme';
+import { UiTheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL, RADIUS_SHEET, toSurfaceTheme } from '../theme/UiTheme';
 import {
   DEFAULT_FONT_SIZE, clampFontSize,
   DEFAULT_LINE_SPACING, clampLineSpacing,
@@ -1132,7 +1132,7 @@ struct Index {
           height: 600,
           dragBar: false,
           showClose: false,
-          backgroundColor: this.uiTheme.bgBase,
+          backgroundColor: this.uiTheme.bgSurface,
           onDisappear: () => {
             // Reset the flag even when dismissed via swipe / back gesture rather
             // than the explicit Close button, so canFocusTerminal() won't block
@@ -1152,7 +1152,7 @@ struct Index {
           width: '50%',
           dragBar: false,
           showClose: false,
-          backgroundColor: this.uiTheme.bgBase,
+          backgroundColor: this.uiTheme.bgSurface,
           onDisappear: () => {
             this.showCrashLog = false;
             this.focusActiveTerminal();
@@ -1167,7 +1167,7 @@ struct Index {
           height: 220,
           dragBar: false,
           showClose: false,
-          backgroundColor: this.uiTheme.bgBase,
+          backgroundColor: this.uiTheme.bgSurface,
           onDisappear: () => {
             this.showRenameDialog = false;
             this.focusActiveTerminal();
@@ -1425,6 +1425,11 @@ struct Index {
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+    // Unified sheet shell (Task 8): same card treatment as settings / crash sheets.
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_SHEET)
+    .border({ width: 1, color: this.uiTheme.border })
+    .shadow({ radius: 32, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 8 })
   }
 
   @Builder

@@ -1,5 +1,5 @@
 import { TerminalController } from 'libghostty_ohos';
-import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL, RADIUS_SHEET } from '../theme/UiTheme';
 import { ConnectionStore } from '../store/ConnectionStore';
 import {
   DEFAULT_FONT_SCALE_BOOST, DEFAULT_CJK_VERTICAL_OFFSET, DEFAULT_CHARACTER_SPACING
@@ -202,7 +202,11 @@ export struct SettingsPanel {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.uiTheme.bgBase)
+    // Unified sheet shell (Task 8): bgSurface card + sheet radius + 1px border + shadow.
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_SHEET)
+    .border({ width: 1, color: this.uiTheme.border })
+    .shadow({ radius: 32, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 8 })
     .onClick(() => {
       if (this.uiFontDropdownOpen || this.termFontDropdownOpen) {
         this.uiFontDropdownOpen = false;

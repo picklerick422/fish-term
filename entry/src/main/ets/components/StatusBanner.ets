@@ -1,4 +1,4 @@
-import { UiTheme, REFINED_DARK_THEME } from '../theme/UiTheme';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 import { DEFAULT_UI_FONT } from '../theme/FontScale';
 
 // Severity of the status banner, mapped by the page from the active tab state:
@@ -22,24 +22,21 @@ export struct StatusBanner {
   onAction: () => void = () => {};
   @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
-  // Dot color per kind — same values as the page's old dotColor() for the
-  // states this banner can show (warn → uiTheme.warn, danger → uiTheme.danger).
-  private dotColor(): string {
+  // Tri-state accent color: drives the left 3px status bar and the action
+  // text. kind mapping: info → accent, warn → warn, danger → danger.
+  private barColor(): string {
     if (this.kind === 'warn') {
       return this.uiTheme.warn;
     }
     if (this.kind === 'danger') {
       return this.uiTheme.danger;
     }
-    return this.uiTheme.textDim;
+    return this.uiTheme.accent;
   }
 
   build() {
     if (this.visible) {
       Row({ space: 8 }) {
-        Text('●')
-          .fontSize(9)
-          .fontColor(this.dotColor())
         Text(this.text)
           .fontSize(12)
           .fontFamily(this.uiFontFamily)
@@ -51,7 +48,7 @@ export struct StatusBanner {
           Text(this.actionText)
             .fontSize(12)
             .fontFamily(this.uiFontFamily)
-            .fontColor(this.uiTheme.accent)
+            .fontColor(this.barColor())
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .borderRadius(6)
             .backgroundColor(this.uiTheme.pressOverlay)
@@ -63,6 +60,19 @@ export struct StatusBanner {
       .padding({ left: 14, right: 12, top: 8, bottom: 8 })
       .backgroundColor(this.uiTheme.bgSurface)
       .alignItems(VerticalAlign.Center)
+      .borderRadius(RADIUS_CONTROL)
+      // Left 3px status bar via per-edge border — full-height without any
+      // extra layout element; remaining edges carry the regular 1px border.
+      .border({
+        width: { left: 3, top: 1, right: 1, bottom: 1 },
+        color: {
+          left: this.barColor(),
+          top: this.uiTheme.border,
+          right: this.uiTheme.border,
+          bottom: this.uiTheme.border
+        },
+        radius: RADIUS_CONTROL
+      })
     }
   }
 }
