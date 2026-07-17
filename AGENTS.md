@@ -19,7 +19,8 @@ fish-term — HarmonyOS terminal app on Ghostty's VT library.
 - `cpp/CMakeLists.txt` — Native build config
 
 ### App (`entry/src/main/`)
-- `ets/pages/Index.ets` — Main UI
+- `ets/pages/Index.ets` — Main UI (orchestration only)
+- `ets/components/` — TabStrip (exports TabMeta), StatusBanner, ConnectionForm, GuideOverlay (extracted from Index)
 - `ets/transport/FishWebSocketDriver.ets` — WebSocket transport
 - `ets/session/TerminalSession.ets` — Session lifecycle
 - `cpp/pty/pty_handler.cpp` — PTY management

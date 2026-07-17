@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { emitter } from '@kit.BasicServicesKit';
-import { font, curves, window } from '@kit.ArkUI';
+import { font, window } from '@kit.ArkUI';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { TerminalRuntime } from '../session/TerminalTab';
@@ -18,6 +18,10 @@ import {
 } from '../theme/FontScale';
 import { SettingsPanel } from './SettingsPanel';
 import { CrashLogPanel } from './CrashLogPanel';
+import { TabStrip, TabMeta } from '../components/TabStrip';
+import { StatusBanner, BannerKind } from '../components/StatusBanner';
+import { ConnectionForm } from '../components/ConnectionForm';
+import { GuideOverlay } from '../components/GuideOverlay';
 import { CrashHandler } from '../crash/CrashHandler';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
@@ -43,24 +47,8 @@ function stateLabel(s: DriverStatus): string {
   }
 }
 
-// Reactive per-tab metadata that drives the tab strip. The heavy controller /
-// session live in TerminalRuntime, keyed by id in `runtimes`.
-// Must be @Observed class — ArkUI V1 tracks nested changes on interface fields
-// only when the whole array is reassigned AND ForEach keys differ. @Observed
-// makes property changes reliably trigger UI refresh.
-@Observed
-class TabMeta {
-  id: number;
-  title: string;
-  state: DriverState;
-  statusText: string;
-  constructor(id: number, title: string, state: DriverState, statusText: string) {
-    this.id = id;
-    this.title = title;
-    this.state = state;
-    this.statusText = statusText;
-  }
-}
+// TabMeta lives in components/TabStrip.ets now (exported @Observed class,
+// imported above) — fields unchanged: id/title/state/statusText.
 
 @Entry
 @Component
@@ -78,15 +66,9 @@ struct Index {
 
   @State private tabs: TabMeta[] = [];
   @State private activeId: number = -1;
-  @State private hoverAddTab: boolean = false;
-  @State private hoverSettings: boolean = false;
-  @State private hoverLogo: boolean = false;
-  @State private hoverCloseId: number = -1;
-  @State private hoverTabId: number = -1;
   @State private renameTabId: number = -1;
   @State private renameText: string = '';
   @State private showRenameDialog: boolean = false;
-  @State private hoverMenuAction: string = '';
   @State private host: string = '192.168.1.10';
   @State private port: string = '8765';
   @State private token: string = '';
@@ -95,7 +77,6 @@ struct Index {
   @State private fontSize: number = DEFAULT_FONT_SIZE;
   @State private lineSpacing: number = DEFAULT_LINE_SPACING;
   @State private formError: string = '';
-  @State private focusedField: string = '';
   @State private showSettings: boolean = false;
   @State private settingsInitialTab: number = 0;
   @State private showNewConnection: boolean = false;
@@ -120,14 +101,6 @@ struct Index {
   // First-run onboarding guide.
   @State private showGuide: boolean = false;
   @State private tabCompact: boolean = false;
-  @State private guideStep: number = 0;
-  // Background mask opacity for fade-in/out animation.
-  @State private guideBgOpacity: number = 0;
-  // Hover states for guide button and guide card buttons
-  @State private hoverGuide: boolean = false;
-  @State private guideHover: string = '';
-  // Drives the native horizontal slide between guide pages.
-  private guideTabs: TabsController = new TabsController();
   @State private showCrashLog: boolean = false;
   @State private crashEntry: CrashLogEntry = {
     id: '', timestamp: 0, crashType: CrashType.JS_CRASH,
@@ -135,17 +108,12 @@ struct Index {
     deviceInfo: { deviceModel: '', osVersion: '', appVersion: '' },
     logFileName: '', viewed: false
   };
-  // Tab drag-reorder via horizontal PanGesture (live reorder, stays on baseline).
-  @State private dragTabId: number = -1;
-  @State private dragOffsetX: number = 0;
-  @State private dragSwaps: number = 0;
-  private dragUnit: number = 110;
-  private didDrag: boolean = false;
-  private lastDragEnd: number = 0;
+  // chipWidths / tabScroller are passed to TabStrip by reference (plain member
+  // params) — the strip measures chips into this same Map and attaches this
+  // same Scroller, so scrollToTab() and the wheel handler below keep working.
   private chipWidths: Map<number, number> = new Map<number, number>();
   private tabScroller: Scroller = new Scroller();
   @State private showOverflow: boolean = false;
-  @State private hoverOverflow: boolean = false;
   private saveDebounceTimer: number = -1;
   private detector: TaskDetector = new TaskDetector();
   private notifyService: NotificationService = new NotificationService();
@@ -380,38 +348,22 @@ struct Index {
     });
   }
 
-  // Guide appear/disappear animation — replicates the native bindSheet(CENTER)
-  // motion: card slides up + fades in, background mask fades in/out.
-  private readonly guideAnimCurve = curves.cubicBezierCurve(0.32, 0.72, 0.0, 1.0);
-
+  // Guide appear/disappear animation lives in GuideOverlay now (mask fade on
+  // mount + card TransitionEffect); the page only toggles visibility.
   private openGuide(): void {
     this.showGuide = true;
-    this.guideStep = 0;
-    animateTo({ duration: 280, curve: this.guideAnimCurve }, () => {
-      this.guideBgOpacity = 1;
-    });
   }
 
-  // Animate out, then tear down DOM after the transition finishes.
-  private closeGuide(then?: () => void): void {
-    animateTo({ duration: 250, curve: this.guideAnimCurve }, () => {
-      this.showGuide = false;
-      this.guideBgOpacity = 0;
-    });
-    setTimeout(() => {
-      this.guideStep = 0;
-      if (then) {
-        then();
-      }
-    }, 260);
-  }
-
+  // Called via GuideOverlay.onFinish (skip / past last step). The overlay's
+  // 250ms mask fade-out runs alongside the card exit transition; persist the
+  // onboarded flag after the animation, as the old closeGuide() did.
   private finishGuide(): void {
-    this.closeGuide(() => {
+    this.showGuide = false;
+    setTimeout(() => {
       if (this.store) {
         this.store.saveOnboarded(true);
       }
-    });
+    }, 260);
   }
 
   aboutToDisappear(): void {
@@ -674,7 +626,8 @@ struct Index {
     this.showRenameDialog = false;
     this.renameTabId = -1;
     this.renameText = '';
-    this.hoverMenuAction = '';
+    // NOTE: the context-menu hover reset that used to live here moved into
+    // TabStrip (it owns hoverMenuAction now; it resets on the rename click).
   }
 
   private closeOtherTabs(keepId: number): void {
@@ -682,6 +635,20 @@ struct Index {
     for (let i: number = 0; i < ids.length; i++) {
       this.closeTab(ids[i]);
     }
+  }
+
+  // Splice one tab from index `from` to index `to`. Called by TabStrip's live
+  // drag-reorder (onReorder) — the strip tracks the dragged chip's pending
+  // index and fires this once per crossed slot, exactly like the old
+  // moveDragged() did when it lived here.
+  private reorderTabs(from: number, to: number): void {
+    if (from < 0 || from >= this.tabs.length || to < 0 || to >= this.tabs.length || from === to) {
+      return;
+    }
+    const list: TabMeta[] = this.tabs.slice();
+    const moved: TabMeta = list.splice(from, 1)[0];
+    list.splice(to, 0, moved);
+    this.tabs = list;
   }
 
   // Debounced save — collects the latest snapshot and writes once after 250ms
@@ -897,56 +864,6 @@ struct Index {
     this.tabScroller.scrollTo({ xOffset: Math.max(0, targetX - chipW), yOffset: 0, animation: true });
   }
 
-  // Move the dragged chip one slot in `dir` (±1). Returns false at the edges.
-  private moveDragged(dir: number): boolean {
-    let idx: number = -1;
-    for (let i: number = 0; i < this.tabs.length; i++) {
-      if (this.tabs[i].id === this.dragTabId) {
-        idx = i;
-        break;
-      }
-    }
-    const target: number = idx + dir;
-    if (idx < 0 || target < 0 || target >= this.tabs.length) {
-      return false;
-    }
-    const list: TabMeta[] = this.tabs.slice();
-    const moved: TabMeta = list.splice(idx, 1)[0];
-    list.splice(target, 0, moved);
-    this.tabs = list;
-    return true;
-  }
-
-  // Called continuously during a horizontal pan: as the dragged chip's residual
-  // offset crosses ~0.6 of a chip width, swap it past the neighbour so the other
-  // tabs re-flow live (with animation) under the finger.
-  private onDragUpdate(offsetX: number): void {
-    this.dragOffsetX = offsetX;
-    if (Math.abs(offsetX) > 4) {
-      this.didDrag = true;
-    }
-    let guard: number = 0;
-    while (guard < 20) {
-      guard = guard + 1;
-      const residual: number = this.dragOffsetX - this.dragSwaps * this.dragUnit;
-      if (residual > this.dragUnit * 0.6) {
-        if (this.moveDragged(1)) {
-          this.dragSwaps = this.dragSwaps + 1;
-        } else {
-          break;
-        }
-      } else if (residual < -this.dragUnit * 0.6) {
-        if (this.moveDragged(-1)) {
-          this.dragSwaps = this.dragSwaps - 1;
-        } else {
-          break;
-        }
-      } else {
-        break;
-      }
-    }
-  }
-
   // Force an immediate reconnect of the active tab's session.
   private reconnectActive(): void {
     const rt: TerminalRuntime | null = this.activeRuntime();
@@ -1133,7 +1050,33 @@ struct Index {
       } else {
         Column() {
           if (this.tabs.length > 0) {
-            this.buildTabStrip();
+            TabStrip({
+              tabs: this.tabs,
+              activeId: this.activeId,
+              themeBg: this.themeBg,
+              themeFg: this.themeFg,
+              tabCompact: this.tabCompact,
+              fontSize: this.fontSize,
+              uiFontFamily: this.uiFontFamily,
+              statusText: this.activeStatusText(),
+              statusColor: this.activeStatusColor(),
+              showStatusCapsule: this.activeTabConnected(),
+              tabScroller: this.tabScroller,
+              chipWidths: this.chipWidths,
+              onSwitchTab: (id: number): void => { this.switchTab(id); },
+              onCloseTab: (id: number): void => { this.closeTab(id); },
+              // Preserve the old "+" behavior: open a tab directly with the
+              // current form values (brief's snippet said showNewConnection —
+              // deliberately NOT followed, behavior must not change).
+              onNewTab: (): void => { this.openTab(); },
+              onReorder: (from: number, to: number): void => { this.reorderTabs(from, to); },
+              onRenameTab: (id: number): void => { this.openRenameDialog(id); },
+              onCloseOthers: (id: number): void => { this.closeOtherTabs(id); },
+              onOpenGuide: (): void => { this.openGuide(); },
+              onOpenSettings: (): void => { this.openSettings(); },
+              onOpenAbout: (): void => { this.settingsInitialTab = 3; this.showSettings = true; },
+              onOpenOverflow: (): void => { this.showOverflow = !this.showOverflow; }
+            })
             // Terminal content as a rounded card. The frame (Palette.surface,
             // same color as the strip) shows on left/right/bottom because the
             // parent Column pads those sides. Cross-axis stretch fills the rest,
@@ -1143,7 +1086,16 @@ struct Index {
               ForEach(this.tabs, (tab: TabMeta) => {
                 this.buildSurface(tab.id);
               }, (tab: TabMeta) => tab.id.toString())
-              this.buildStatusBanner()
+              StatusBanner({
+                visible: this.bannerVisible(),
+                text: this.activeMeta().statusText,
+                kind: this.bannerKind(),
+                // No manual reconnect while the first connect is still in
+                // flight — matches the old `state !== Connecting` check.
+                actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
+                uiFontFamily: this.uiFontFamily,
+                onAction: (): void => { this.reconnectActive(); }
+              })
             }
             .layoutWeight(1)
             .backgroundColor(this.themeBg)
@@ -1207,7 +1159,18 @@ struct Index {
         })
 
       if (this.restoreChecked && (this.tabs.length === 0 || this.showNewConnection)) {
-        this.buildForm();
+        ConnectionForm({
+          host: $this.host,
+          port: $this.port,
+          token: $this.token,
+          tls: $this.tls,
+          rememberToken: $this.rememberToken,
+          formError: $this.formError,
+          uiFontFamily: this.uiFontFamily,
+          showNewConnection: this.showNewConnection,
+          onConnect: (): void => { this.connectFromForm(); },
+          onCancel: (): void => { this.showNewConnection = false; this.focusActiveTerminal(); }
+        })
       }
 
       // Overflow menu overlay — tab list dropdown
@@ -1245,7 +1208,10 @@ struct Index {
       }
 
       if (this.showGuide) {
-        this.buildGuide();
+        GuideOverlay({
+          uiFontFamily: this.uiFontFamily,
+          onFinish: (): void => { this.finishGuide(); }
+        })
       }
     }
     .width('100%')
@@ -1296,361 +1262,6 @@ struct Index {
       .visibility(id === this.activeId ? Visibility.Visible : Visibility.Hidden)
   }
 
-  // Thin banner over the terminal shown while the active tab is not connected.
-  // Gives the user live feedback plus a one-tap "立即重连".
-  @Builder
-  private buildStatusBanner() {
-    if (this.activeMeta().state === DriverState.Reconnecting
-      || this.activeMeta().state === DriverState.Error
-      || this.activeMeta().state === DriverState.Connecting) {
-      Row({ space: 8 }) {
-        Text('●')
-          .fontSize(9)
-          .fontColor(this.dotColor(this.activeMeta().state))
-        Text(this.activeMeta().statusText)
-          .fontSize(12)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-          .layoutWeight(1)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        if (this.activeMeta().state !== DriverState.Connecting) {
-          Text('立即重连')
-            .fontSize(12)
-            .fontFamily(this.uiFontFamily)
-            .fontColor(Palette.accent)
-            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-            .borderRadius(6)
-            .backgroundColor('#1FFFFFFF')
-            .focusable(false)
-            .onClick(() => { this.reconnectActive(); })
-        }
-      }
-      .width('100%')
-      .padding({ left: 14, right: 12, top: 8, bottom: 8 })
-      .backgroundColor('#E6171C25')
-      .alignItems(VerticalAlign.Center)
-    }
-  }
-
-  // Top strip that replaces the system title bar: app logo + tabs + "+" + settings.
-  // The right padding reserves room for the system window control buttons that
-  // float at the top-right after the decoration bar is hidden, so our settings
-  // button sits just to their left without overlapping.
-  @Builder
-  private buildTabStrip() {
-    Row() {
-      // Logo: hover dims slightly; click → About page in settings
-      Image($r('app.media.app_logo'))
-        .width(26)
-        .height(26)
-        // nudged down so it sits closer to the tab baseline (strip height unchanged)
-        .margin({ left: 14, right: 10, top: 7 })
-        .opacity(this.hoverLogo ? 0.65 : 1.0)
-        .scale(this.hoverLogo ? { x: 0.92, y: 0.92 } : { x: 1.0, y: 1.0 })
-        .animation({ duration: 150, curve: Curve.EaseOut })
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverLogo = h; })
-        .onClick(() => { this.settingsInitialTab = 3; this.showSettings = true; })
-
-      if (!this.tabCompact) {
-        // Non-compact: horizontal scroll, variable width chips
-        Scroll(this.tabScroller) {
-          Column() {
-            Blank()
-              .layoutWeight(1)
-              .backgroundColor('#01000000')
-
-            Row({ space: 4 }) {
-              ForEach(this.tabs, (tab: TabMeta) => {
-                this.buildTabChip(tab)
-              }, (tab: TabMeta) => tab.id + '_' + tab.title)
-            }
-            .padding({ right: 4 })
-            .alignItems(VerticalAlign.Bottom)
-          }
-          .height(40)
-        }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
-        .layoutWeight(1)
-        .align(Alignment.Start)
-
-        // "+" new tab — fixed outside scroll area, slightly below center
-        Row() {
-          Text('+')
-            .fontSize(16)
-            .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
-            .animation({ duration: 120, curve: Curve.EaseOut })
-        }
-        .width(24)
-        .height(24)
-        .margin({ top: 4 })
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(5)
-        .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverAddTab = h; })
-        .onClick(() => { this.openTab(); })
-
-        // Overflow menu button — shown only in non-compact mode
-        Row() {
-          Text('▼')
-            .fontSize(9)
-            .fontColor(this.hoverOverflow ? Palette.textDim : '#606878')
-            .animation({ duration: 120, curve: Curve.EaseOut })
-        }
-        .width(24)
-        .height(24)
-        .margin({ top: 4 })
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(5)
-        .backgroundColor(this.hoverOverflow ? '#1FFFFFFF' : Color.Transparent)
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverOverflow = h; })
-        .onClick(() => { this.showOverflow = !this.showOverflow; })
-      } else {
-        // Compact: equal-width chips, no scroll, all tabs visible
-        Row({ space: 4 }) {
-          ForEach(this.tabs, (tab: TabMeta) => {
-            this.buildTabChip(tab)
-          }, (tab: TabMeta) => tab.id + '_' + tab.title)
-        }
-        .height(40)
-        .padding({ right: 4 })
-        .alignItems(VerticalAlign.Bottom)
-        .layoutWeight(1)
-
-        // "+" new tab — fixed outside chip row, same position as non-compact
-        Row() {
-          Text('+')
-            .fontSize(16)
-            .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
-            .animation({ duration: 120, curve: Curve.EaseOut })
-        }
-        .width(24)
-        .height(24)
-        .margin({ top: 4 })
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(5)
-        .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverAddTab = h; })
-        .onClick(() => { this.openTab(); })
-      }
-
-      // Guide help button — line-art circled "?" matching the system controls
-      Row() {
-        Row() {
-          this.helpIcon()
-        }
-        .width(30)
-        .height(28)
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(7)
-        .backgroundColor(this.hoverGuide ? '#1FFFFFFF' : Color.Transparent)
-        .animation({ duration: 150, curve: Curve.EaseOut })
-      }
-      .width(40)
-      .height(40)
-      .justifyContent(FlexAlign.Center)
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverGuide = h; })
-      .onClick(() => { this.openGuide(); })
-
-      // Settings button — borderless, same visual weight as system controls.
-      // Hover highlight lives on a smaller inner box (not the full 40×40 hit
-      // area) so it matches the size of the system window-control buttons.
-      Row() {
-        Row() {
-          this.settingsIcon()
-        }
-        .width(30)
-        .height(28)
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(7)
-        .backgroundColor(this.hoverSettings ? '#1FFFFFFF' : Color.Transparent)
-        .animation({ duration: 150, curve: Curve.EaseOut })
-      }
-      .width(40)
-      .height(40)
-      .justifyContent(FlexAlign.Center)
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverSettings = h; })
-      .onClick(() => { this.settingsInitialTab = 0; this.showSettings = true; })
-    }
-    .width('100%')
-    .height(40)
-    .padding({ right: 130 })
-    .backgroundColor(Palette.surface)
-  }
-
-  @Builder
-  private buildTabChip(tab: TabMeta) {
-    Row({ space: 6 }) {
-      Text(tab.title)
-        .fontSize(Math.max(10, this.fontSize - 1))
-        .fontFamily(this.uiFontFamily)
-        .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(this.tabCompact ? 1 : 0)
-      // ✕ turns red on hover to signal "this will close"
-      Text('✕')
-        .fontSize(11)
-        .fontColor(this.hoverCloseId === tab.id ? Palette.danger
-          : (tab.id === this.activeId ? this.themeFg : Palette.textDim))
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
-        .onClick(() => { this.closeTab(tab.id); })
-    }
-    .height(tab.id === this.activeId ? 32 : 26)
-    .layoutWeight(this.tabCompact ? 1 : 0)
-    .padding({ left: 12, right: 10 })
-    .borderRadius(tab.id === this.activeId
-      ? { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
-      : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
-    // Inactive tab gets a subtle highlight on hover
-    .backgroundColor(tab.id === this.activeId ? this.themeBg
-      : (this.hoverTabId === tab.id ? '#1FFFFFFF' : Color.Transparent))
-    // The dragged chip follows the finger via a residual X translate; the other
-    // chips re-flow live (with animation) as the array is spliced mid-drag. The
-    // chip never leaves the tab baseline (y is always 0).
-    .translate({ x: this.dragTabId === tab.id ? (this.dragOffsetX - this.dragSwaps * this.dragUnit) : 0, y: 0 })
-    .zIndex(this.dragTabId === tab.id ? 10 : 0)
-    .scale(this.dragTabId === tab.id ? { x: 1.04, y: 1.04 } : { x: 1.0, y: 1.0 })
-    .shadow(this.dragTabId === tab.id
-      ? { radius: 12, color: '#66000000', offsetX: 0, offsetY: 2 }
-      : { radius: 0, color: '#00000000', offsetX: 0, offsetY: 0 })
-    .animation(this.dragTabId === tab.id
-      ? { duration: 0 }          // dragged chip tracks the finger with no lag
-      : { duration: 180, curve: Curve.Friction })
-    .alignItems(VerticalAlign.Center)
-    .focusable(false)
-    // Measure width so live-reorder thresholds match the real chip sizes.
-    .onAreaChange((_o: Area, n: Area) => { this.chipWidths.set(tab.id, Number(n.width)); })
-    .onHover((h: boolean) => { this.hoverTabId = h ? tab.id : -1; })
-    .onClick(() => {
-      // Ignore the click that fires right after a real drag; later taps work.
-      if (Date.now() - this.lastDragEnd > 250) {
-        this.switchTab(tab.id);
-      }
-    })
-    .bindContextMenu(this.buildTabContextMenu(tab), ResponseType.RightClick)
-    // Whole-chip horizontal PanGesture for drag-to-reorder. priorityGesture
-    // wins over the parent Scroll's horizontal scroll.
-    .priorityGesture(
-      PanGesture({ direction: PanDirection.Horizontal, distance: 5 })
-        .onActionStart(() => {
-          this.dragTabId = tab.id;
-          this.dragOffsetX = 0;
-          this.dragSwaps = 0;
-          this.didDrag = false;
-          this.dragUnit = this.avgChipWidth();
-        })
-        .onActionUpdate((e: GestureEvent) => {
-          this.onDragUpdate(e.offsetX);
-        })
-        .onActionEnd(() => {
-          if (this.didDrag) {
-            this.lastDragEnd = Date.now();
-          }
-          this.dragTabId = -1;
-          this.dragOffsetX = 0;
-          this.dragSwaps = 0;
-        })
-        .onActionCancel(() => {
-          if (this.didDrag) {
-            this.lastDragEnd = Date.now();
-          }
-          this.dragTabId = -1;
-          this.dragOffsetX = 0;
-          this.dragSwaps = 0;
-        })
-    )
-  }
-
-  @Builder
-  private buildTabContextMenu(tab: TabMeta) {
-    Column() {
-      // 重命名
-      Row({ space: 8 }) {
-        Text('✎')
-          .fontSize(12)
-          .fontColor(Palette.textDim)
-        Text('重命名')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'rename' ? '#14FFFFFF' : Color.Transparent)
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'rename' : ''; })
-      .onClick(() => { this.openRenameDialog(tab.id); })
-
-      // Separator with horizontal margins
-      Divider().color(Palette.border).width('100%').margin({ left: 8, right: 8 })
-
-      // 关闭其他
-      Row({ space: 8 }) {
-        Text('✕')
-          .fontSize(12)
-          .fontColor(Palette.textDim)
-        Text('关闭其他标签页')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'close_others' ? '#1FFFFB454' : Color.Transparent)
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close_others' : ''; })
-      .onClick(() => { this.closeOtherTabs(tab.id); })
-
-      // Separator
-      Divider().color(Palette.border).width('100%').margin({ left: 8, right: 8 })
-
-      // 关闭
-      Row({ space: 8 }) {
-        Text('✕')
-          .fontSize(12)
-          .fontColor(Palette.textDim)
-        Text('关闭')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'close' ? '#1FFF6B6B' : Color.Transparent)
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close' : ''; })
-      .onClick(() => { this.closeTab(tab.id); })
-    }
-    .width(160)
-    .padding(4)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
-    .shadow({ radius: 12, color: '#66000000', offsetY: 6 })
-  }
-
   private activeMeta(): TabMeta {
     for (let i: number = 0; i < this.tabs.length; i++) {
       if (this.tabs[i].id === this.activeId) {
@@ -1658,6 +1269,48 @@ struct Index {
       }
     }
     return new TabMeta(-1, '', DriverState.Idle, '空闲');
+  }
+
+  // ----- helpers feeding the extracted components -----------------------------
+
+  private openSettings(): void {
+    this.settingsInitialTab = 0;
+    this.showSettings = true;
+  }
+
+  // Status props for TabStrip's status capsule (rendered in Task 6) — derived
+  // from the active tab exactly like the settings sheet's status props.
+  private activeStatusText(): string {
+    return this.activeMeta().statusText;
+  }
+
+  private activeStatusColor(): string {
+    return this.dotColor(this.activeMeta().state);
+  }
+
+  private activeTabConnected(): boolean {
+    return this.activeMeta().state === DriverState.Connected;
+  }
+
+  // StatusBanner mapping: the banner shows while the active tab is not
+  // connected; kind maps Connecting/Reconnecting → 'warn', Error/Closed →
+  // 'danger', everything else → 'info'.
+  private bannerVisible(): boolean {
+    const state: DriverState = this.activeMeta().state;
+    return state === DriverState.Reconnecting
+      || state === DriverState.Error
+      || state === DriverState.Connecting;
+  }
+
+  private bannerKind(): BannerKind {
+    const state: DriverState = this.activeMeta().state;
+    if (state === DriverState.Connecting || state === DriverState.Reconnecting) {
+      return 'warn';
+    }
+    if (state === DriverState.Error || state === DriverState.Closed) {
+      return 'danger';
+    }
+    return 'info';
   }
 
   // Overflow menu item — shown in the dropdown when ▼ is clicked.
@@ -1678,7 +1331,10 @@ struct Index {
       // Close button
       Text('✕')
         .fontSize(10)
-        .fontColor(this.hoverCloseId === tab.id ? Palette.danger : Palette.textDim)
+        // The chip-✕ hover state (hoverCloseId) moved into TabStrip; the
+        // dropdown's backdrop blocks chip hovers while open, so this is
+        // always the resting color.
+        .fontColor(Palette.textDim)
         .focusable(false)
         .onClick(() => {
           this.closeTab(tab.id);
@@ -1752,56 +1408,6 @@ struct Index {
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 18, bottom: 18 })
-  }
-
-  // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
-  // settings icon and the system caption buttons it sits beside.
-  @Builder
-  private helpIcon() {
-    Stack({ alignContent: Alignment.Center }) {
-      Circle({ width: 15, height: 15 })
-        .fill(Color.Transparent)
-        .stroke(this.hoverGuide ? '#F4F7FB' : '#B8BEC9')
-        .strokeWidth(1)
-      Text('?')
-        .fontSize(10)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.hoverGuide ? '#F4F7FB' : '#B8BEC9')
-    }
-    .width(15)
-    .height(15)
-    .animation({ duration: 120, curve: Curve.EaseOut })
-  }
-
-  // Thin-line "sliders" icon, monochrome to match the system window-control
-  // buttons (minimize / maximize / close) it sits beside: same light-gray
-  // stroke weight, hollow knobs, no fill, no accent color.
-  @Builder
-  private settingsIcon() {
-    Column({ space: 5 }) {
-      // top slider: knob on the right
-      Stack({ alignContent: Alignment.Start }) {
-        Row().width(14).height(1).borderRadius(0.5).backgroundColor('#B8BEC9')
-        Circle({ width: 4.5, height: 4.5 })
-          .fill(Palette.surface)
-          .stroke('#B8BEC9')
-          .strokeWidth(1)
-          .margin({ left: 7 })
-      }
-      .width(14).height(4.5)
-
-      // bottom slider: knob on the left
-      Stack({ alignContent: Alignment.Start }) {
-        Row().width(14).height(1).borderRadius(0.5).backgroundColor('#B8BEC9')
-        Circle({ width: 4.5, height: 4.5 })
-          .fill(Palette.surface)
-          .stroke('#B8BEC9')
-          .strokeWidth(1)
-          .margin({ left: 2.5 })
-      }
-      .width(14).height(4.5)
-    }
-    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -1899,351 +1505,6 @@ struct Index {
       onReplayGuide: () => { this.showSettings = false; this.openGuide(); },
       onClose: () => { this.showSettings = false; }
     })
-  }
-
-  // ----- onboarding guide ----------------------------------------------------
-
-  private readonly guideCount: number = 5;
-
-  private guideTitle(step: number): string {
-    switch (step) {
-      case 0: return '欢迎使用 fish-term';
-      case 1: return '第 1 步 · 安装 fish-agent';
-      case 2: return '第 2 步 · 启动服务 & 获取连接信息';
-      case 3: return '第 3 步 · 新建连接';
-      default: return '第 4 步 · 开始使用';
-    }
-  }
-
-  private guideDesc(step: number): string {
-    switch (step) {
-      case 0:
-        return 'fish-term 是一个连接到 fish-agent 的 HarmonyOS 终端。\n只需几步就能在手机/平板上获得完整的远程终端体验。';
-      case 1:
-        return 'fish-agent 基于 wand-agent 修改，是一个 Go 编写的 WebSocket PTY 代理。\n\n安装方式一：下载预编译二进制（Linux）\n\n  # ARM64（树莓派/ARM 服务器）\n  curl -LO https://github.com/<repo>/releases/latest/download/fish-agent-linux-arm64\n\n  # x86_64（普通 PC/服务器）\n  curl -LO https://github.com/<repo>/releases/latest/download/fish-agent-linux-amd64\n\n  chmod +x fish-agent-linux-*\n\n安装方式二：从源码编译\n\n  git clone <repo-url> && cd fish-agent\n  go build -buildvcs=false -o fish-agent .\n\n编译完成后将 fish-agent 复制到任意目录即可运行。';
-      case 2:
-        return '启动 fish-agent：\n\n  ./fish-agent --host 0.0.0.0 --port 8765 --token <你的token>\n\n参数说明：\n  --host  监听地址，默认 0.0.0.0（所有网卡）\n  --port  监听端口，默认 8765\n  --token  鉴权令牌，客户端连接时需携带\n\n启动后会输出 host、port、token 三项信息。\n用 ip addr 查看服务器 IP，确保设备和服务器在同一网络可达。\n如开启防火墙，请放行对应端口。';
-      case 3:
-        return '回到 fish-term，在首页填入 host / 端口 / token，\n如需加密传输可打开 TLS(wss)，点击「连接」即可开启第一个终端标签页。';
-      default:
-        return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+Shift+F：查找\n  · Ctrl+Shift+T 新建标签，Ctrl+Shift+W 关闭，Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
-    }
-  }
-
-  // Placeholder filename for the screenshot to drop in for each step.
-  private guideImageName(step: number): string {
-    return 'guide_' + step + '.png';
-  }
-
-  // Navigate the guide. The native Tabs slide animation handles the motion;
-  // direction is automatic (forward vs back). Past the last step it finishes.
-  private goStep(dir: number): void {
-    const target: number = this.guideStep + dir;
-    if (target >= this.guideCount) {
-      this.finishGuide();
-      return;
-    }
-    if (target < 0) {
-      return;
-    }
-    this.guideTabs.changeIndex(target);
-  }
-
-  // One guide page (image + title + description), inside a Scroll so a tall
-  // page (e.g. the shortcuts summary) can scroll within the fixed Tabs height.
-  // The image is pinned to the top of the scroll area so its top edge stays at
-  // the same position across all steps during horizontal swipe.
-  @Builder
-  private guideBody(step: number) {
-    Scroll() {
-      Column() {
-        // Image placeholder — replace with real screenshots later.
-        Stack({ alignContent: Alignment.Center }) {
-          Column({ space: 6 }) {
-            Text('🖼')
-              .fontSize(34)
-              .fontColor(Palette.textDim)
-            Text('图片占位 · ' + this.guideImageName(step))
-              .fontSize(12)
-              .fontColor(Palette.textDim)
-          }
-        }
-        .width('100%')
-        .height(180)
-        .backgroundColor(Palette.inputBg)
-        .borderRadius(12)
-        .border({ width: 1, color: Palette.border })
-        .margin({ top: 0, bottom: 18 })
-
-        Text(this.guideTitle(step))
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-          .width('100%')
-          .margin({ bottom: 10 })
-
-        Text(this.guideDesc(step))
-          .fontSize(14)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.textDim)
-          .lineHeight(22)
-          .width('100%')
-      }
-      .width('100%')
-      .padding({ top: 0 })
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .height('100%')
-    .scrollBar(BarState.Off)
-    .edgeEffect(EdgeEffect.None)
-    .align(Alignment.Top)
-  }
-
-  @Builder
-  private buildGuide() {
-    Stack({ alignContent: Alignment.Center }) {
-      // Background mask — fades in/out independently via guideBgOpacity.
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#000000')
-        .opacity(this.guideBgOpacity * 0.8)
-        .onClick(() => { /* absorb clicks, close on background tap disabled */ })
-
-      // Card
-      Column() {
-        // Sliding page area: native Tabs gives a smooth horizontal slide. Swipe
-        // between pages is also enabled. Native bar hidden; buttons/dots drive it.
-        Tabs({ controller: this.guideTabs, index: this.guideStep }) {
-          TabContent() { this.guideBody(0) }
-          TabContent() { this.guideBody(1) }
-          TabContent() { this.guideBody(2) }
-          TabContent() { this.guideBody(3) }
-          TabContent() { this.guideBody(4) }
-        }
-        .barHeight(0)
-        .scrollable(true)
-        .animationDuration(300)
-        .width('100%')
-        .height(320)
-        .onChange((i: number) => { this.guideStep = i; })
-
-        // Step dots
-        Row({ space: 6 }) {
-          ForEach(['0', '1', '2', '3', '4'], (s: string) => {
-            Circle({ width: 7, height: 7 })
-              .fill(Number(s) === this.guideStep ? Palette.accent : Palette.border)
-          }, (s: string) => s)
-        }
-        .margin({ top: 20, bottom: 18 })
-        .justifyContent(FlexAlign.Center)
-
-        Row({ space: 10 }) {
-          Text('跳过')
-            .fontSize(14)
-            .fontColor(this.guideHover === 'skip' ? Palette.text : Palette.textDim)
-            .padding({ left: 14, right: 14, top: 9, bottom: 9 })
-            .borderRadius(8)
-            .backgroundColor(this.guideHover === 'skip' ? '#1FFFFFFF' : Color.Transparent)
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .focusable(false)
-            .onHover((h: boolean) => { this.guideHover = h ? 'skip' : ''; })
-            .onClick(() => { this.finishGuide(); })
-
-          Blank()
-
-          if (this.guideStep > 0) {
-            Text('上一步')
-              .fontSize(14)
-              .fontColor(Palette.text)
-              .padding({ left: 16, right: 16, top: 9, bottom: 9 })
-              .borderRadius(9)
-              .backgroundColor(this.guideHover === 'prev' ? '#1FFFFFFF' : Palette.surface)
-              .border({ width: 1, color: Palette.border })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .focusable(false)
-              .onHover((h: boolean) => { this.guideHover = h ? 'prev' : ''; })
-              .onClick(() => { this.goStep(-1); })
-          }
-
-          Text(this.guideStep >= this.guideCount - 1 ? '开始使用' : '下一步')
-            .fontSize(14)
-            .fontColor(Palette.base)
-            .padding({ left: 18, right: 18, top: 9, bottom: 9 })
-            .borderRadius(9)
-            .opacity(this.guideHover === 'next' ? 0.85 : 1.0)
-            .scale(this.guideHover === 'next' ? { x: 0.97, y: 0.97 } : { x: 1.0, y: 1.0 })
-            .backgroundColor(Palette.accent)
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .focusable(false)
-            .onHover((h: boolean) => { this.guideHover = h ? 'next' : ''; })
-            .onClick(() => { this.goStep(1); })
-        }
-        .width('100%')
-        .margin({ top: 4 })
-        .alignItems(VerticalAlign.Center)
-      }
-      .width('100%')
-      .constraintSize({ maxWidth: 460 })
-      .padding(24)
-      .backgroundColor(Palette.base)
-      .borderRadius(16)
-      .border({ width: 1, color: Palette.border })
-      // Slide-up + fade transition matching bindSheet(CENTER) feel.
-      .transition(TransitionEffect.asymmetric(
-        TransitionEffect.translate({ y: 60 }).combine(TransitionEffect.OPACITY)
-          .animation({ duration: 280, curve: this.guideAnimCurve }),
-        TransitionEffect.translate({ y: 60 }).combine(TransitionEffect.OPACITY)
-          .animation({ duration: 250, curve: this.guideAnimCurve })
-      ))
-    }
-    .width('100%')
-    .height('100%')
-    .padding(24)
-  }
-
-  @Builder
-  private buildForm() {
-    Column() {
-      // cancel affordance when opened as a "new connection" overlay
-      if (this.showNewConnection) {
-        Row() {
-          Text('✕ 取消')
-            .fontSize(14)
-            .fontColor(Palette.textDim)
-            .focusable(false)
-            .onClick(() => { this.showNewConnection = false; this.focusActiveTerminal(); })
-        }
-        .width('100%')
-        .constraintSize({ maxWidth: 420 })
-        .justifyContent(FlexAlign.End)
-        .margin({ bottom: 10 })
-      }
-
-      Column({ space: 10 }) {
-        Image($r('app.media.app_logo'))
-          .width(72)
-          .height(72)
-          .borderRadius(16)
-        Text(this.showNewConnection ? '新建连接' : 'fish-term')
-          .fontSize(24)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
-        Text('connect to fish-agent')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.textDim)
-      }
-      .margin({ bottom: 20 })
-
-      Column({ space: 14 }) {
-        Row({ space: 10 }) {
-          TextInput({ text: this.host, placeholder: '主机 host' })
-            .layoutWeight(2)
-            .height(44)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
-            .borderWidth(1)
-            .borderColor(this.focusedField === 'host' ? Palette.accent : Palette.border)
-            .onFocus(() => { this.focusedField = 'host'; })
-            .onBlur(() => { if (this.focusedField === 'host') { this.focusedField = ''; } })
-            .onChange((v: string) => { this.host = v; })
-            .onSubmit(() => { this.connectFromForm(); })
-          TextInput({ text: this.port, placeholder: '端口' })
-            .layoutWeight(1)
-            .height(44)
-            .type(InputType.Number)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
-            .borderWidth(1)
-            .borderColor(this.focusedField === 'port' ? Palette.accent : Palette.border)
-            .onFocus(() => { this.focusedField = 'port'; })
-            .onBlur(() => { if (this.focusedField === 'port') { this.focusedField = ''; } })
-            .onChange((v: string) => { this.port = v; })
-            .onSubmit(() => { this.connectFromForm(); })
-        }
-        .width('100%')
-
-        Row({ space: 10 }) {
-          TextInput({ text: this.token, placeholder: 'token' })
-            .layoutWeight(1)
-            .height(44)
-            .type(InputType.Password)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
-            .borderWidth(1)
-            .borderColor(this.focusedField === 'token' ? Palette.accent : Palette.border)
-            .onFocus(() => { this.focusedField = 'token'; })
-            .onBlur(() => { if (this.focusedField === 'token') { this.focusedField = ''; } })
-            .onChange((v: string) => { this.token = v; })
-            .onSubmit(() => { this.connectFromForm(); })
-        }
-        .width('100%')
-
-        Row() {
-          Text('TLS (wss)')
-            .layoutWeight(1)
-            .fontSize(14)
-            .fontColor(Palette.text)
-          Toggle({ type: ToggleType.Switch, isOn: this.tls })
-            .selectedColor(Palette.accent)
-            .onChange((on: boolean) => { this.tls = on; })
-        }
-        .width('100%')
-
-        Row() {
-          Text('记住 token（加密存储）')
-            .layoutWeight(1)
-            .fontSize(14)
-            .fontColor(Palette.text)
-          Toggle({ type: ToggleType.Switch, isOn: this.rememberToken })
-            .selectedColor(Palette.accent)
-            .onChange((on: boolean) => { this.rememberToken = on; })
-        }
-        .width('100%')
-
-        if (this.formError.length > 0) {
-          Text('⚠ ' + this.formError)
-            .fontSize(13)
-            .fontColor(Palette.danger)
-            .width('100%')
-        }
-
-        Button('连 接')
-          .width('100%')
-          .height(46)
-          .fontSize(16)
-          .fontColor(Palette.base)
-          .backgroundColor(Palette.accent)
-          .borderRadius(10)
-          .onClick(() => { this.connectFromForm(); })
-      }
-      .width('100%')
-      .constraintSize({ maxWidth: 420 })
-      .padding(20)
-      .backgroundColor(Palette.surface)
-      .borderRadius(12)
-      .borderWidth(1)
-      .borderColor(Palette.border)
-    }
-    .width('100%')
-    .height('100%')
-    .padding(24)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor(Palette.base)
   }
 
   @Builder
