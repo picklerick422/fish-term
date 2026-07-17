@@ -898,6 +898,14 @@ export struct AppearanceSettings {
               .height(48)
               .padding({ left: 10, right: 12 })
               .backgroundColor(this.hoverTheme === item ? this.uiTheme.hoverOverlay : Color.Transparent)
+              // Selected theme card: accent ring + glow. The glow token is
+              // fully transparent under refined, so only the ring shows there.
+              .border(this.themeName === item
+                ? { width: 1.5, color: this.uiTheme.accent }
+                : { width: 0, color: Color.Transparent })
+              .shadow(this.themeName === item
+                ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+                : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
               .animation({ duration: 100, curve: Curve.EaseOut })
               .focusable(false)
               .onHover((h: boolean) => { this.hoverTheme = h ? item : ''; })

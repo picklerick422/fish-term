@@ -1081,24 +1081,41 @@ struct Index {
             // parent Column pads those sides. Cross-axis stretch fills the rest,
             // so no width('100%') is set (that would overflow the padding and
             // clip the right border).
-            Stack({ alignContent: Alignment.Top }) {
-              ForEach(this.tabs, (tab: TabMeta) => {
-                this.buildSurface(tab.id);
-              }, (tab: TabMeta) => tab.id.toString())
-              StatusBanner({
-                visible: this.bannerVisible(),
-                text: this.activeMeta().statusText,
-                kind: this.bannerKind(),
-                // No manual reconnect while the first connect is still in
-                // flight — matches the old `state !== Connecting` check.
-                actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
-                uiFontFamily: this.uiFontFamily,
-                onAction: (): void => { this.reconnectActive(); }
-              })
+            // Task 6: the card is now a Column whose first child is the scheme-B
+            // signature line (accent→accentAlt gradient). Under refined the line
+            // is fully transparent and the card radius is RADIUS_CARD on all
+            // corners, so pixels match the pre-Task-6 baseline. The terminal
+            // background stays themeBg-driven (terminal theme, not a chrome token).
+            Column() {
+              Row()
+                .width('100%')
+                .height(2)
+                .linearGradient({ angle: 0, colors: [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]] })
+                .opacity(this.uiTheme.accentGradient ? 1 : 0)
+                .borderRadius({ topLeft: RADIUS_CARD, topRight: RADIUS_CARD })
+              Stack({ alignContent: Alignment.Top }) {
+                ForEach(this.tabs, (tab: TabMeta) => {
+                  this.buildSurface(tab.id);
+                }, (tab: TabMeta) => tab.id.toString())
+                StatusBanner({
+                  visible: this.bannerVisible(),
+                  text: this.activeMeta().statusText,
+                  kind: this.bannerKind(),
+                  // No manual reconnect while the first connect is still in
+                  // flight — matches the old `state !== Connecting` check.
+                  actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
+                  uiFontFamily: this.uiFontFamily,
+                  onAction: (): void => { this.reconnectActive(); }
+                })
+              }
+              .width('100%')
+              .layoutWeight(1)
             }
             .layoutWeight(1)
             .backgroundColor(this.themeBg)
-            .borderRadius({ topLeft: RADIUS_CARD, topRight: RADIUS_CARD, bottomLeft: RADIUS_CARD, bottomRight: RADIUS_CARD })
+            .borderRadius(this.uiTheme.accentGradient
+              ? { topLeft: 0, topRight: 0, bottomLeft: RADIUS_CARD, bottomRight: RADIUS_CARD } as BorderRadiuses
+              : RADIUS_CARD)
             .clip(true)
           }
         }

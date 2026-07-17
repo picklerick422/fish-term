@@ -1,4 +1,4 @@
-import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL, RADIUS_PILL } from '../theme/UiTheme';
 import { DriverState } from '../transport/TerminalDriver';
 import { DEFAULT_FONT_SIZE, DEFAULT_UI_FONT } from '../theme/FontScale';
 
@@ -28,8 +28,9 @@ export class TabMeta {
 // The tab-overflow dropdown itself stays in Index (absolute positioning against
 // the root Stack); the ▼ button here just reports onOpenOverflow().
 //
-// statusText / statusColor / showStatusCapsule are reserved for the Task 6
-// status capsule — accepted now so the interface is stable, rendered later.
+// statusText / showStatusCapsule drive the Task 6 status capsule rendered
+// left of the settings icon (success tokens; only when showStatusCapsule).
+// statusColor is accepted for interface stability but not rendered here.
 @Component
 export struct TabStrip {
   @Prop tabs: TabMeta[] = [];
@@ -263,6 +264,19 @@ export struct TabStrip {
       .onHover((h: boolean) => { this.hoverGuide = h; })
       .onClick(() => { this.onOpenGuide(); })
 
+      // Connection status capsule — left of the settings icon, only when the
+      // page says the active tab is connected (showStatusCapsule).
+      if (this.showStatusCapsule) {
+        Row({ space: 5 }) {
+          Circle({ width: 6, height: 6 }).fill(this.uiTheme.success)
+          Text(this.statusText).fontSize(10.5).fontColor(this.uiTheme.success)
+        }
+        .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+        .backgroundColor(this.uiTheme.successBg)
+        .border({ width: 1, color: this.uiTheme.successBorder })
+        .borderRadius(RADIUS_PILL)
+      }
+
       // Settings button — borderless, same visual weight as system controls.
       // Hover highlight lives on a smaller inner box (not the full 40×40 hit
       // area) so it matches the size of the system window-control buttons.
@@ -319,15 +333,25 @@ export struct TabStrip {
     // Inactive tab gets a subtle highlight on hover
     .backgroundColor(tab.id === this.activeId ? this.themeBg
       : (this.hoverTabId === tab.id ? this.uiTheme.pressOverlay : Color.Transparent))
+    // Active chip: borderStrong outline (both schemes — brief-mandated) plus
+    // accent glow; glowAccent is fully transparent in refined, so the shadow
+    // is visually neutral there.
+    .border(tab.id === this.activeId
+      ? { width: 1, color: this.uiTheme.borderStrong }
+      : { width: 0, color: Color.Transparent })
     // The dragged chip follows the finger via a residual X translate; the other
     // chips re-flow live (with animation) as the array is spliced mid-drag. The
     // chip never leaves the tab baseline (y is always 0).
     .translate({ x: this.dragTabId === tab.id ? (this.dragOffsetX - this.dragSwaps * this.dragUnit) : 0, y: 0 })
     .zIndex(this.dragTabId === tab.id ? 10 : 0)
     .scale(this.dragTabId === tab.id ? { x: 1.04, y: 1.04 } : { x: 1.0, y: 1.0 })
+    // Drag shadow wins while dragging; otherwise the active chip carries the
+    // scheme glow (transparent in refined), inactive chips none.
     .shadow(this.dragTabId === tab.id
       ? { radius: 12, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 2 }
-      : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
+      : (tab.id === this.activeId
+        ? { radius: 14, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+        : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 }))
     .animation(this.dragTabId === tab.id
       ? { duration: 0 }          // dragged chip tracks the finger with no lag
       : { duration: 180, curve: Curve.Friction })

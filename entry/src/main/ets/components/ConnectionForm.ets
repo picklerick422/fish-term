@@ -71,6 +71,10 @@ export struct ConnectionForm {
             .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
             .borderColor(this.focusedField === 'host' ? this.uiTheme.accent : this.uiTheme.border)
+            // Focus glow — transparent under refined (accent ring only there).
+            .shadow(this.focusedField === 'host'
+              ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+              : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
             .onFocus(() => { this.focusedField = 'host'; })
             .onBlur(() => { if (this.focusedField === 'host') { this.focusedField = ''; } })
             .onChange((v: string) => { this.host = v; })
@@ -86,6 +90,9 @@ export struct ConnectionForm {
             .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
             .borderColor(this.focusedField === 'port' ? this.uiTheme.accent : this.uiTheme.border)
+            .shadow(this.focusedField === 'port'
+              ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+              : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
             .onFocus(() => { this.focusedField = 'port'; })
             .onBlur(() => { if (this.focusedField === 'port') { this.focusedField = ''; } })
             .onChange((v: string) => { this.port = v; })
@@ -105,6 +112,9 @@ export struct ConnectionForm {
             .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
             .borderColor(this.focusedField === 'token' ? this.uiTheme.accent : this.uiTheme.border)
+            .shadow(this.focusedField === 'token'
+              ? { radius: 10, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+              : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
             .onFocus(() => { this.focusedField = 'token'; })
             .onBlur(() => { if (this.focusedField === 'token') { this.focusedField = ''; } })
             .onChange((v: string) => { this.token = v; })
@@ -145,8 +155,17 @@ export struct ConnectionForm {
           .width('100%')
           .height(46)
           .fontSize(16)
-          .fontColor(this.uiTheme.bgBase)
+          .fontColor(this.uiTheme.textOnAccent)
+          // backgroundColor kept as a solid fallback; the degenerate gradient
+          // (accent→accent under refined, accent→accentAlt under futuristic)
+          // is set after it and wins as the last background attribute.
           .backgroundColor(this.uiTheme.accent)
+          .linearGradient({
+            angle: 90,
+            colors: this.uiTheme.accentGradient
+              ? [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]]
+              : [[this.uiTheme.accent, 0.0], [this.uiTheme.accent, 1.0]]
+          })
           .borderRadius(RADIUS_CARD)
           .onClick(() => { this.onConnect(); })
       }

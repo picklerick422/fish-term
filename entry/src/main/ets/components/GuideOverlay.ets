@@ -208,12 +208,18 @@ export struct GuideOverlay {
 
           Text(this.guideStep >= this.guideCount - 1 ? '开始使用' : '下一步')
             .fontSize(14)
-            .fontColor(this.uiTheme.bgBase)
+            .fontColor(this.uiTheme.textOnAccent)
             .padding({ left: 18, right: 18, top: 9, bottom: 9 })
             .borderRadius(9)
             .opacity(this.guideHover === 'next' ? 0.85 : 1.0)
             .scale(this.guideHover === 'next' ? { x: 0.97, y: 0.97 } : { x: 1.0, y: 1.0 })
-            .backgroundColor(this.uiTheme.accent)
+            // Degenerate gradient: solid accent under refined.
+            .linearGradient({
+              angle: 90,
+              colors: this.uiTheme.accentGradient
+                ? [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]]
+                : [[this.uiTheme.accent, 0.0], [this.uiTheme.accent, 1.0]]
+            })
             .animation({ duration: 120, curve: Curve.EaseOut })
             .focusable(false)
             .onHover((h: boolean) => { this.guideHover = h ? 'next' : ''; })

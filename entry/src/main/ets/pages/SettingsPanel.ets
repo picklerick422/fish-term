@@ -216,11 +216,22 @@ export struct SettingsPanel {
     Text(label)
       .fontSize(13)
       .fontFamily(this.uiFontFamily)
-      .fontColor(this.tab === index ? this.uiTheme.bgBase : this.uiTheme.textDim)
+      .fontColor(this.tab === index ? this.uiTheme.textOnAccent : this.uiTheme.textDim)
       .fontWeight(this.tab === index ? FontWeight.Medium : FontWeight.Normal)
       .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-      .backgroundColor(this.tab === index ? this.uiTheme.accent
-        : (this.hoverTabIdx === index ? this.uiTheme.pressOverlay : Color.Transparent))
+      // All three pill states expressed as gradient stops so a single
+      // linearGradient replaces backgroundColor: active uses the degenerate
+      // accent gradient (solid under refined), hover/base stay as before.
+      .linearGradient({
+        angle: 90,
+        colors: this.tab === index
+          ? (this.uiTheme.accentGradient
+            ? [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]]
+            : [[this.uiTheme.accent, 0.0], [this.uiTheme.accent, 1.0]])
+          : (this.hoverTabIdx === index
+            ? [[this.uiTheme.pressOverlay, 0.0], [this.uiTheme.pressOverlay, 1.0]]
+            : [[Color.Transparent, 0.0], [Color.Transparent, 1.0]])
+      })
       .borderRadius(20)
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
