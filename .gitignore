@@ -74,6 +74,7 @@ libghostty_ohos/example/README.md
 # AI 工具配置
 .agents/
 .codex/
+.superpowers/
 
 # DevEco 工具缓存
 .bitfun/

@@ -85,6 +85,16 @@ No automated test suite exists. Test by building in DevEco Studio and running on
 ## Serve agent(fish-agent)
 
 fish-agent在../agent-fish/fish-agent/ ，如需修改服务端内容，可以查看。
+
+## Visual companion (superpowers brainstorming)
+
+The agent runs in a Linux VM; the user's browser is on the host. The host can reach the VM at `172.16.105.2` (eth0) but not the VM's `127.0.0.1`. Always start the visual companion (and any local preview server meant for the user) with:
+
+```sh
+scripts/start-server.sh --project-dir /mnt/linux_share/DevEcoStudioProjects/fish-term --host 0.0.0.0 --url-host 172.16.105.2
+```
+
+Give the user the full `http://172.16.105.2:<port>/?key=...` URL. `--open` only opens a browser inside the VM.
 ## Constraints
 
 - Target API: HarmonyOS 6.0.0 (API 20), compatible SDK 6.0.0

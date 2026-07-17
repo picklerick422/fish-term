@@ -40,6 +40,12 @@ ohpm install                              # Dependencies
 hvigor.js assembleApp -m project --mode release   # Full build for release/store upload (needs signing config)
 ```
 
+## Environment
+
+Agent runs in a Linux VM; the host shares this repo via `/mnt/linux_share`. VM eth0 IP `172.16.105.2` is reachable from the host; VM `127.0.0.1` is not.
+
+**Visual companion / any preview server for the user**: always start with `--host 0.0.0.0 --url-host 172.16.105.2` and give the user the full `http://172.16.105.2:<port>/?key=...` URL — `--open` only opens a browser inside the VM.
+
 ## Change Rules
 
 - **ArkTS**: Verify lifecycle (attach/detach), input wiring, config propagation
