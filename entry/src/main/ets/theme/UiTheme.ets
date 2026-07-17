@@ -4,6 +4,8 @@
 // Single source of truth for UI colors — do not scatter hex values elsewhere.
 // Pure-black overlay masks ('#000000' / '#CC000000') are the documented exception.
 
+import { SurfaceTheme } from 'libghostty_ohos';
+
 export type UiScheme = 'refined' | 'futuristic';
 
 export interface UiTheme {
@@ -133,4 +135,23 @@ export class UiThemeStore {
     AppStorage.setOrCreate(STORAGE_KEY_SCHEME, scheme);
     AppStorage.setOrCreate(STORAGE_KEY_THEME, scheme === 'futuristic' ? FUTURISTIC_THEME : REFINED_DARK_THEME);
   }
+}
+
+// Adapt the app-level UiTheme to the library's SurfaceTheme contract for
+// TerminalSurface's own overlays (search bar, text fallback). Field mapping
+// is 1:1 by name except: overlayShadow ← shadowCard, textFallback ← textPrimary.
+export function toSurfaceTheme(t: UiTheme): SurfaceTheme {
+  return {
+    bgSurface: t.bgSurface,
+    bgInput: t.bgInput,
+    border: t.border,
+    textPrimary: t.textPrimary,
+    textDim: t.textDim,
+    accent: t.accent,
+    danger: t.danger,
+    dangerBg: t.dangerBg,
+    hoverOverlay: t.hoverOverlay,
+    overlayShadow: t.shadowCard,
+    textFallback: t.textPrimary
+  };
 }

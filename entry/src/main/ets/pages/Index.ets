@@ -7,7 +7,7 @@ import { TerminalRuntime } from '../session/TerminalTab';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS, SavedSession, SavedTab } from '../store/ConnectionStore';
-import { UiTheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
+import { UiTheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL, toSurfaceTheme } from '../theme/UiTheme';
 import {
   DEFAULT_FONT_SIZE, clampFontSize,
   DEFAULT_LINE_SPACING, clampLineSpacing,
@@ -1250,6 +1250,7 @@ struct Index {
       controller: this.runtimes.get(id)?.controller ?? new TerminalController(),
       surfaceId: this.runtimes.get(id)?.surfaceId ?? ('fishTermSurface_' + id),
       surfaceColor: this.themeBg,
+      surfaceTheme: toSurfaceTheme(this.uiTheme),
       isActiveTab: id === this.activeId,
       searchSignal: this.searchSignal,
       onOpenSettings: () => { this.settingsInitialTab = 0; this.showSettings = true; },

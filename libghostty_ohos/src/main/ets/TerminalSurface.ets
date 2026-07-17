@@ -4,6 +4,7 @@ import { display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { TerminalController } from './TerminalController';
 import { DEFAULT_TERMINAL_CONFIG, TerminalConfig, TerminalLinkListener, TerminalSearchStatus } from './TerminalTypes';
+import { DEFAULT_SURFACE_THEME, SurfaceTheme } from './SurfaceTheme';
 
 @Component
 export struct TerminalSurface {
@@ -11,6 +12,10 @@ export struct TerminalSurface {
   surfaceId: string = 'terminalSurface';
   searchInputId: string = 'terminalSearchInput';
   surfaceColor: string = '#0B0D10';
+  // Theme for this component's own overlays (search bar, text fallback).
+  // Plain member like the other config props: the host re-renders and
+  // re-passes it when the scheme changes.
+  surfaceTheme: SurfaceTheme = DEFAULT_SURFACE_THEME;
   onLinkActivated: TerminalLinkListener | null = null;
   // App-level context-menu actions (wired by the host page).
   onOpenSettings: (() => void) | null = null;
@@ -237,7 +242,7 @@ export struct TerminalSurface {
         .textAlign(TextAlign.Start)
         .fontSize(this.appliedFontSize)
         .fontFamily('monospace')
-        .fontColor('#D8DEE9')
+        .fontColor(this.surfaceTheme.textFallback)
         .lineHeight(this.appliedFontSize * this.appliedLineSpacing)
         .padding(12)
     }
@@ -258,10 +263,10 @@ export struct TerminalSurface {
           .width(200)
           .height(34)
           .fontSize(13)
-          .fontColor('#F4F7FB')
-          .placeholderColor('#8A94A6')
-          .backgroundColor('#0E1318')
-          .caretColor('#3DD6C4')
+          .fontColor(this.surfaceTheme.textPrimary)
+          .placeholderColor(this.surfaceTheme.textDim)
+          .backgroundColor(this.surfaceTheme.bgInput)
+          .caretColor(this.surfaceTheme.accent)
           .borderRadius({ topLeft: 7, topRight: 0, bottomLeft: 7, bottomRight: 0 })
           .padding({ left: 10, right: 10 })
           .onChange((value: string) => {
@@ -275,34 +280,34 @@ export struct TerminalSurface {
         Row()
           .width(1)
           .height(34)
-          .backgroundColor('#1E2630')
+          .backgroundColor(this.surfaceTheme.border)
 
         // Match count
         Text(this.searchLabel())
           .fontSize(12)
-          .fontColor(this.searchTotal > 0 ? '#3DD6C4' : '#8A94A6')
+          .fontColor(this.searchTotal > 0 ? this.surfaceTheme.accent : this.surfaceTheme.textDim)
           .width(48)
           .height(34)
           .textAlign(TextAlign.Center)
-          .backgroundColor('#11161D')
+          .backgroundColor(this.surfaceTheme.bgSurface)
 
         // Divider
         Row()
           .width(1)
           .height(34)
-          .backgroundColor('#1E2630')
+          .backgroundColor(this.surfaceTheme.border)
 
         // Prev ↑
         Row() {
           Text('↑')
             .fontSize(15)
-            .fontColor(this.hoverSearchPrev ? '#F4F7FB' : '#8A94A6')
+            .fontColor(this.hoverSearchPrev ? this.surfaceTheme.textPrimary : this.surfaceTheme.textDim)
             .animation({ duration: 100, curve: Curve.EaseOut })
         }
         .width(34)
         .height(34)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.hoverSearchPrev ? '#1FFFFFFF' : '#11161D')
+        .backgroundColor(this.hoverSearchPrev ? this.surfaceTheme.hoverOverlay : this.surfaceTheme.bgSurface)
         .animation({ duration: 100, curve: Curve.EaseOut })
         .onHover((h: boolean) => { this.hoverSearchPrev = h; })
         .onClick(() => { this.navigateSearch(false); })
@@ -311,19 +316,19 @@ export struct TerminalSurface {
         Row()
           .width(1)
           .height(34)
-          .backgroundColor('#1E2630')
+          .backgroundColor(this.surfaceTheme.border)
 
         // Next ↓
         Row() {
           Text('↓')
             .fontSize(15)
-            .fontColor(this.hoverSearchNext ? '#F4F7FB' : '#8A94A6')
+            .fontColor(this.hoverSearchNext ? this.surfaceTheme.textPrimary : this.surfaceTheme.textDim)
             .animation({ duration: 100, curve: Curve.EaseOut })
         }
         .width(34)
         .height(34)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.hoverSearchNext ? '#1FFFFFFF' : '#11161D')
+        .backgroundColor(this.hoverSearchNext ? this.surfaceTheme.hoverOverlay : this.surfaceTheme.bgSurface)
         .animation({ duration: 100, curve: Curve.EaseOut })
         .onHover((h: boolean) => { this.hoverSearchNext = h; })
         .onClick(() => { this.navigateSearch(true); })
@@ -332,29 +337,29 @@ export struct TerminalSurface {
         Row()
           .width(1)
           .height(34)
-          .backgroundColor('#1E2630')
+          .backgroundColor(this.surfaceTheme.border)
 
         // Close ✕
         Row() {
           Text('✕')
             .fontSize(13)
-            .fontColor(this.hoverSearchClose ? '#FF6B6B' : '#8A94A6')
+            .fontColor(this.hoverSearchClose ? this.surfaceTheme.danger : this.surfaceTheme.textDim)
             .animation({ duration: 100, curve: Curve.EaseOut })
         }
         .width(34)
         .height(34)
         .justifyContent(FlexAlign.Center)
         .borderRadius({ topLeft: 0, topRight: 7, bottomLeft: 0, bottomRight: 7 })
-        .backgroundColor(this.hoverSearchClose ? '#17FF6B6B' : '#11161D')
+        .backgroundColor(this.hoverSearchClose ? this.surfaceTheme.dangerBg : this.surfaceTheme.bgSurface)
         .animation({ duration: 100, curve: Curve.EaseOut })
         .onHover((h: boolean) => { this.hoverSearchClose = h; })
         .onClick(() => { this.closeSearch(); })
       }
       // Single unified container row: flat pill shape
       .borderRadius(8)
-      .border({ width: 1, color: '#1E2630' })
+      .border({ width: 1, color: this.surfaceTheme.border })
       .clip(true)
-      .shadow({ radius: 16, color: '#4D000000', offsetX: 0, offsetY: 4 })
+      .shadow({ radius: 16, color: this.surfaceTheme.overlayShadow, offsetX: 0, offsetY: 4 })
     }
     .width('100%')
     .height('100%')
