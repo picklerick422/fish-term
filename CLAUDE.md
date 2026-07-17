@@ -45,7 +45,7 @@ Two independent channels must both move to the active tab:
 
 ### Color system
 
-`entry/src/main/ets/theme/Palette.ets` — single source of truth for all colors. Never scatter hex values elsewhere. Cyan accent (`#3DD6C4`) on dark backgrounds.
+`entry/src/main/ets/theme/UiTheme.ets` — single source of truth for all UI chrome colors. Two switchable schemes: `refined` (default dark, cyan accent) and `futuristic` (violet/cyan gradient, restrained glow). Components read tokens via `@StorageLink('uiTheme')`; never scatter hex values elsewhere (pure-black overlay masks excepted). Scheme selection persists via `ConnectionStore.loadUiScheme/saveUiScheme`. Library overlays take an optional `surfaceTheme` prop (`libghostty_ohos/.../SurfaceTheme.ets`); entry maps tokens with `toSurfaceTheme()`.
 
 ### Tab architecture
 

@@ -24,6 +24,7 @@ fish-term — HarmonyOS terminal app on Ghostty's VT library.
 - `ets/transport/FishWebSocketDriver.ets` — WebSocket transport
 - `ets/session/TerminalSession.ets` — Session lifecycle
 - `cpp/pty/pty_handler.cpp` — PTY management
+- `ets/theme/UiTheme.ets` — UI 设计令牌 + A/B 双方案 + UiThemeStore(换肤唯一入口)
 
 ## Rules
 
