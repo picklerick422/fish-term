@@ -9,8 +9,7 @@
         "buildOption": {
           "strictMode": {
             "caseSensitiveCheck": true
-          },
-          "debuggable": false
+          }
         },
         "signingConfig": "default"
       }
@@ -34,6 +33,19 @@
           "profile": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "/storage/Users/currentUser/appdata/el2/base/com.huawei.devecostudio/files/ohos/config/default_wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.p12"
+        },
+        "type": "HarmonyOS"
+      },
+      {
+        "name": "default1",
+        "material": {
+          "storePassword": "00000020205B9A5C53D4C6F68D973CB2796F55B5887022FBB4CEEDBE66B998C62DA43B6E6B8A1C6345FEF1314E877B17",
+          "certpath": "/storage/Users/currentUser/Documents/ohos/config/wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "00000020205B9A5C53D4C6F68D973CB2796F55B5887022FBB4CEEDBE66B998C62DA43B6E6B8A1C6345FEF1314E877B17",
+          "profile": "/storage/Users/currentUser/Documents/ohos/config/wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/storage/Users/currentUser/Documents/ohos/config/wand-termRWglLoYhukON-CcYmSzxSRhg9Vcgq29vGieaAl8Djew.p12"
         },
         "type": "HarmonyOS"
       }

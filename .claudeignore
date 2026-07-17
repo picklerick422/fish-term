@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Claude Code context exclusions for fish-term
+# These files are kept in the workspace but should NOT be read by Claude Code.
+# They are either generated, binary, or duplicate content that wastes tokens.
+# ---------------------------------------------------------------------------
+
+# Build outputs and caches (kept locally, just not read)
+build/
+**/.cxx/
+**/.cache/
+**/.test/
+**/.preview/
+**/.hvigor/
+.hvigor/
+.bitfun/
+
+# Native build artifacts
+*.so
+*.a
+*.o
+*.obj
+*.dll
+*.dylib
+*.exe
+*.app
+*.hap
+*.har
+*.hsp
+*.hnp
+
+# Build logs and reports
+*.log
+*.log.*
+.hvigor/outputs/
+.hvigor/report/
+
+# Claude Code worktrees (duplicate copies of the repo)
+.claude/worktrees/
+
+# Binary fonts (project resources, not useful for code reasoning)
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# Images and screenshots
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.ico
+
+# Generated package archives
+*.tgz
+*.tar.xz
+
+# Dependency directories
+oh_modules/
+node_modules/
+
+# Local tool config
+build-profile.local.json5
+signature/
+local.properties
