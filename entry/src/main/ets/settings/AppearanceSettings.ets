@@ -1,5 +1,5 @@
 import { TerminalController } from 'libghostty_ohos';
-import { UiTheme, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
+import { UiTheme, UiScheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
 import { ConnectionStore } from '../store/ConnectionStore';
 import {
   MIN_FONT_SIZE, MAX_FONT_SIZE, FONT_STEP,
@@ -102,6 +102,7 @@ export struct AppearanceSettings {
   // explicit and not dependent on a class getter being observed by ArkUI.
   @State private previewFontFamily: string = 'monospace';
   @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
+  @StorageLink('uiScheme') private uiScheme: string = 'refined';
   // True "pull-down" reveal: the dropdown container height animates from 0
   // to full while clipping content, so lines appear one-by-one from the top
   // and retract from the bottom without scaling or fading the whole list.
@@ -207,6 +208,16 @@ export struct AppearanceSettings {
     }
   }
 
+  private selectScheme(scheme: UiScheme): void {
+    if (this.uiScheme === scheme) {
+      return;
+    }
+    UiThemeStore.setScheme(scheme);
+    if (this.store) {
+      this.store.saveUiScheme(scheme);
+    }
+  }
+
   // Build one font-picker line (drop‑down style).
   // NOT a @Builder — takes too many value‑pass params and ArkUI would
   // lose reactivity.  Inlined with direct @State access instead.
@@ -274,6 +285,32 @@ export struct AppearanceSettings {
       .fontFamily(this.uiFontFamily)
       .width('100%')
       .margin({ bottom: 6 })
+  }
+
+  @Builder
+  private buildSchemeRow(scheme: UiScheme, name: string, desc: string) {
+    Row() {
+      Column({ space: 2 }) {
+        Text(name).fontSize(14).fontColor(this.uiTheme.textPrimary)
+        Text(desc).fontSize(11).fontColor(this.uiTheme.textFaint)
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      if (this.uiScheme === scheme) {
+        Text('✓').fontSize(14).fontColor(this.uiTheme.accent)
+      }
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.uiScheme === scheme ? this.uiTheme.bgElevated : this.uiTheme.bgInput)
+    .borderRadius(RADIUS_CONTROL)
+    .border({
+      width: 1,
+      color: this.uiScheme === scheme ? this.uiTheme.accent : this.uiTheme.border
+    })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .focusable(false)
+    .onClick(() => { this.selectScheme(scheme); })
   }
 
   // Live preview of the currently selected theme and fonts: a mock terminal snippet
@@ -363,6 +400,14 @@ export struct AppearanceSettings {
 
   build() {
     Column({ space: 16 }) {
+      // UI scheme switcher
+      Column({ space: 6 }) {
+        this.buildSectionHeader('界面风格')
+        this.buildSchemeRow('refined', '深邃专业', '默认 · 克制精致的深色外观')
+        this.buildSchemeRow('futuristic', '未来感', '紫青渐变 · 活动态光晕')
+      }
+      .width('100%')
+
       // Live theme preview
       Column({ space: 0 }) {
         this.buildSectionHeader('预览')
