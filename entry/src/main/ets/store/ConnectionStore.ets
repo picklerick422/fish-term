@@ -32,6 +32,7 @@ const TOKEN_ALIAS: string = 'fish_agent_token';
 const KEY_RESTORE_TABS: string = 'restore_tabs_enabled';
 const KEY_SESSION_STATE: string = 'session_state';
 const KEY_TAB_COMPACT: string = 'tab_compact';
+const KEY_UI_SCHEME: string = 'ui_scheme';
 // Notification preferences
 const KEY_NOTIFY_ENABLED: string = 'notify_enabled';
 const KEY_NOTIFY_COMPLETED: string = 'notify_completed';
@@ -535,6 +536,28 @@ export class ConnectionStore {
       await pref.flush();
     } catch (e) {
       console.error(`Failed to save notification preferences. Code: ${(e as Object).toString()}`);
+    }
+  }
+
+  async loadUiScheme(): Promise<string> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      return await pref.get(KEY_UI_SCHEME, 'refined') as string;
+    } catch (e) {
+      console.error('fish-term load ui scheme failed: ' + JSON.stringify(e));
+      return 'refined';
+    }
+  }
+
+  async saveUiScheme(scheme: string): Promise<void> {
+    try {
+      const opt: preferences.Options = { name: PREF_NAME };
+      const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
+      await pref.put(KEY_UI_SCHEME, scheme);
+      await pref.flush();
+    } catch (e) {
+      console.error('fish-term save ui scheme failed: ' + JSON.stringify(e));
     }
   }
 }

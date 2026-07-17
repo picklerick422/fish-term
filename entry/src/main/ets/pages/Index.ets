@@ -8,6 +8,7 @@ import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS, SavedSession, SavedTab } from '../store/ConnectionStore';
 import { Palette } from '../theme/Palette';
+import { UiTheme, UiThemeStore, REFINED_DARK_THEME } from '../theme/UiTheme';
 import {
   DEFAULT_FONT_SIZE, clampFontSize,
   DEFAULT_LINE_SPACING, clampLineSpacing,
@@ -150,10 +151,16 @@ struct Index {
   private notifyService: NotificationService = new NotificationService();
   @State private notifyPrefs: NotificationPrefs = DEFAULT_NOTIFICATION_PREFS;
   @State private isForeground: boolean = true;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   aboutToAppear(): void {
     this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.store = new ConnectionStore(this.context);
+
+    // Load persisted UI scheme before first content frame (splash is still showing).
+    this.store.loadUiScheme().then((scheme: string): void => {
+      UiThemeStore.setScheme(scheme === 'futuristic' ? 'futuristic' : 'refined');
+    });
 
     // Initialize notification service with app context
     this.notifyService.setContext(this.context);
@@ -1245,7 +1252,7 @@ struct Index {
     .height('100%')
     // Frame color matches the strip — forms a consistent border on
     // left / right / bottom of the terminal card.
-    .backgroundColor(Palette.surface)
+    .backgroundColor(this.uiTheme.bgSurface)
     // Mouse-wheel horizontal scroll for the tab strip (non-compact only).
     // Captured at the root Stack because the Scroll component consumes axis
     // events internally and their onAxisEvent is unreliable. We filter by
