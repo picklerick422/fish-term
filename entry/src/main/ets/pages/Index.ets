@@ -1176,12 +1176,12 @@ struct Index {
 
       if (this.restoreChecked && (this.tabs.length === 0 || this.showNewConnection)) {
         ConnectionForm({
-          host: $this.host,
-          port: $this.port,
-          token: $this.token,
-          tls: $this.tls,
-          rememberToken: $this.rememberToken,
-          formError: $this.formError,
+          host: this.host,
+          port: this.port,
+          token: this.token,
+          tls: this.tls,
+          rememberToken: this.rememberToken,
+          formError: this.formError,
           uiFontFamily: this.uiFontFamily,
           showNewConnection: this.showNewConnection,
           onConnect: (): void => { this.connectFromForm(); },
