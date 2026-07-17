@@ -13,9 +13,10 @@ export struct TerminalSurface {
   searchInputId: string = 'terminalSearchInput';
   surfaceColor: string = '#0B0D10';
   // Theme for this component's own overlays (search bar, text fallback).
-  // Plain member like the other config props: the host re-renders and
-  // re-passes it when the scheme changes.
-  surfaceTheme: SurfaceTheme = DEFAULT_SURFACE_THEME;
+  // @Prop so a scheme switch reaches already-mounted surfaces: entry's
+  // buildSurface re-invokes with a fresh toSurfaceTheme(this.uiTheme)
+  // reference, and @Prop syncs the new object into this member.
+  @Prop surfaceTheme: SurfaceTheme = DEFAULT_SURFACE_THEME;
   onLinkActivated: TerminalLinkListener | null = null;
   // App-level context-menu actions (wired by the host page).
   onOpenSettings: (() => void) | null = null;
