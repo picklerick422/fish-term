@@ -1,5 +1,5 @@
 import { curves } from '@kit.ArkUI';
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 import { DEFAULT_UI_FONT } from '../theme/FontScale';
 
 // First-run onboarding guide overlay (also replayable from settings → About).
@@ -21,6 +21,7 @@ export struct GuideOverlay {
   @State private guideBgOpacity: number = 0;
   // Hover state for the guide card buttons.
   @State private guideHover: string = '';
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
   // Drives the native horizontal slide between guide pages.
   private guideTabs: TabsController = new TabsController();
   private readonly guideCount: number = 5;
@@ -100,31 +101,31 @@ export struct GuideOverlay {
           Column({ space: 6 }) {
             Text('🖼')
               .fontSize(34)
-              .fontColor(Palette.textDim)
+              .fontColor(this.uiTheme.textDim)
             Text('图片占位 · ' + this.guideImageName(step))
               .fontSize(12)
-              .fontColor(Palette.textDim)
+              .fontColor(this.uiTheme.textDim)
           }
         }
         .width('100%')
         .height(180)
-        .backgroundColor(Palette.inputBg)
+        .backgroundColor(this.uiTheme.bgInput)
         .borderRadius(12)
-        .border({ width: 1, color: Palette.border })
+        .border({ width: 1, color: this.uiTheme.border })
         .margin({ top: 0, bottom: 18 })
 
         Text(this.guideTitle(step))
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
           .width('100%')
           .margin({ bottom: 10 })
 
         Text(this.guideDesc(step))
           .fontSize(14)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
           .lineHeight(22)
           .width('100%')
       }
@@ -171,7 +172,7 @@ export struct GuideOverlay {
         Row({ space: 6 }) {
           ForEach(['0', '1', '2', '3', '4'], (s: string) => {
             Circle({ width: 7, height: 7 })
-              .fill(Number(s) === this.guideStep ? Palette.accent : Palette.border)
+              .fill(Number(s) === this.guideStep ? this.uiTheme.accent : this.uiTheme.border)
           }, (s: string) => s)
         }
         .margin({ top: 20, bottom: 18 })
@@ -180,10 +181,10 @@ export struct GuideOverlay {
         Row({ space: 10 }) {
           Text('跳过')
             .fontSize(14)
-            .fontColor(this.guideHover === 'skip' ? Palette.text : Palette.textDim)
+            .fontColor(this.guideHover === 'skip' ? this.uiTheme.textPrimary : this.uiTheme.textDim)
             .padding({ left: 14, right: 14, top: 9, bottom: 9 })
-            .borderRadius(8)
-            .backgroundColor(this.guideHover === 'skip' ? '#1FFFFFFF' : Color.Transparent)
+            .borderRadius(RADIUS_CONTROL)
+            .backgroundColor(this.guideHover === 'skip' ? this.uiTheme.pressOverlay : Color.Transparent)
             .animation({ duration: 120, curve: Curve.EaseOut })
             .focusable(false)
             .onHover((h: boolean) => { this.guideHover = h ? 'skip' : ''; })
@@ -194,11 +195,11 @@ export struct GuideOverlay {
           if (this.guideStep > 0) {
             Text('上一步')
               .fontSize(14)
-              .fontColor(Palette.text)
+              .fontColor(this.uiTheme.textPrimary)
               .padding({ left: 16, right: 16, top: 9, bottom: 9 })
               .borderRadius(9)
-              .backgroundColor(this.guideHover === 'prev' ? '#1FFFFFFF' : Palette.surface)
-              .border({ width: 1, color: Palette.border })
+              .backgroundColor(this.guideHover === 'prev' ? this.uiTheme.pressOverlay : this.uiTheme.bgSurface)
+              .border({ width: 1, color: this.uiTheme.border })
               .animation({ duration: 120, curve: Curve.EaseOut })
               .focusable(false)
               .onHover((h: boolean) => { this.guideHover = h ? 'prev' : ''; })
@@ -207,12 +208,12 @@ export struct GuideOverlay {
 
           Text(this.guideStep >= this.guideCount - 1 ? '开始使用' : '下一步')
             .fontSize(14)
-            .fontColor(Palette.base)
+            .fontColor(this.uiTheme.bgBase)
             .padding({ left: 18, right: 18, top: 9, bottom: 9 })
             .borderRadius(9)
             .opacity(this.guideHover === 'next' ? 0.85 : 1.0)
             .scale(this.guideHover === 'next' ? { x: 0.97, y: 0.97 } : { x: 1.0, y: 1.0 })
-            .backgroundColor(Palette.accent)
+            .backgroundColor(this.uiTheme.accent)
             .animation({ duration: 120, curve: Curve.EaseOut })
             .focusable(false)
             .onHover((h: boolean) => { this.guideHover = h ? 'next' : ''; })
@@ -225,9 +226,9 @@ export struct GuideOverlay {
       .width('100%')
       .constraintSize({ maxWidth: 460 })
       .padding(24)
-      .backgroundColor(Palette.base)
+      .backgroundColor(this.uiTheme.bgBase)
       .borderRadius(16)
-      .border({ width: 1, color: Palette.border })
+      .border({ width: 1, color: this.uiTheme.border })
       // Slide-up + fade transition matching bindSheet(CENTER) feel.
       .transition(TransitionEffect.asymmetric(
         TransitionEffect.translate({ y: 60 }).combine(TransitionEffect.OPACITY)

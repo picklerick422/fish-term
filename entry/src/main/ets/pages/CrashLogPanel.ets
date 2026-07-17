@@ -2,7 +2,7 @@
 
 import { pasteboard } from '@kit.BasicServicesKit';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 
 function typeLabel(t: CrashType): string {
   switch (t) {
@@ -12,21 +12,6 @@ function typeLabel(t: CrashType): string {
     case CrashType.CPP_CRASH: return 'C++ 崩溃';
     case CrashType.APP_FREEZE: return '应用冻结';
     default: return '未知';
-  }
-}
-
-function typeColor(t: CrashType): string {
-  switch (t) {
-    case CrashType.JS_CRASH:
-    case CrashType.UNHANDLED_REJECTION:
-      return Palette.accent;
-    case CrashType.NATIVE_SIGNAL:
-    case CrashType.CPP_CRASH:
-      return Palette.danger;
-    case CrashType.APP_FREEZE:
-      return Palette.warn;
-    default:
-      return Palette.textDim;
   }
 }
 
@@ -62,6 +47,23 @@ export struct CrashLogPanel {
   @State private hoverCopyPath: boolean = false;
   @State private hoverClose: boolean = false;
   @State private hoverDontShow: boolean = false;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
+
+  // Theme-token-backed crash type color (member method so it can read uiTheme).
+  private typeColor(t: CrashType): string {
+    switch (t) {
+      case CrashType.JS_CRASH:
+      case CrashType.UNHANDLED_REJECTION:
+        return this.uiTheme.accent;
+      case CrashType.NATIVE_SIGNAL:
+      case CrashType.CPP_CRASH:
+        return this.uiTheme.danger;
+      case CrashType.APP_FREEZE:
+        return this.uiTheme.warn;
+      default:
+        return this.uiTheme.textDim;
+    }
+  }
 
   aboutToAppear(): void {
     if (this.entry.viewed === false && this.entry.id.length > 0) {
@@ -75,15 +77,15 @@ export struct CrashLogPanel {
       Row({ space: 10 }) {
         // 类型色标圆点
         Circle({ width: 10, height: 10 })
-          .fill(typeColor(this.entry.crashType))
+          .fill(this.typeColor(this.entry.crashType))
         Column({ space: 2 }) {
           Text('应用上次发生了崩溃')
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
           Text(typeLabel(this.entry.crashType) + ' · ' + formatTime(this.entry.timestamp))
             .fontSize(12)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
         }
         .alignItems(HorizontalAlign.Start)
       }
@@ -92,7 +94,7 @@ export struct CrashLogPanel {
 
       // 分割线
       Divider()
-        .color(Palette.border)
+        .color(this.uiTheme.border)
         .width('100%')
         .margin({ left: 24, right: 24 })
 
@@ -123,7 +125,7 @@ export struct CrashLogPanel {
       this.buildBottomButtons()
     }
     .width('100%')
-    .backgroundColor(Palette.base)
+    .backgroundColor(this.uiTheme.bgBase)
   }
 
   // === 崩溃信息 ===
@@ -131,19 +133,19 @@ export struct CrashLogPanel {
   @Builder
   private buildCrashInfoBlock() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('●', '崩溃信息', typeColor(this.entry.crashType))
+      this.buildSectionHeader('●', '崩溃信息', this.typeColor(this.entry.crashType))
       Column({ space: 8 }) {
-        this.buildInfoRow('类型', typeLabel(this.entry.crashType), typeColor(this.entry.crashType));
-        this.buildInfoRow('时间', formatTime(this.entry.timestamp), Palette.text);
-        this.buildInfoRow('摘要', this.entry.summary, Palette.text);
+        this.buildInfoRow('类型', typeLabel(this.entry.crashType), this.typeColor(this.entry.crashType));
+        this.buildInfoRow('时间', formatTime(this.entry.timestamp), this.uiTheme.textPrimary);
+        this.buildInfoRow('摘要', this.entry.summary, this.uiTheme.textPrimary);
       }
       .width('100%')
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -152,31 +154,31 @@ export struct CrashLogPanel {
   @Builder
   private buildStackBlock() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('▎', '调用栈', Palette.accent)
+      this.buildSectionHeader('▎', '调用栈', this.uiTheme.accent)
 
       Column() {
         Text(this.entry.stackTrace)
           .fontSize(11)
           .fontFamily('monospace')
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
           .width('100%')
           .maxLines(this.isStackExpanded ? 999 : 15)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
       .padding(10)
-      .backgroundColor('#080C12')
+      .backgroundColor(this.uiTheme.bgInput)
       .borderRadius(6)
 
       if (this.entry.stackTrace.length > 600) {
         Row() {
           Text(this.isStackExpanded ? '收起 ▲' : '展开全部 ▼')
             .fontSize(11)
-            .fontColor(this.hoverExpandStack ? '#5FE8D8' : Palette.accent)
+            .fontColor(this.hoverExpandStack ? this.uiTheme.accentHover : this.uiTheme.accent)
             .padding({ top: 2, bottom: 2, left: 8, right: 8 })
         }
         .borderRadius(4)
-        .backgroundColor(this.hoverExpandStack ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverExpandStack ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverExpandStack = h; })
@@ -185,9 +187,9 @@ export struct CrashLogPanel {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -196,31 +198,31 @@ export struct CrashLogPanel {
   @Builder
   private buildSysLogBlock() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('▎', '系统日志', Palette.warn)
+      this.buildSectionHeader('▎', '系统日志', this.uiTheme.warn)
 
       Column() {
         Text(this.entry.systemLog)
           .fontSize(11)
           .fontFamily('monospace')
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
           .width('100%')
           .maxLines(this.isSysLogExpanded ? 999 : 8)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
       .padding(10)
-      .backgroundColor('#080C12')
+      .backgroundColor(this.uiTheme.bgInput)
       .borderRadius(6)
 
       if (this.entry.systemLog.length > 400) {
         Row() {
           Text(this.isSysLogExpanded ? '收起 ▲' : '展开全部 ▼')
             .fontSize(11)
-            .fontColor(this.hoverExpandSysLog ? '#5FE8D8' : Palette.accent)
+            .fontColor(this.hoverExpandSysLog ? this.uiTheme.accentHover : this.uiTheme.accent)
             .padding({ top: 2, bottom: 2, left: 8, right: 8 })
         }
         .borderRadius(4)
-        .backgroundColor(this.hoverExpandSysLog ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverExpandSysLog ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverExpandSysLog = h; })
@@ -229,9 +231,9 @@ export struct CrashLogPanel {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -240,19 +242,19 @@ export struct CrashLogPanel {
   @Builder
   private buildDeviceBlock() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('●', '设备信息', Palette.textDim)
+      this.buildSectionHeader('●', '设备信息', this.uiTheme.textDim)
       Column({ space: 8 }) {
-        this.buildInfoRow('设备', this.entry.deviceInfo.deviceModel, Palette.text);
-        this.buildInfoRow('系统', this.entry.deviceInfo.osVersion, Palette.text);
-        this.buildInfoRow('应用', this.entry.deviceInfo.appVersion, Palette.text);
+        this.buildInfoRow('设备', this.entry.deviceInfo.deviceModel, this.uiTheme.textPrimary);
+        this.buildInfoRow('系统', this.entry.deviceInfo.osVersion, this.uiTheme.textPrimary);
+        this.buildInfoRow('应用', this.entry.deviceInfo.appVersion, this.uiTheme.textPrimary);
       }
       .width('100%')
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -263,14 +265,14 @@ export struct CrashLogPanel {
     Row({ space: 8 }) {
       Text(this.dontShowAgain ? '◉' : '○')
         .fontSize(16)
-        .fontColor(this.dontShowAgain ? Palette.accent : Palette.textDim)
+        .fontColor(this.dontShowAgain ? this.uiTheme.accent : this.uiTheme.textDim)
       Text('下次不再显示')
         .fontSize(13)
-        .fontColor(this.hoverDontShow ? Palette.text : Palette.textDim)
+        .fontColor(this.hoverDontShow ? this.uiTheme.textPrimary : this.uiTheme.textDim)
     }
     .padding({ top: 4, bottom: 4, left: 6, right: 6 })
     .borderRadius(4)
-    .backgroundColor(this.hoverDontShow ? '#1FFFFFFF' : Color.Transparent)
+    .backgroundColor(this.hoverDontShow ? this.uiTheme.pressOverlay : Color.Transparent)
     .animation({ duration: 120, curve: Curve.EaseOut })
     .focusable(false)
     .onHover((h: boolean) => { this.hoverDontShow = h; })
@@ -286,16 +288,16 @@ export struct CrashLogPanel {
       Row() {
         Text(this.copyContentLabel)
           .fontSize(14)
-          .fontColor(this.hoverCopyContent ? '#5FE8D8' : Palette.accent)
+          .fontColor(this.hoverCopyContent ? this.uiTheme.accentHover : this.uiTheme.accent)
           .width('100%')
           .textAlign(TextAlign.Center)
       }
       .width('100%')
       .height(42)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor(this.hoverCopyContent ? '#1A1F2A' : Palette.surface)
-      .borderRadius(8)
-      .border({ width: 1, color: Palette.accent })
+      .backgroundColor(this.hoverCopyContent ? this.uiTheme.bgElevated : this.uiTheme.bgSurface)
+      .borderRadius(RADIUS_CONTROL)
+      .border({ width: 1, color: this.uiTheme.accent })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverCopyContent = h; })
@@ -305,16 +307,16 @@ export struct CrashLogPanel {
       Row() {
         Text(this.copyPathLabel)
           .fontSize(14)
-          .fontColor(this.hoverCopyPath ? Palette.text : Palette.textDim)
+          .fontColor(this.hoverCopyPath ? this.uiTheme.textPrimary : this.uiTheme.textDim)
           .width('100%')
           .textAlign(TextAlign.Center)
       }
       .width('100%')
       .height(42)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor(this.hoverCopyPath ? '#1A1F2A' : Palette.surface)
-      .borderRadius(8)
-      .border({ width: 1, color: this.hoverCopyPath ? Palette.textDim : Palette.border })
+      .backgroundColor(this.hoverCopyPath ? this.uiTheme.bgElevated : this.uiTheme.bgSurface)
+      .borderRadius(RADIUS_CONTROL)
+      .border({ width: 1, color: this.hoverCopyPath ? this.uiTheme.textDim : this.uiTheme.border })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverCopyPath = h; })
@@ -325,9 +327,9 @@ export struct CrashLogPanel {
         .width('100%')
         .height(44)
         .fontSize(14)
-        .fontColor('#0B0D10')
-        .backgroundColor(this.hoverClose ? '#5FE8D8' : Palette.accent)
-        .borderRadius(8)
+        .fontColor(this.uiTheme.bgBase)
+        .backgroundColor(this.hoverClose ? this.uiTheme.accentHover : this.uiTheme.accent)
+        .borderRadius(RADIUS_CONTROL)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .onHover((h: boolean) => { this.hoverClose = h; })
         .onClick(() => {
@@ -364,7 +366,7 @@ export struct CrashLogPanel {
     Row({ space: 8 }) {
       Text(label)
         .fontSize(12)
-        .fontColor(Palette.textDim)
+        .fontColor(this.uiTheme.textDim)
         .width(48)
       Text(value)
         .fontSize(12)

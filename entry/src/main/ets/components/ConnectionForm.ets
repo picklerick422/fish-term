@@ -1,4 +1,4 @@
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
 import { DEFAULT_UI_FONT } from '../theme/FontScale';
 
 // Connection form — shown full-screen on first run (no tabs) and as an overlay
@@ -23,6 +23,7 @@ export struct ConnectionForm {
   onCancel: () => void = () => {};
 
   @State private focusedField: string = '';
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   build() {
     Column() {
@@ -31,7 +32,7 @@ export struct ConnectionForm {
         Row() {
           Text('✕ 取消')
             .fontSize(14)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
             .focusable(false)
             .onClick(() => { this.onCancel(); })
         }
@@ -50,11 +51,11 @@ export struct ConnectionForm {
           .fontSize(24)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
         Text('connect to fish-agent')
           .fontSize(13)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
       }
       .margin({ bottom: 20 })
 
@@ -63,13 +64,13 @@ export struct ConnectionForm {
           TextInput({ text: this.host, placeholder: '主机 host' })
             .layoutWeight(2)
             .height(44)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
+            .fontColor(this.uiTheme.textPrimary)
+            .placeholderColor(this.uiTheme.textDim)
+            .backgroundColor(this.uiTheme.bgInput)
+            .caretColor(this.uiTheme.accent)
+            .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
-            .borderColor(this.focusedField === 'host' ? Palette.accent : Palette.border)
+            .borderColor(this.focusedField === 'host' ? this.uiTheme.accent : this.uiTheme.border)
             .onFocus(() => { this.focusedField = 'host'; })
             .onBlur(() => { if (this.focusedField === 'host') { this.focusedField = ''; } })
             .onChange((v: string) => { this.host = v; })
@@ -78,13 +79,13 @@ export struct ConnectionForm {
             .layoutWeight(1)
             .height(44)
             .type(InputType.Number)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
+            .fontColor(this.uiTheme.textPrimary)
+            .placeholderColor(this.uiTheme.textDim)
+            .backgroundColor(this.uiTheme.bgInput)
+            .caretColor(this.uiTheme.accent)
+            .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
-            .borderColor(this.focusedField === 'port' ? Palette.accent : Palette.border)
+            .borderColor(this.focusedField === 'port' ? this.uiTheme.accent : this.uiTheme.border)
             .onFocus(() => { this.focusedField = 'port'; })
             .onBlur(() => { if (this.focusedField === 'port') { this.focusedField = ''; } })
             .onChange((v: string) => { this.port = v; })
@@ -97,13 +98,13 @@ export struct ConnectionForm {
             .layoutWeight(1)
             .height(44)
             .type(InputType.Password)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
+            .fontColor(this.uiTheme.textPrimary)
+            .placeholderColor(this.uiTheme.textDim)
+            .backgroundColor(this.uiTheme.bgInput)
+            .caretColor(this.uiTheme.accent)
+            .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
-            .borderColor(this.focusedField === 'token' ? Palette.accent : Palette.border)
+            .borderColor(this.focusedField === 'token' ? this.uiTheme.accent : this.uiTheme.border)
             .onFocus(() => { this.focusedField = 'token'; })
             .onBlur(() => { if (this.focusedField === 'token') { this.focusedField = ''; } })
             .onChange((v: string) => { this.token = v; })
@@ -115,9 +116,9 @@ export struct ConnectionForm {
           Text('TLS (wss)')
             .layoutWeight(1)
             .fontSize(14)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
           Toggle({ type: ToggleType.Switch, isOn: this.tls })
-            .selectedColor(Palette.accent)
+            .selectedColor(this.uiTheme.accent)
             .onChange((on: boolean) => { this.tls = on; })
         }
         .width('100%')
@@ -126,9 +127,9 @@ export struct ConnectionForm {
           Text('记住 token（加密存储）')
             .layoutWeight(1)
             .fontSize(14)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
           Toggle({ type: ToggleType.Switch, isOn: this.rememberToken })
-            .selectedColor(Palette.accent)
+            .selectedColor(this.uiTheme.accent)
             .onChange((on: boolean) => { this.rememberToken = on; })
         }
         .width('100%')
@@ -136,7 +137,7 @@ export struct ConnectionForm {
         if (this.formError.length > 0) {
           Text('⚠ ' + this.formError)
             .fontSize(13)
-            .fontColor(Palette.danger)
+            .fontColor(this.uiTheme.danger)
             .width('100%')
         }
 
@@ -144,24 +145,24 @@ export struct ConnectionForm {
           .width('100%')
           .height(46)
           .fontSize(16)
-          .fontColor(Palette.base)
-          .backgroundColor(Palette.accent)
-          .borderRadius(10)
+          .fontColor(this.uiTheme.bgBase)
+          .backgroundColor(this.uiTheme.accent)
+          .borderRadius(RADIUS_CARD)
           .onClick(() => { this.onConnect(); })
       }
       .width('100%')
       .constraintSize({ maxWidth: 420 })
       .padding(20)
-      .backgroundColor(Palette.surface)
+      .backgroundColor(this.uiTheme.bgSurface)
       .borderRadius(12)
       .borderWidth(1)
-      .borderColor(Palette.border)
+      .borderColor(this.uiTheme.border)
     }
     .width('100%')
     .height('100%')
     .padding(24)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .backgroundColor(Palette.base)
+    .backgroundColor(this.uiTheme.bgBase)
   }
 }

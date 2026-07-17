@@ -1,4 +1,4 @@
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME } from '../theme/UiTheme';
 import { DEFAULT_UI_FONT } from '../theme/FontScale';
 
 // Severity of the status banner, mapped by the page from the active tab state:
@@ -20,17 +20,18 @@ export struct StatusBanner {
   @Prop actionText: string = '';
   @Prop uiFontFamily: string = DEFAULT_UI_FONT;
   onAction: () => void = () => {};
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   // Dot color per kind — same values as the page's old dotColor() for the
-  // states this banner can show (warn → Palette.warn, danger → Palette.danger).
+  // states this banner can show (warn → uiTheme.warn, danger → uiTheme.danger).
   private dotColor(): string {
     if (this.kind === 'warn') {
-      return Palette.warn;
+      return this.uiTheme.warn;
     }
     if (this.kind === 'danger') {
-      return Palette.danger;
+      return this.uiTheme.danger;
     }
-    return Palette.textDim;
+    return this.uiTheme.textDim;
   }
 
   build() {
@@ -42,7 +43,7 @@ export struct StatusBanner {
         Text(this.text)
           .fontSize(12)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -50,17 +51,17 @@ export struct StatusBanner {
           Text(this.actionText)
             .fontSize(12)
             .fontFamily(this.uiFontFamily)
-            .fontColor(Palette.accent)
+            .fontColor(this.uiTheme.accent)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .borderRadius(6)
-            .backgroundColor('#1FFFFFFF')
+            .backgroundColor(this.uiTheme.pressOverlay)
             .focusable(false)
             .onClick(() => { this.onAction(); })
         }
       }
       .width('100%')
       .padding({ left: 14, right: 12, top: 8, bottom: 8 })
-      .backgroundColor('#E6171C25')
+      .backgroundColor(this.uiTheme.bgSurface)
       .alignItems(VerticalAlign.Center)
     }
   }

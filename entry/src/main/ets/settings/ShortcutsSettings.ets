@@ -1,14 +1,15 @@
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CARD } from '../theme/UiTheme';
 
 @Component
 export struct ShortcutsSettings {
   @Prop uiFontFamily: string = 'Inter';
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   @Builder
   private buildSectionHeader(title: string) {
     Text(title.toUpperCase())
       .fontSize(11)
-      .fontColor(Palette.textDim)
+      .fontColor(this.uiTheme.textDim)
       .fontWeight(FontWeight.Medium)
       .fontFamily(this.uiFontFamily)
       .width('100%')
@@ -21,12 +22,12 @@ export struct ShortcutsSettings {
     Row() {
       Text(keys)
         .fontSize(12)
-        .fontColor(Palette.accent)
+        .fontColor(this.uiTheme.accent)
         .fontWeight(FontWeight.Medium)
       Text(desc)
         .layoutWeight(1)
         .fontSize(13)
-        .fontColor(Palette.text)
+        .fontColor(this.uiTheme.textPrimary)
         .textAlign(TextAlign.End)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -34,9 +35,9 @@ export struct ShortcutsSettings {
     .width('100%')
     .height(40)
     .padding({ left: 14, right: 14 })
-    .backgroundColor(Palette.surface)
-    .borderRadius(10)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CARD)
+    .border({ width: 1, color: this.uiTheme.border })
   }
 
   build() {

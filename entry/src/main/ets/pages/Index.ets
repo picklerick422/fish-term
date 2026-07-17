@@ -7,8 +7,7 @@ import { TerminalRuntime } from '../session/TerminalTab';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS, SavedSession, SavedTab } from '../store/ConnectionStore';
-import { Palette } from '../theme/Palette';
-import { UiTheme, UiThemeStore, REFINED_DARK_THEME } from '../theme/UiTheme';
+import { UiTheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
 import {
   DEFAULT_FONT_SIZE, clampFontSize,
   DEFAULT_LINE_SPACING, clampLineSpacing,
@@ -84,8 +83,8 @@ struct Index {
   // Real bg/fg colors of the current theme, refreshed after native bind.
   // Used to match the active tab chip and content card precisely so they
   // fuse visually — even when the user picks a light theme.
-  @State private themeBg: string = Palette.base;
-  @State private themeFg: string = Palette.text;
+  @State private themeBg: string = REFINED_DARK_THEME.bgBase;
+  @State private themeFg: string = REFINED_DARK_THEME.textPrimary;
   @State private cursorStyle: number = 0;
   @State private cursorBlink: boolean = true;
   @State private scrollbackLines: number = 20000;
@@ -484,7 +483,7 @@ struct Index {
     const b: number = argb & 0xFF;
     // Perceived brightness (sRGB weights)
     const lum: number = 0.299 * r + 0.587 * g + 0.114 * b;
-    return lum > 140 ? Palette.base : Palette.text;
+    return lum > 140 ? REFINED_DARK_THEME.bgBase : REFINED_DARK_THEME.textPrimary;
   }
 
   // ----- tab lifecycle -------------------------------------------------------
@@ -1007,14 +1006,14 @@ struct Index {
   private dotColor(state: DriverState): string {
     switch (state) {
       case DriverState.Connected:
-        return Palette.accent;
+        return this.uiTheme.accent;
       case DriverState.Connecting:
       case DriverState.Reconnecting:
-        return Palette.warn;
+        return this.uiTheme.warn;
       case DriverState.Error:
-        return Palette.danger;
+        return this.uiTheme.danger;
       default:
-        return Palette.textDim;
+        return this.uiTheme.textDim;
     }
   }
 
@@ -1034,19 +1033,19 @@ struct Index {
             LoadingProgress()
               .width(32)
               .height(32)
-              .color(Palette.accent)
+              .color(this.uiTheme.accent)
 
             Text('连接中...')
               .fontSize(15)
               .fontFamily(this.uiFontFamily)
-              .fontColor(Palette.textDim)
+              .fontColor(this.uiTheme.textDim)
           }
           .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(Palette.base)
+        .backgroundColor(this.uiTheme.bgBase)
       } else {
         Column() {
           if (this.tabs.length > 0) {
@@ -1077,7 +1076,7 @@ struct Index {
               onOpenAbout: (): void => { this.settingsInitialTab = 3; this.showSettings = true; },
               onOpenOverflow: (): void => { this.showOverflow = !this.showOverflow; }
             })
-            // Terminal content as a rounded card. The frame (Palette.surface,
+            // Terminal content as a rounded card. The frame (bgChrome,
             // same color as the strip) shows on left/right/bottom because the
             // parent Column pads those sides. Cross-axis stretch fills the rest,
             // so no width('100%') is set (that would overflow the padding and
@@ -1099,13 +1098,13 @@ struct Index {
             }
             .layoutWeight(1)
             .backgroundColor(this.themeBg)
-            .borderRadius({ topLeft: 10, topRight: 10, bottomLeft: 10, bottomRight: 10 })
+            .borderRadius({ topLeft: RADIUS_CARD, topRight: RADIUS_CARD, bottomLeft: RADIUS_CARD, bottomRight: RADIUS_CARD })
             .clip(true)
           }
         }
         .width('100%')
         .height('100%')
-        // Frame: Palette.surface border on left / right / bottom. The top frame
+        // Frame: bgChrome border on left / right / bottom. The top frame
         // above the tabs is produced inside the (full-height) strip by making
         // the tab chips shorter than the strip — so the strip stays aligned with
         // the system window controls.
@@ -1116,7 +1115,7 @@ struct Index {
           height: 600,
           dragBar: false,
           showClose: false,
-          backgroundColor: Palette.base,
+          backgroundColor: this.uiTheme.bgBase,
           onDisappear: () => {
             // Reset the flag even when dismissed via swipe / back gesture rather
             // than the explicit Close button, so canFocusTerminal() won't block
@@ -1136,7 +1135,7 @@ struct Index {
           width: '50%',
           dragBar: false,
           showClose: false,
-          backgroundColor: Palette.base,
+          backgroundColor: this.uiTheme.bgBase,
           onDisappear: () => {
             this.showCrashLog = false;
             this.focusActiveTerminal();
@@ -1151,7 +1150,7 @@ struct Index {
           height: 220,
           dragBar: false,
           showClose: false,
-          backgroundColor: Palette.base,
+          backgroundColor: this.uiTheme.bgBase,
           onDisappear: () => {
             this.showRenameDialog = false;
             this.focusActiveTerminal();
@@ -1179,7 +1178,7 @@ struct Index {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor('#00000000')
+          .backgroundColor(Color.Transparent)
           .focusable(false)
           .onClick(() => { this.showOverflow = false; })
         // Dropdown panel anchored near the right side of the tab strip
@@ -1199,10 +1198,10 @@ struct Index {
           .width('100%')
         }
         .width(200)
-        .backgroundColor(Palette.surface)
-        .borderRadius(8)
-        .border({ width: 1, color: Palette.border })
-        .shadow({ radius: 12, color: '#66000000', offsetY: 6 })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CONTROL)
+        .border({ width: 1, color: this.uiTheme.border })
+        .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 6 })
         .position({ right: 140, top: 40 })
         .zIndex(100)
       }
@@ -1218,7 +1217,7 @@ struct Index {
     .height('100%')
     // Frame color matches the strip — forms a consistent border on
     // left / right / bottom of the terminal card.
-    .backgroundColor(this.uiTheme.bgSurface)
+    .backgroundColor(this.uiTheme.bgChrome)
     // Mouse-wheel horizontal scroll for the tab strip (non-compact only).
     // Captured at the root Stack because the Scroll component consumes axis
     // events internally and their onAxisEvent is unreliable. We filter by
@@ -1324,7 +1323,7 @@ struct Index {
       Text(tab.title)
         .fontSize(13)
         .fontFamily(this.uiFontFamily)
-        .fontColor(tab.id === this.activeId ? Palette.accent : Palette.text)
+        .fontColor(tab.id === this.activeId ? this.uiTheme.accent : this.uiTheme.textPrimary)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -1334,7 +1333,7 @@ struct Index {
         // The chip-✕ hover state (hoverCloseId) moved into TabStrip; the
         // dropdown's backdrop blocks chip hovers while open, so this is
         // always the resting color.
-        .fontColor(Palette.textDim)
+        .fontColor(this.uiTheme.textDim)
         .focusable(false)
         .onClick(() => {
           this.closeTab(tab.id);
@@ -1345,7 +1344,7 @@ struct Index {
     .height(32)
     .padding({ left: 10, right: 8 })
     .borderRadius(5)
-    .backgroundColor(tab.id === this.activeId ? '#14FFFFFF' : Color.Transparent)
+    .backgroundColor(tab.id === this.activeId ? this.uiTheme.hoverOverlay : Color.Transparent)
     .focusable(false)
     .onClick(() => {
       this.switchTab(tab.id);
@@ -1361,17 +1360,17 @@ struct Index {
       Text('重命名标签页')
         .fontSize(17)
         .fontFamily(this.uiFontFamily)
-        .fontColor(Palette.text)
+        .fontColor(this.uiTheme.textPrimary)
         .fontWeight(FontWeight.Medium)
         .width('100%')
       TextInput({ text: $$this.renameText, placeholder: '输入标签页名称' })
         .fontSize(14)
         .fontFamily(this.uiFontFamily)
-        .fontColor(Palette.text)
-        .placeholderColor(Palette.textDim)
-        .backgroundColor(Palette.inputBg)
+        .fontColor(this.uiTheme.textPrimary)
+        .placeholderColor(this.uiTheme.textDim)
+        .backgroundColor(this.uiTheme.bgInput)
         .borderRadius(7)
-        .border({ width: 1, color: Palette.accent })
+        .border({ width: 1, color: this.uiTheme.accent })
         .height(42)
         .width('100%')
         .defaultFocus(true)
@@ -1381,26 +1380,26 @@ struct Index {
           Text('取消')
             .fontSize(13)
             .fontFamily(this.uiFontFamily)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
         }
         .height(38)
         .layoutWeight(1)
         .borderRadius(7)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(Palette.border)
+        .backgroundColor(this.uiTheme.border)
         .focusable(false)
         .onClick(() => { this.closeRenameDialog(); })
         Row() {
           Text('确认')
             .fontSize(13)
             .fontFamily(this.uiFontFamily)
-            .fontColor(Palette.base)
+            .fontColor(this.uiTheme.bgBase)
         }
         .height(38)
         .layoutWeight(1)
         .borderRadius(7)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(Palette.accent)
+        .backgroundColor(this.uiTheme.accent)
         .focusable(false)
         .onClick(() => { this.applyRename(); })
       }

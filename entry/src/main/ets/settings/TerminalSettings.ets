@@ -1,5 +1,5 @@
 import { TerminalController } from 'libghostty_ohos';
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
 import { ConnectionStore } from '../store/ConnectionStore';
 
 @Component
@@ -21,6 +21,7 @@ export struct TerminalSettings {
   @State private tokenDraft: string = '';
   @State private showCrashOnStartup: boolean = true;
   @State private restoreTabsEnabled: boolean = true;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   aboutToAppear(): void {
     this.tokenDraft = this.token;
@@ -35,7 +36,7 @@ export struct TerminalSettings {
   private buildSectionHeader(title: string) {
     Text(title.toUpperCase())
       .fontSize(11)
-      .fontColor(Palette.textDim)
+      .fontColor(this.uiTheme.textDim)
       .fontWeight(FontWeight.Medium)
       .fontFamily(this.uiFontFamily)
       .width('100%')
@@ -52,10 +53,10 @@ export struct TerminalSettings {
           Row() {
             Text('当前连接')
               .fontSize(13)
-              .fontColor(Palette.textDim)
+              .fontColor(this.uiTheme.textDim)
             Text(this.hostLabel.length > 0 ? this.hostLabel : '—')
               .fontSize(13)
-              .fontColor(Palette.text)
+              .fontColor(this.uiTheme.textPrimary)
               .layoutWeight(1)
               .textAlign(TextAlign.End)
               .maxLines(1)
@@ -70,27 +71,27 @@ export struct TerminalSettings {
             .height(40)
             .type(InputType.Password)
             .fontSize(13)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
+            .fontColor(this.uiTheme.textPrimary)
+            .placeholderColor(this.uiTheme.textDim)
+            .backgroundColor(this.uiTheme.bgInput)
+            .caretColor(this.uiTheme.accent)
+            .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
-            .borderColor(Palette.border)
+            .borderColor(this.uiTheme.border)
             .onChange((v: string) => { this.tokenDraft = v; })
 
           // 更新按钮
           Row() {
             Text('更新 Token 并新建连接')
               .fontSize(14)
-              .fontColor(this.tokenDraft.trim().length > 0 ? Palette.accent : Palette.textDim)
+              .fontColor(this.tokenDraft.trim().length > 0 ? this.uiTheme.accent : this.uiTheme.textDim)
           }
           .width('100%')
           .height(42)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor(this.hoverUpdateToken ? '#1FFFFFFF' : Color.Transparent)
-          .borderRadius(8)
-          .border({ width: 1, color: this.tokenDraft.trim().length > 0 ? Palette.accent : Palette.border })
+          .backgroundColor(this.hoverUpdateToken ? this.uiTheme.pressOverlay : Color.Transparent)
+          .borderRadius(RADIUS_CONTROL)
+          .border({ width: 1, color: this.tokenDraft.trim().length > 0 ? this.uiTheme.accent : this.uiTheme.border })
           .animation({ duration: 120, curve: Curve.EaseOut })
           .focusable(false)
           .onHover((h: boolean) => { this.hoverUpdateToken = h; })
@@ -103,9 +104,9 @@ export struct TerminalSettings {
         }
         .width('100%')
         .padding(12)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -118,10 +119,10 @@ export struct TerminalSettings {
             Text('缓冲行数')
               .layoutWeight(1)
               .fontSize(14)
-              .fontColor(Palette.text)
+              .fontColor(this.uiTheme.textPrimary)
             Text(this.scrollbackLines.toString())
               .fontSize(14)
-              .fontColor(Palette.accent)
+              .fontColor(this.uiTheme.accent)
           }
           .width('100%')
 
@@ -133,8 +134,8 @@ export struct TerminalSettings {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .selectedColor(Palette.accent)
-            .trackColor(Palette.border)
+            .selectedColor(this.uiTheme.accent)
+            .trackColor(this.uiTheme.border)
             .focusable(false)
             .onChange((value: number, mode: SliderChangeMode) => {
               this.scrollbackLines = Math.round(value);
@@ -153,9 +154,9 @@ export struct TerminalSettings {
         }
         .width('100%')
         .padding(12)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -166,10 +167,10 @@ export struct TerminalSettings {
         Row({ space: 12 }) {
           Text('启动时显示崩溃提醒')
             .fontSize(14)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
             .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.showCrashOnStartup })
-            .selectedColor(Palette.accent)
+            .selectedColor(this.uiTheme.accent)
             .onChange((on: boolean) => {
               this.showCrashOnStartup = on;
               if (this.store) {
@@ -179,9 +180,9 @@ export struct TerminalSettings {
         }
         .width('100%')
         .padding(12)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -192,10 +193,10 @@ export struct TerminalSettings {
         Row({ space: 12 }) {
           Text('启动时恢复上次的页签')
             .fontSize(14)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
             .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.restoreTabsEnabled })
-            .selectedColor(Palette.accent)
+            .selectedColor(this.uiTheme.accent)
             .onChange((on: boolean) => {
               this.restoreTabsEnabled = on;
               if (this.store) {
@@ -209,9 +210,9 @@ export struct TerminalSettings {
         }
         .width('100%')
         .padding(12)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -222,10 +223,10 @@ export struct TerminalSettings {
         Row({ space: 12 }) {
           Text('紧凑显示（等宽均分）')
             .fontSize(14)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
             .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.tabCompact })
-            .selectedColor(Palette.accent)
+            .selectedColor(this.uiTheme.accent)
             .focusable(false)
             .onChange((on: boolean) => {
               this.tabCompact = on;
@@ -237,9 +238,9 @@ export struct TerminalSettings {
         }
         .width('100%')
         .padding(12)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')

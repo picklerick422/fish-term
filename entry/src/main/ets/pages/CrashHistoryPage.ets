@@ -3,7 +3,7 @@
 import { pasteboard } from '@kit.BasicServicesKit';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 
 function typeLabel(t: CrashType): string {
   switch (t) {
@@ -13,36 +13,6 @@ function typeLabel(t: CrashType): string {
     case CrashType.CPP_CRASH: return 'C++ 崩溃';
     case CrashType.APP_FREEZE: return '系统冻结';
     default: return '未知';
-  }
-}
-
-function typeColor(t: CrashType): string {
-  switch (t) {
-    case CrashType.JS_CRASH:
-    case CrashType.UNHANDLED_REJECTION:
-      return Palette.accent;
-    case CrashType.NATIVE_SIGNAL:
-    case CrashType.CPP_CRASH:
-      return Palette.danger;
-    case CrashType.APP_FREEZE:
-      return Palette.warn;
-    default:
-      return Palette.textDim;
-  }
-}
-
-function typeDotColor(t: CrashType): string {
-  switch (t) {
-    case CrashType.JS_CRASH:
-    case CrashType.UNHANDLED_REJECTION:
-      return Palette.accent;
-    case CrashType.NATIVE_SIGNAL:
-    case CrashType.CPP_CRASH:
-      return Palette.danger;
-    case CrashType.APP_FREEZE:
-      return Palette.warn;
-    default:
-      return Palette.textDim;
   }
 }
 
@@ -82,6 +52,38 @@ export struct CrashHistoryPage {
   @State private hoverExpandSysLog: boolean = false;
   @State private hoverCopyContent: boolean = false;
   @State private hoverCopyPath: boolean = false;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
+
+  // Theme-token-backed crash type colors (member methods so they can read uiTheme).
+  private typeColor(t: CrashType): string {
+    switch (t) {
+      case CrashType.JS_CRASH:
+      case CrashType.UNHANDLED_REJECTION:
+        return this.uiTheme.accent;
+      case CrashType.NATIVE_SIGNAL:
+      case CrashType.CPP_CRASH:
+        return this.uiTheme.danger;
+      case CrashType.APP_FREEZE:
+        return this.uiTheme.warn;
+      default:
+        return this.uiTheme.textDim;
+    }
+  }
+
+  private typeDotColor(t: CrashType): string {
+    switch (t) {
+      case CrashType.JS_CRASH:
+      case CrashType.UNHANDLED_REJECTION:
+        return this.uiTheme.accent;
+      case CrashType.NATIVE_SIGNAL:
+      case CrashType.CPP_CRASH:
+        return this.uiTheme.danger;
+      case CrashType.APP_FREEZE:
+        return this.uiTheme.warn;
+      default:
+        return this.uiTheme.textDim;
+    }
+  }
 
   build() {
     Column() {
@@ -102,7 +104,7 @@ export struct CrashHistoryPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Palette.base)
+    .backgroundColor(this.uiTheme.bgBase)
   }
 
   // ==================== 列表视图 ====================
@@ -115,13 +117,13 @@ export struct CrashHistoryPage {
         Row() {
           Text('←')
             .fontSize(18)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
         }
         .width(40)
         .height(40)
         .justifyContent(FlexAlign.Center)
-        .borderRadius(8)
-        .backgroundColor(this.hoverBack ? '#1FFFFFFF' : Color.Transparent)
+        .borderRadius(RADIUS_CONTROL)
+        .backgroundColor(this.hoverBack ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverBack = h; })
@@ -130,7 +132,7 @@ export struct CrashHistoryPage {
         Text('崩溃历史')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
 
         Blank()
         Row().width(40).height(1)
@@ -144,10 +146,10 @@ export struct CrashHistoryPage {
         Column({ space: 12 }) {
           Text('·')
             .fontSize(40)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
           Text('暂无崩溃记录')
             .fontSize(14)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
         }
         .width('100%')
         .layoutWeight(1)
@@ -159,32 +161,32 @@ export struct CrashHistoryPage {
               Column({ space: 6 }) {
                 Row({ space: 8 }) {
                   Circle({ width: 8, height: 8 })
-                    .fill(typeDotColor(entry.crashType))
+                    .fill(this.typeDotColor(entry.crashType))
                   Text(typeLabel(entry.crashType))
                     .fontSize(12)
-                    .fontColor(typeColor(entry.crashType))
+                    .fontColor(this.typeColor(entry.crashType))
                   Text(formatDate(entry.timestamp))
                     .fontSize(11)
-                    .fontColor(Palette.textDim)
+                    .fontColor(this.uiTheme.textDim)
                   Blank()
                   Text('›')
                     .fontSize(16)
-                    .fontColor(Palette.textDim)
+                    .fontColor(this.uiTheme.textDim)
                 }
                 .width('100%')
 
                 Text(entry.summary)
                   .fontSize(12)
-                  .fontColor(Palette.textDim)
+                  .fontColor(this.uiTheme.textDim)
                   .width('100%')
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
               .width('100%')
               .padding(14)
-              .backgroundColor(this.hoverItemId === entry.id ? '#1A1F2A' : Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: this.hoverItemId === entry.id ? Palette.accent : Palette.border })
+              .backgroundColor(this.hoverItemId === entry.id ? this.uiTheme.bgElevated : this.uiTheme.bgSurface)
+              .borderRadius(RADIUS_CONTROL)
+              .border({ width: 1, color: this.hoverItemId === entry.id ? this.uiTheme.accent : this.uiTheme.border })
               .animation({ duration: 150, curve: Curve.EaseOut })
               .focusable(false)
               .onHover((h: boolean) => { this.hoverItemId = h ? entry.id : ''; })
@@ -205,15 +207,15 @@ export struct CrashHistoryPage {
         Row() {
           Text('清空全部记录')
             .fontSize(14)
-            .fontColor(this.hoverDeleteAll ? '#FF8A8A' : Palette.danger)
+            .fontColor(this.hoverDeleteAll ? this.uiTheme.dangerHover : this.uiTheme.danger)
             .width('100%')
             .textAlign(TextAlign.Center)
         }
         .width('100%')
         .height(44)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.hoverDeleteAll ? '#1A1F2A' : Color.Transparent)
-        .borderRadius(8)
+        .backgroundColor(this.hoverDeleteAll ? this.uiTheme.bgElevated : Color.Transparent)
+        .borderRadius(RADIUS_CONTROL)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverDeleteAll = h; })
@@ -239,13 +241,13 @@ export struct CrashHistoryPage {
         Row() {
           Text('←')
             .fontSize(18)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
         }
         .width(40)
         .height(40)
         .justifyContent(FlexAlign.Center)
-        .borderRadius(8)
-        .backgroundColor(this.hoverBack ? '#1FFFFFFF' : Color.Transparent)
+        .borderRadius(RADIUS_CONTROL)
+        .backgroundColor(this.hoverBack ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverBack = h; })
@@ -259,7 +261,7 @@ export struct CrashHistoryPage {
         Text('崩溃详情')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
 
         Blank()
       }
@@ -290,7 +292,7 @@ export struct CrashHistoryPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Palette.base)
+    .backgroundColor(this.uiTheme.bgBase)
   }
 
   // ---- 崩溃信息 ----
@@ -298,19 +300,19 @@ export struct CrashHistoryPage {
   @Builder
   private buildCrashInfoSection() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('●', '崩溃信息', typeColor(this.selectedEntry!.crashType))
+      this.buildSectionHeader('●', '崩溃信息', this.typeColor(this.selectedEntry!.crashType))
       Column({ space: 8 }) {
-        this.buildDetailRow('类型', typeLabel(this.selectedEntry!.crashType), typeColor(this.selectedEntry!.crashType));
-        this.buildDetailRow('时间', formatFullTime(this.selectedEntry!.timestamp), Palette.text);
-        this.buildDetailRow('摘要', this.selectedEntry!.summary, Palette.text);
+        this.buildDetailRow('类型', typeLabel(this.selectedEntry!.crashType), this.typeColor(this.selectedEntry!.crashType));
+        this.buildDetailRow('时间', formatFullTime(this.selectedEntry!.timestamp), this.uiTheme.textPrimary);
+        this.buildDetailRow('摘要', this.selectedEntry!.summary, this.uiTheme.textPrimary);
       }
       .width('100%')
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -319,31 +321,31 @@ export struct CrashHistoryPage {
   @Builder
   private buildStackSection() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('▎', '调用栈', Palette.accent)
+      this.buildSectionHeader('▎', '调用栈', this.uiTheme.accent)
 
       Column() {
         Text(this.selectedEntry!.stackTrace)
           .fontSize(11)
           .fontFamily('monospace')
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
           .width('100%')
           .maxLines(this.isStackExpanded ? 999 : 15)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
       .padding(10)
-      .backgroundColor('#080C12')
+      .backgroundColor(this.uiTheme.bgInput)
       .borderRadius(6)
 
       if (this.selectedEntry!.stackTrace.length > 600) {
         Row() {
           Text(this.isStackExpanded ? '收起 ▲' : '展开全部 ▼')
             .fontSize(11)
-            .fontColor(this.hoverExpandStack ? '#5FE8D8' : Palette.accent)
+            .fontColor(this.hoverExpandStack ? this.uiTheme.accentHover : this.uiTheme.accent)
             .padding({ top: 2, bottom: 2, left: 8, right: 8 })
         }
         .borderRadius(4)
-        .backgroundColor(this.hoverExpandStack ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverExpandStack ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverExpandStack = h; })
@@ -352,9 +354,9 @@ export struct CrashHistoryPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -363,31 +365,31 @@ export struct CrashHistoryPage {
   @Builder
   private buildSysLogSection() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('▎', '系统日志', Palette.warn)
+      this.buildSectionHeader('▎', '系统日志', this.uiTheme.warn)
 
       Column() {
         Text(this.selectedEntry!.systemLog)
           .fontSize(11)
           .fontFamily('monospace')
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
           .width('100%')
           .maxLines(this.isSysLogExpanded ? 999 : 8)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
       .padding(10)
-      .backgroundColor('#080C12')
+      .backgroundColor(this.uiTheme.bgInput)
       .borderRadius(6)
 
       if (this.selectedEntry!.systemLog.length > 400) {
         Row() {
           Text(this.isSysLogExpanded ? '收起 ▲' : '展开全部 ▼')
             .fontSize(11)
-            .fontColor(this.hoverExpandSysLog ? '#5FE8D8' : Palette.accent)
+            .fontColor(this.hoverExpandSysLog ? this.uiTheme.accentHover : this.uiTheme.accent)
             .padding({ top: 2, bottom: 2, left: 8, right: 8 })
         }
         .borderRadius(4)
-        .backgroundColor(this.hoverExpandSysLog ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverExpandSysLog ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverExpandSysLog = h; })
@@ -396,9 +398,9 @@ export struct CrashHistoryPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -407,21 +409,21 @@ export struct CrashHistoryPage {
   @Builder
   private buildDeviceSection() {
     Column({ space: 10 }) {
-      this.buildSectionHeader('●', '设备信息', Palette.textDim)
+      this.buildSectionHeader('●', '设备信息', this.uiTheme.textDim)
       Column({ space: 8 }) {
         if (this.selectedEntry !== null) {
-          this.buildDetailRow('设备', this.selectedEntry.deviceInfo.deviceModel, Palette.text);
-          this.buildDetailRow('系统', this.selectedEntry.deviceInfo.osVersion, Palette.text);
-          this.buildDetailRow('应用', this.selectedEntry.deviceInfo.appVersion, Palette.text);
+          this.buildDetailRow('设备', this.selectedEntry.deviceInfo.deviceModel, this.uiTheme.textPrimary);
+          this.buildDetailRow('系统', this.selectedEntry.deviceInfo.osVersion, this.uiTheme.textPrimary);
+          this.buildDetailRow('应用', this.selectedEntry.deviceInfo.appVersion, this.uiTheme.textPrimary);
         }
       }
       .width('100%')
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -433,16 +435,16 @@ export struct CrashHistoryPage {
       Row() {
         Text(this.copyContentLabel)
           .fontSize(14)
-          .fontColor(this.hoverCopyContent ? '#5FE8D8' : Palette.accent)
+          .fontColor(this.hoverCopyContent ? this.uiTheme.accentHover : this.uiTheme.accent)
           .width('100%')
           .textAlign(TextAlign.Center)
       }
       .width('100%')
       .height(42)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor(this.hoverCopyContent ? '#1A1F2A' : Palette.surface)
-      .borderRadius(8)
-      .border({ width: 1, color: Palette.accent })
+      .backgroundColor(this.hoverCopyContent ? this.uiTheme.bgElevated : this.uiTheme.bgSurface)
+      .borderRadius(RADIUS_CONTROL)
+      .border({ width: 1, color: this.uiTheme.accent })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverCopyContent = h; })
@@ -451,16 +453,16 @@ export struct CrashHistoryPage {
       Row() {
         Text(this.copyPathLabel)
           .fontSize(14)
-          .fontColor(this.hoverCopyPath ? Palette.text : Palette.textDim)
+          .fontColor(this.hoverCopyPath ? this.uiTheme.textPrimary : this.uiTheme.textDim)
           .width('100%')
           .textAlign(TextAlign.Center)
       }
       .width('100%')
       .height(42)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor(this.hoverCopyPath ? '#1A1F2A' : Palette.surface)
-      .borderRadius(8)
-      .border({ width: 1, color: this.hoverCopyPath ? Palette.textDim : Palette.border })
+      .backgroundColor(this.hoverCopyPath ? this.uiTheme.bgElevated : this.uiTheme.bgSurface)
+      .borderRadius(RADIUS_CONTROL)
+      .border({ width: 1, color: this.hoverCopyPath ? this.uiTheme.textDim : this.uiTheme.border })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverCopyPath = h; })
@@ -492,7 +494,7 @@ export struct CrashHistoryPage {
     Row({ space: 8 }) {
       Text(label)
         .fontSize(12)
-        .fontColor(Palette.textDim)
+        .fontColor(this.uiTheme.textDim)
         .width(48)
       Text(value)
         .fontSize(12)

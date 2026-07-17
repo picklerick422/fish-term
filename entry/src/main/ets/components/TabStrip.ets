@@ -1,4 +1,4 @@
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 import { DriverState } from '../transport/TerminalDriver';
 import { DEFAULT_FONT_SIZE, DEFAULT_UI_FONT } from '../theme/FontScale';
 
@@ -34,8 +34,8 @@ export class TabMeta {
 export struct TabStrip {
   @Prop tabs: TabMeta[] = [];
   @Prop activeId: number = -1;
-  @Prop themeBg: string = Palette.base;
-  @Prop themeFg: string = Palette.text;
+  @Prop themeBg: string = REFINED_DARK_THEME.bgBase;
+  @Prop themeFg: string = REFINED_DARK_THEME.textPrimary;
   @Prop tabCompact: boolean = false;
   @Prop fontSize: number = DEFAULT_FONT_SIZE;
   @Prop uiFontFamily: string = DEFAULT_UI_FONT;
@@ -71,6 +71,7 @@ export struct TabStrip {
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
   @State private dragSwaps: number = 0;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
   private dragUnit: number = 110;
   private didDrag: boolean = false;
   private lastDragEnd: number = 0;
@@ -160,7 +161,7 @@ export struct TabStrip {
           Column() {
             Blank()
               .layoutWeight(1)
-              .backgroundColor('#01000000')
+              .backgroundColor(Color.Transparent)
 
             Row({ space: 4 }) {
               ForEach(this.tabs, (tab: TabMeta) => {
@@ -181,7 +182,7 @@ export struct TabStrip {
         Row() {
           Text('+')
             .fontSize(16)
-            .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
+            .fontColor(this.hoverAddTab ? this.uiTheme.textDim : this.uiTheme.textFaint)
             .animation({ duration: 120, curve: Curve.EaseOut })
         }
         .width(24)
@@ -189,7 +190,7 @@ export struct TabStrip {
         .margin({ top: 4 })
         .justifyContent(FlexAlign.Center)
         .borderRadius(5)
-        .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverAddTab ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverAddTab = h; })
@@ -199,7 +200,7 @@ export struct TabStrip {
         Row() {
           Text('▼')
             .fontSize(9)
-            .fontColor(this.hoverOverflow ? Palette.textDim : '#606878')
+            .fontColor(this.hoverOverflow ? this.uiTheme.textDim : this.uiTheme.textFaint)
             .animation({ duration: 120, curve: Curve.EaseOut })
         }
         .width(24)
@@ -207,7 +208,7 @@ export struct TabStrip {
         .margin({ top: 4 })
         .justifyContent(FlexAlign.Center)
         .borderRadius(5)
-        .backgroundColor(this.hoverOverflow ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverOverflow ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverOverflow = h; })
@@ -228,7 +229,7 @@ export struct TabStrip {
         Row() {
           Text('+')
             .fontSize(16)
-            .fontColor(this.hoverAddTab ? Palette.textDim : '#606878')
+            .fontColor(this.hoverAddTab ? this.uiTheme.textDim : this.uiTheme.textFaint)
             .animation({ duration: 120, curve: Curve.EaseOut })
         }
         .width(24)
@@ -236,7 +237,7 @@ export struct TabStrip {
         .margin({ top: 4 })
         .justifyContent(FlexAlign.Center)
         .borderRadius(5)
-        .backgroundColor(this.hoverAddTab ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverAddTab ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverAddTab = h; })
@@ -252,7 +253,7 @@ export struct TabStrip {
         .height(28)
         .justifyContent(FlexAlign.Center)
         .borderRadius(7)
-        .backgroundColor(this.hoverGuide ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverGuide ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 150, curve: Curve.EaseOut })
       }
       .width(40)
@@ -273,7 +274,7 @@ export struct TabStrip {
         .height(28)
         .justifyContent(FlexAlign.Center)
         .borderRadius(7)
-        .backgroundColor(this.hoverSettings ? '#1FFFFFFF' : Color.Transparent)
+        .backgroundColor(this.hoverSettings ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 150, curve: Curve.EaseOut })
       }
       .width(40)
@@ -286,7 +287,7 @@ export struct TabStrip {
     .width('100%')
     .height(40)
     .padding({ right: 130 })
-    .backgroundColor(Palette.surface)
+    .backgroundColor(this.uiTheme.bgChrome)
   }
 
   @Builder
@@ -295,15 +296,15 @@ export struct TabStrip {
       Text(tab.title)
         .fontSize(Math.max(10, this.fontSize - 1))
         .fontFamily(this.uiFontFamily)
-        .fontColor(tab.id === this.activeId ? this.themeFg : Palette.textDim)
+        .fontColor(tab.id === this.activeId ? this.themeFg : this.uiTheme.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(this.tabCompact ? 1 : 0)
       // ✕ turns red on hover to signal "this will close"
       Text('✕')
         .fontSize(11)
-        .fontColor(this.hoverCloseId === tab.id ? Palette.danger
-          : (tab.id === this.activeId ? this.themeFg : Palette.textDim))
+        .fontColor(this.hoverCloseId === tab.id ? this.uiTheme.danger
+          : (tab.id === this.activeId ? this.themeFg : this.uiTheme.textDim))
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
@@ -317,7 +318,7 @@ export struct TabStrip {
       : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
     // Inactive tab gets a subtle highlight on hover
     .backgroundColor(tab.id === this.activeId ? this.themeBg
-      : (this.hoverTabId === tab.id ? '#1FFFFFFF' : Color.Transparent))
+      : (this.hoverTabId === tab.id ? this.uiTheme.pressOverlay : Color.Transparent))
     // The dragged chip follows the finger via a residual X translate; the other
     // chips re-flow live (with animation) as the array is spliced mid-drag. The
     // chip never leaves the tab baseline (y is always 0).
@@ -325,8 +326,8 @@ export struct TabStrip {
     .zIndex(this.dragTabId === tab.id ? 10 : 0)
     .scale(this.dragTabId === tab.id ? { x: 1.04, y: 1.04 } : { x: 1.0, y: 1.0 })
     .shadow(this.dragTabId === tab.id
-      ? { radius: 12, color: '#66000000', offsetX: 0, offsetY: 2 }
-      : { radius: 0, color: '#00000000', offsetX: 0, offsetY: 0 })
+      ? { radius: 12, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 2 }
+      : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 })
     .animation(this.dragTabId === tab.id
       ? { duration: 0 }          // dragged chip tracks the finger with no lag
       : { duration: 180, curve: Curve.Friction })
@@ -385,17 +386,17 @@ export struct TabStrip {
       Row({ space: 8 }) {
         Text('✎')
           .fontSize(12)
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
         Text('重命名')
           .fontSize(13)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
           .layoutWeight(1)
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 9, bottom: 9 })
       .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'rename' ? '#14FFFFFF' : Color.Transparent)
+      .backgroundColor(this.hoverMenuAction === 'rename' ? this.uiTheme.hoverOverlay : Color.Transparent)
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverMenuAction = h ? 'rename' : ''; })
@@ -407,46 +408,46 @@ export struct TabStrip {
       })
 
       // Separator with horizontal margins
-      Divider().color(Palette.border).width('100%').margin({ left: 8, right: 8 })
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
 
       // 关闭其他
       Row({ space: 8 }) {
         Text('✕')
           .fontSize(12)
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
         Text('关闭其他标签页')
           .fontSize(13)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
           .layoutWeight(1)
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 9, bottom: 9 })
       .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'close_others' ? '#1FFFFB454' : Color.Transparent)
+      .backgroundColor(this.hoverMenuAction === 'close_others' ? this.uiTheme.warnBg : Color.Transparent)
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close_others' : ''; })
       .onClick(() => { this.onCloseOthers(tab.id); })
 
       // Separator
-      Divider().color(Palette.border).width('100%').margin({ left: 8, right: 8 })
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
 
       // 关闭
       Row({ space: 8 }) {
         Text('✕')
           .fontSize(12)
-          .fontColor(Palette.textDim)
+          .fontColor(this.uiTheme.textDim)
         Text('关闭')
           .fontSize(13)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
           .layoutWeight(1)
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 9, bottom: 9 })
       .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'close' ? '#1FFF6B6B' : Color.Transparent)
+      .backgroundColor(this.hoverMenuAction === 'close' ? this.uiTheme.dangerBg : Color.Transparent)
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)
       .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close' : ''; })
@@ -454,10 +455,10 @@ export struct TabStrip {
     }
     .width(160)
     .padding(4)
-    .backgroundColor(Palette.surface)
-    .borderRadius(8)
-    .border({ width: 1, color: Palette.border })
-    .shadow({ radius: 12, color: '#66000000', offsetY: 6 })
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
+    .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 6 })
   }
 
   // Line-art help icon (hollow circle + "?") — same #B8BEC9 thin stroke as the
@@ -467,12 +468,12 @@ export struct TabStrip {
     Stack({ alignContent: Alignment.Center }) {
       Circle({ width: 15, height: 15 })
         .fill(Color.Transparent)
-        .stroke(this.hoverGuide ? '#F4F7FB' : '#B8BEC9')
+        .stroke(this.hoverGuide ? this.uiTheme.textPrimary : this.uiTheme.textDim)
         .strokeWidth(1)
       Text('?')
         .fontSize(10)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.hoverGuide ? '#F4F7FB' : '#B8BEC9')
+        .fontColor(this.hoverGuide ? this.uiTheme.textPrimary : this.uiTheme.textDim)
     }
     .width(15)
     .height(15)
@@ -487,10 +488,10 @@ export struct TabStrip {
     Column({ space: 5 }) {
       // top slider: knob on the right
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(14).height(1).borderRadius(0.5).backgroundColor('#B8BEC9')
+        Row().width(14).height(1).borderRadius(0.5).backgroundColor(this.uiTheme.textDim)
         Circle({ width: 4.5, height: 4.5 })
-          .fill(Palette.surface)
-          .stroke('#B8BEC9')
+          .fill(this.uiTheme.bgSurface)
+          .stroke(this.uiTheme.textDim)
           .strokeWidth(1)
           .margin({ left: 7 })
       }
@@ -498,10 +499,10 @@ export struct TabStrip {
 
       // bottom slider: knob on the left
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(14).height(1).borderRadius(0.5).backgroundColor('#B8BEC9')
+        Row().width(14).height(1).borderRadius(0.5).backgroundColor(this.uiTheme.textDim)
         Circle({ width: 4.5, height: 4.5 })
-          .fill(Palette.surface)
-          .stroke('#B8BEC9')
+          .fill(this.uiTheme.bgSurface)
+          .stroke(this.uiTheme.textDim)
           .strokeWidth(1)
           .margin({ left: 2.5 })
       }

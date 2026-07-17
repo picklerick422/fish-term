@@ -25,12 +25,16 @@ export interface UiTheme {
   // Accent & status
   accent: string;
   accentAlt: string;     // gradient end color; equals accent in refined (no gradient)
+  accentHover: string;   // brightened accent for hover text / icons
+  accentTertiary: string; // tertiary accent — terminal-theme preview swatch blue
   accentGradient: boolean; // true → primary buttons / active pills use accent→accentAlt gradient
   success: string;
   successBg: string;     // translucent capsule background behind status text
   successBorder: string;
   warn: string;
+  warnBg: string;        // translucent warn background (inline badges, warn hover)
   danger: string;
+  dangerHover: string;   // brightened danger for hover text
   dangerBg: string;      // translucent danger background (destructive hover)
   hoverOverlay: string;
   pressOverlay: string;
@@ -59,12 +63,16 @@ export const REFINED_DARK_THEME: UiTheme = {
   textOnAccent: '#06231F',
   accent: '#3DD6C4',
   accentAlt: '#3DD6C4',
+  accentHover: '#5FE8D8',
+  accentTertiary: '#84B4F8',
   accentGradient: false,
   success: '#3DD6C4',
   successBg: '#143DD6C4',
   successBorder: '#333DD6C4',
   warn: '#FFB454',
+  warnBg: '#1FE8B44F',
   danger: '#FF6B6B',
+  dangerHover: '#FF8A8A',
   dangerBg: '#17FF6B6B',
   hoverOverlay: '#14FFFFFF',
   pressOverlay: '#1FFFFFFF',
@@ -87,12 +95,16 @@ export const FUTURISTIC_THEME: UiTheme = {
   textOnAccent: '#0C0C14',
   accent: '#7C6CFF',
   accentAlt: '#3DD6C4',
+  accentHover: '#A398FF',
+  accentTertiary: '#8FA3FF',
   accentGradient: true,
   success: '#3DD6C4',
   successBg: '#1F3DD6C4',
   successBorder: '#403DD6C4',
   warn: '#FFB454',
+  warnBg: '#1FFFB454',
   danger: '#FF6B6B',
+  dangerHover: '#FF8A8A',
   dangerBg: '#17FF6B6B',
   hoverOverlay: '#0FFFFFFF',
   pressOverlay: '#1AFFFFFF',

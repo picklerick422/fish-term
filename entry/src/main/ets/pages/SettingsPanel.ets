@@ -1,5 +1,5 @@
 import { TerminalController } from 'libghostty_ohos';
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 import { ConnectionStore } from '../store/ConnectionStore';
 import {
   DEFAULT_FONT_SCALE_BOOST, DEFAULT_CJK_VERTICAL_OFFSET, DEFAULT_CHARACTER_SPACING
@@ -22,7 +22,7 @@ export struct SettingsPanel {
   @Prop lineSpacing: number = 1.05;
   @Prop initialTab: number = 0;
   @Prop statusText: string = '空闲';
-  @Prop statusColor: string = '#8A94A6';
+  @Prop statusColor: string = REFINED_DARK_THEME.textDim;
   @Prop hostLabel: string = '';
   @Prop token: string = '';
   onTokenChange: (token: string) => void = (_token: string) => {};
@@ -79,6 +79,7 @@ export struct SettingsPanel {
   // Theme count shown on the About page (the theme list itself lives in
   // AppearanceSettings).
   @State private themeCount: number = 0;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   aboutToAppear(): void {
     this.tab = this.initialTab;
@@ -111,13 +112,13 @@ export struct SettingsPanel {
         Row() {
           Text('←')
             .fontSize(18)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
         }
         .width(40)
         .height(40)
         .justifyContent(FlexAlign.Center)
-        .borderRadius(8)
-        .backgroundColor(this.hoverBack ? '#1FFFFFFF' : Color.Transparent)
+        .borderRadius(RADIUS_CONTROL)
+        .backgroundColor(this.hoverBack ? this.uiTheme.pressOverlay : Color.Transparent)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverBack = h; })
@@ -127,7 +128,7 @@ export struct SettingsPanel {
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.uiFontFamily)
-          .fontColor(Palette.text)
+          .fontColor(this.uiTheme.textPrimary)
 
         // connection status, pushed to the right
         Row({ space: 6 }) {
@@ -136,10 +137,10 @@ export struct SettingsPanel {
             .fontColor(this.statusColor)
           Text(this.statusText)
             .fontSize(12)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
           Text(this.hostLabel)
             .fontSize(12)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -201,7 +202,7 @@ export struct SettingsPanel {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Palette.base)
+    .backgroundColor(this.uiTheme.bgBase)
     .onClick(() => {
       if (this.uiFontDropdownOpen || this.termFontDropdownOpen) {
         this.uiFontDropdownOpen = false;
@@ -215,11 +216,11 @@ export struct SettingsPanel {
     Text(label)
       .fontSize(13)
       .fontFamily(this.uiFontFamily)
-      .fontColor(this.tab === index ? Palette.base : Palette.textDim)
+      .fontColor(this.tab === index ? this.uiTheme.bgBase : this.uiTheme.textDim)
       .fontWeight(this.tab === index ? FontWeight.Medium : FontWeight.Normal)
       .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-      .backgroundColor(this.tab === index ? Palette.accent
-        : (this.hoverTabIdx === index ? '#1FFFFFFF' : Color.Transparent))
+      .backgroundColor(this.tab === index ? this.uiTheme.accent
+        : (this.hoverTabIdx === index ? this.uiTheme.pressOverlay : Color.Transparent))
       .borderRadius(20)
       .animation({ duration: 120, curve: Curve.EaseOut })
       .focusable(false)

@@ -1,4 +1,4 @@
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
 import { SLOT_TYPE_OPTIONS, CONTENT_TYPE_OPTIONS, OptionEntry } from '../notifications/NotificationService';
 
 @Component
@@ -23,12 +23,13 @@ export struct NotificationSettings {
   @State private testText: string = '如果你能看到这条消息，说明系统通知功能正常。';
   @State private hoverTestSlotIdx: number = -1;
   @State private hoverTestContentIdx: number = -1;
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   @Builder
   private buildSectionHeader(title: string) {
     Text(title.toUpperCase())
       .fontSize(11)
-      .fontColor(Palette.textDim)
+      .fontColor(this.uiTheme.textDim)
       .fontWeight(FontWeight.Medium)
       .fontFamily(this.uiFontFamily)
       .width('100%')
@@ -44,10 +45,10 @@ export struct NotificationSettings {
           Row({ space: 12 }) {
             Text('启用通知')
               .fontSize(14)
-              .fontColor(Palette.text)
+              .fontColor(this.uiTheme.textPrimary)
               .layoutWeight(1)
             Toggle({ type: ToggleType.Switch, isOn: this.notifyEnabled })
-              .selectedColor(Palette.accent)
+              .selectedColor(this.uiTheme.accent)
               .focusable(false)
               .onChange((on: boolean) => {
                 this.notifyEnabled = on;
@@ -56,9 +57,9 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(12)
-          .backgroundColor(Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgSurface)
+          .borderRadius(RADIUS_CARD)
+          .border({ width: 1, color: this.uiTheme.border })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -69,10 +70,10 @@ export struct NotificationSettings {
           Row({ space: 12 }) {
             Text('任务完成时通知')
               .fontSize(14)
-              .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+              .fontColor(this.notifyEnabled ? this.uiTheme.textPrimary : this.uiTheme.textDim)
               .layoutWeight(1)
             Toggle({ type: ToggleType.Switch, isOn: this.notifyCompleted })
-              .selectedColor(Palette.accent)
+              .selectedColor(this.uiTheme.accent)
               .focusable(false)
               .enabled(this.notifyEnabled)
               .onChange((on: boolean) => {
@@ -82,9 +83,9 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(12)
-          .backgroundColor(Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgSurface)
+          .borderRadius(RADIUS_CARD)
+          .border({ width: 1, color: this.uiTheme.border })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -95,10 +96,10 @@ export struct NotificationSettings {
           Row({ space: 12 }) {
             Text('任务需要输入时通知')
               .fontSize(14)
-              .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+              .fontColor(this.notifyEnabled ? this.uiTheme.textPrimary : this.uiTheme.textDim)
               .layoutWeight(1)
             Toggle({ type: ToggleType.Switch, isOn: this.notifyAwaiting })
-              .selectedColor(Palette.accent)
+              .selectedColor(this.uiTheme.accent)
               .focusable(false)
               .enabled(this.notifyEnabled)
               .onChange((on: boolean) => {
@@ -108,9 +109,9 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(12)
-          .backgroundColor(Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgSurface)
+          .borderRadius(RADIUS_CARD)
+          .border({ width: 1, color: this.uiTheme.border })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -121,10 +122,10 @@ export struct NotificationSettings {
           Row({ space: 12 }) {
             Text('仅在应用后台时通知')
               .fontSize(14)
-              .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+              .fontColor(this.notifyEnabled ? this.uiTheme.textPrimary : this.uiTheme.textDim)
               .layoutWeight(1)
             Toggle({ type: ToggleType.Switch, isOn: this.notifyBackgroundOnly })
-              .selectedColor(Palette.accent)
+              .selectedColor(this.uiTheme.accent)
               .focusable(false)
               .enabled(this.notifyEnabled)
               .onChange((on: boolean) => {
@@ -134,9 +135,9 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(12)
-          .backgroundColor(Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgSurface)
+          .borderRadius(RADIUS_CARD)
+          .border({ width: 1, color: this.uiTheme.border })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -148,10 +149,10 @@ export struct NotificationSettings {
           Row({ space: 12 }) {
             Text('检测终端响铃 (BEL)')
               .fontSize(14)
-              .fontColor(this.notifyEnabled ? Palette.text : Palette.textDim)
+              .fontColor(this.notifyEnabled ? this.uiTheme.textPrimary : this.uiTheme.textDim)
               .layoutWeight(1)
             Toggle({ type: ToggleType.Switch, isOn: this.notifyBell })
-              .selectedColor(Palette.accent)
+              .selectedColor(this.uiTheme.accent)
               .focusable(false)
               .enabled(this.notifyEnabled)
               .onChange((on: boolean) => {
@@ -161,9 +162,9 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(12)
-          .backgroundColor(Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgSurface)
+          .borderRadius(RADIUS_CARD)
+          .border({ width: 1, color: this.uiTheme.border })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -175,18 +176,18 @@ export struct NotificationSettings {
           // Slot type selector
           Text('通知渠道')
             .fontSize(12)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
             .width('100%')
           Row({ space: 0 }) {
             ForEach(SLOT_TYPE_OPTIONS, (opt: OptionEntry, idx: number) => {
               Text(opt.label)
                 .fontSize(12)
                 .textAlign(TextAlign.Center)
-                .fontColor(this.testSlotIdx === idx ? Palette.base : Palette.text)
+                .fontColor(this.testSlotIdx === idx ? this.uiTheme.bgBase : this.uiTheme.textPrimary)
                 .height(30)
                 .layoutWeight(1)
-                .backgroundColor(this.testSlotIdx === idx ? Palette.accent
-                  : (this.hoverTestSlotIdx === idx ? '#1FFFFFFF' : Color.Transparent))
+                .backgroundColor(this.testSlotIdx === idx ? this.uiTheme.accent
+                  : (this.hoverTestSlotIdx === idx ? this.uiTheme.pressOverlay : Color.Transparent))
                 .borderRadius(6)
                 .margin({ right: 3 })
                 .animation({ duration: 120, curve: Curve.EaseOut })
@@ -197,25 +198,25 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(3)
-          .backgroundColor('#080F18')
-          .borderRadius(8)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgInput)
+          .borderRadius(RADIUS_CONTROL)
+          .border({ width: 1, color: this.uiTheme.border })
 
           // Content type selector
           Text('内容类型')
             .fontSize(12)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
             .width('100%')
           Row({ space: 0 }) {
             ForEach(CONTENT_TYPE_OPTIONS, (opt: OptionEntry, idx: number) => {
               Text(opt.label)
                 .fontSize(12)
                 .textAlign(TextAlign.Center)
-                .fontColor(this.testContentIdx === idx ? Palette.base : Palette.text)
+                .fontColor(this.testContentIdx === idx ? this.uiTheme.bgBase : this.uiTheme.textPrimary)
                 .height(30)
                 .layoutWeight(1)
-                .backgroundColor(this.testContentIdx === idx ? Palette.accent
-                  : (this.hoverTestContentIdx === idx ? '#1FFFFFFF' : Color.Transparent))
+                .backgroundColor(this.testContentIdx === idx ? this.uiTheme.accent
+                  : (this.hoverTestContentIdx === idx ? this.uiTheme.pressOverlay : Color.Transparent))
                 .borderRadius(6)
                 .margin({ right: 3 })
                 .animation({ duration: 120, curve: Curve.EaseOut })
@@ -226,22 +227,22 @@ export struct NotificationSettings {
           }
           .width('100%')
           .padding(3)
-          .backgroundColor('#080F18')
-          .borderRadius(8)
-          .border({ width: 1, color: Palette.border })
+          .backgroundColor(this.uiTheme.bgInput)
+          .borderRadius(RADIUS_CONTROL)
+          .border({ width: 1, color: this.uiTheme.border })
 
           // Title input
           TextInput({ text: this.testTitle, placeholder: '通知标题' })
             .width('100%')
             .height(36)
             .fontSize(13)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
+            .fontColor(this.uiTheme.textPrimary)
+            .placeholderColor(this.uiTheme.textDim)
+            .backgroundColor(this.uiTheme.bgInput)
+            .caretColor(this.uiTheme.accent)
+            .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
-            .borderColor(Palette.border)
+            .borderColor(this.uiTheme.border)
             .onChange((v: string) => { this.testTitle = v; })
 
           // Text input
@@ -249,27 +250,27 @@ export struct NotificationSettings {
             .width('100%')
             .height(36)
             .fontSize(13)
-            .fontColor(Palette.text)
-            .placeholderColor(Palette.textDim)
-            .backgroundColor(Palette.inputBg)
-            .caretColor(Palette.accent)
-            .borderRadius(8)
+            .fontColor(this.uiTheme.textPrimary)
+            .placeholderColor(this.uiTheme.textDim)
+            .backgroundColor(this.uiTheme.bgInput)
+            .caretColor(this.uiTheme.accent)
+            .borderRadius(RADIUS_CONTROL)
             .borderWidth(1)
-            .borderColor(Palette.border)
+            .borderColor(this.uiTheme.border)
             .onChange((v: string) => { this.testText = v; })
 
           // Send button
           Row() {
             Text('发送测试通知')
               .fontSize(14)
-              .fontColor(Palette.accent)
+              .fontColor(this.uiTheme.accent)
           }
           .width('100%')
           .height(40)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor(this.hoverTestNotify ? '#1A1F2A' : Palette.surface)
-          .borderRadius(10)
-          .border({ width: 1, color: Palette.accent })
+          .backgroundColor(this.hoverTestNotify ? this.uiTheme.bgElevated : this.uiTheme.bgSurface)
+          .borderRadius(RADIUS_CARD)
+          .border({ width: 1, color: this.uiTheme.accent })
           .animation({ duration: 120, curve: Curve.EaseOut })
           .focusable(false)
           .onHover((h: boolean) => { this.hoverTestNotify = h; })

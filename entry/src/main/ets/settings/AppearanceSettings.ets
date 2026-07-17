@@ -1,5 +1,5 @@
 import { TerminalController } from 'libghostty_ohos';
-import { Palette } from '../theme/Palette';
+import { UiTheme, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL } from '../theme/UiTheme';
 import { ConnectionStore } from '../store/ConnectionStore';
 import {
   MIN_FONT_SIZE, MAX_FONT_SIZE, FONT_STEP,
@@ -28,8 +28,8 @@ export interface ThemeColors {
 }
 
 export const FALLBACK_COLORS: ThemeColors = {
-  bg: '#11161D', fg: '#F4F7FB', cursor: '#3DD6C4',
-  a1: '#FF6B6B', a2: '#3DD6C4', a3: '#84B4F8'
+  bg: REFINED_DARK_THEME.bgSurface, fg: REFINED_DARK_THEME.textPrimary, cursor: REFINED_DARK_THEME.accent,
+  a1: REFINED_DARK_THEME.danger, a2: REFINED_DARK_THEME.accent, a3: REFINED_DARK_THEME.accentTertiary
 };
 
 // Curated, widely-loved dark themes — pinned to the top of the list.
@@ -101,6 +101,7 @@ export struct AppearanceSettings {
   // Mirrored terminal font used in the theme preview so @State reactivity is
   // explicit and not dependent on a class getter being observed by ArkUI.
   @State private previewFontFamily: string = 'monospace';
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
   // True "pull-down" reveal: the dropdown container height animates from 0
   // to full while clipping content, so lines appear one-by-one from the top
   // and retract from the bottom without scaling or fading the whole list.
@@ -229,19 +230,19 @@ export struct AppearanceSettings {
       Row() {
         if (this.isFontSelected(family, isUI)) {
           Row()
-            .width(7).height(7).borderRadius(3.5).backgroundColor(Palette.accent)
+            .width(7).height(7).borderRadius(3.5).backgroundColor(this.uiTheme.accent)
         }
       }
       .width(16).height(16).borderRadius(8)
       .border({
         width: this.isFontSelected(family, isUI) ? 2 : 1,
-        color: this.isFontSelected(family, isUI) ? Palette.accent : Palette.border
+        color: this.isFontSelected(family, isUI) ? this.uiTheme.accent : this.uiTheme.border
       })
       .justifyContent(FlexAlign.Center)
 
       Text(label)
         .fontSize(13)
-        .fontColor(this.isFontSelected(family, isUI) ? Palette.accent : Palette.text)
+        .fontColor(this.isFontSelected(family, isUI) ? this.uiTheme.accent : this.uiTheme.textPrimary)
         .fontFamily(family.length > 0 ? family : 'monospace')
         .margin({ left: 8 })
     }
@@ -249,7 +250,7 @@ export struct AppearanceSettings {
     .height(36)
     .padding({ left: 8, right: 8 })
     .borderRadius(6)
-    .backgroundColor(this.isFontSelected(family, isUI) ? '#15FFFFFF' : Color.Transparent)
+    .backgroundColor(this.isFontSelected(family, isUI) ? this.uiTheme.hoverOverlay : Color.Transparent)
     .focusable(false)
     .onClick(() => {
       if (isUI) {
@@ -268,7 +269,7 @@ export struct AppearanceSettings {
   private buildSectionHeader(title: string) {
     Text(title.toUpperCase())
       .fontSize(11)
-      .fontColor(Palette.textDim)
+      .fontColor(this.uiTheme.textDim)
       .fontWeight(FontWeight.Medium)
       .fontFamily(this.uiFontFamily)
       .width('100%')
@@ -356,8 +357,8 @@ export struct AppearanceSettings {
     .alignItems(HorizontalAlign.Start)
     .padding(14)
     .backgroundColor(this.colorsFor(this.themeName).bg)
-    .borderRadius(10)
-    .border({ width: 1, color: Palette.border })
+    .borderRadius(RADIUS_CARD)
+    .border({ width: 1, color: this.uiTheme.border })
   }
 
   build() {
@@ -381,13 +382,13 @@ export struct AppearanceSettings {
               Text('A-')
                 .fontSize(14)
                 .fontWeight(FontWeight.Bold)
-                .fontColor(this.fontSize <= MIN_FONT_SIZE ? '#4A5568' : Palette.accent)
+                .fontColor(this.fontSize <= MIN_FONT_SIZE ? this.uiTheme.textFaint : this.uiTheme.accent)
             }
             .width(36)
             .height(32)
             .justifyContent(FlexAlign.Center)
-            .backgroundColor(this.hoverFontMinus ? '#1FFFFFFF' : '#0D1520')
-            .borderRadius(8)
+            .backgroundColor(this.hoverFontMinus ? this.uiTheme.pressOverlay : this.uiTheme.bgInput)
+            .borderRadius(RADIUS_CONTROL)
             .animation({ duration: 100, curve: Curve.EaseOut })
             .focusable(false)
             .enabled(this.fontSize > MIN_FONT_SIZE)
@@ -403,12 +404,12 @@ export struct AppearanceSettings {
               .height(32)
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
-              .fontColor(Palette.accent)
+              .fontColor(this.uiTheme.accent)
               .textAlign(TextAlign.Center)
-              .backgroundColor('#0D1520')
-              .borderRadius(8)
+              .backgroundColor(this.uiTheme.bgInput)
+              .borderRadius(RADIUS_CONTROL)
               .padding({ left: 2, right: 2 })
-              .caretColor(Palette.accent)
+              .caretColor(this.uiTheme.accent)
               .onChange((value: string) => {
                 // Only allow digits so the field stays a valid font-size input.
                 const digits = value.replace(/[^0-9]/g, '');
@@ -421,13 +422,13 @@ export struct AppearanceSettings {
               Text('A+')
                 .fontSize(14)
                 .fontWeight(FontWeight.Bold)
-                .fontColor(this.fontSize >= MAX_FONT_SIZE ? '#4A5568' : Palette.accent)
+                .fontColor(this.fontSize >= MAX_FONT_SIZE ? this.uiTheme.textFaint : this.uiTheme.accent)
             }
             .width(36)
             .height(32)
             .justifyContent(FlexAlign.Center)
-            .backgroundColor(this.hoverFontPlus ? '#1FFFFFFF' : '#0D1520')
-            .borderRadius(8)
+            .backgroundColor(this.hoverFontPlus ? this.uiTheme.pressOverlay : this.uiTheme.bgInput)
+            .borderRadius(RADIUS_CONTROL)
             .animation({ duration: 100, curve: Curve.EaseOut })
             .focusable(false)
             .enabled(this.fontSize < MAX_FONT_SIZE)
@@ -439,9 +440,9 @@ export struct AppearanceSettings {
             })
           }
           .padding({ left: 4, right: 4, top: 3, bottom: 3 })
-          .backgroundColor('#080F18')
+          .backgroundColor(this.uiTheme.bgInput)
           .borderRadius(18)
-          .border({ width: 1, color: Palette.border })
+          .border({ width: 1, color: this.uiTheme.border })
 
           // Line spacing control group
           Row({ space: 2 }) {
@@ -449,13 +450,13 @@ export struct AppearanceSettings {
               Text('≡-')
                 .fontSize(13)
                 .fontWeight(FontWeight.Bold)
-                .fontColor(this.lineSpacing <= MIN_LINE_SPACING ? '#4A5568' : Palette.accent)
+                .fontColor(this.lineSpacing <= MIN_LINE_SPACING ? this.uiTheme.textFaint : this.uiTheme.accent)
             }
             .width(32)
             .height(32)
             .justifyContent(FlexAlign.Center)
-            .backgroundColor(this.hoverLineSpacingMinus ? '#1FFFFFFF' : '#0D1520')
-            .borderRadius(8)
+            .backgroundColor(this.hoverLineSpacingMinus ? this.uiTheme.pressOverlay : this.uiTheme.bgInput)
+            .borderRadius(RADIUS_CONTROL)
             .animation({ duration: 100, curve: Curve.EaseOut })
             .focusable(false)
             .enabled(this.lineSpacing > MIN_LINE_SPACING)
@@ -471,12 +472,12 @@ export struct AppearanceSettings {
               .height(32)
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
-              .fontColor(Palette.accent)
+              .fontColor(this.uiTheme.accent)
               .textAlign(TextAlign.Center)
-              .backgroundColor('#0D1520')
-              .borderRadius(8)
+              .backgroundColor(this.uiTheme.bgInput)
+              .borderRadius(RADIUS_CONTROL)
               .padding({ left: 2, right: 2 })
-              .caretColor(Palette.accent)
+              .caretColor(this.uiTheme.accent)
               .onChange((value: string) => {
                 // Allow digits and at most one decimal point for line spacing.
                 let filtered = '';
@@ -499,13 +500,13 @@ export struct AppearanceSettings {
               Text('≡+')
                 .fontSize(13)
                 .fontWeight(FontWeight.Bold)
-                .fontColor(this.lineSpacing >= MAX_LINE_SPACING ? '#4A5568' : Palette.accent)
+                .fontColor(this.lineSpacing >= MAX_LINE_SPACING ? this.uiTheme.textFaint : this.uiTheme.accent)
             }
             .width(32)
             .height(32)
             .justifyContent(FlexAlign.Center)
-            .backgroundColor(this.hoverLineSpacingPlus ? '#1FFFFFFF' : '#0D1520')
-            .borderRadius(8)
+            .backgroundColor(this.hoverLineSpacingPlus ? this.uiTheme.pressOverlay : this.uiTheme.bgInput)
+            .borderRadius(RADIUS_CONTROL)
             .animation({ duration: 100, curve: Curve.EaseOut })
             .focusable(false)
             .enabled(this.lineSpacing < MAX_LINE_SPACING)
@@ -517,9 +518,9 @@ export struct AppearanceSettings {
             })
           }
           .padding({ left: 4, right: 4, top: 3, bottom: 3 })
-          .backgroundColor('#080F18')
+          .backgroundColor(this.uiTheme.bgInput)
           .borderRadius(18)
-          .border({ width: 1, color: Palette.border })
+          .border({ width: 1, color: this.uiTheme.border })
 
           Blank()
             .layoutWeight(1)
@@ -532,7 +533,7 @@ export struct AppearanceSettings {
         Row({ space: 6 }) {
           Text('缩放')
             .fontSize(11)
-            .fontColor(isScaledFont(this.termFontFamily) ? Palette.text : Palette.textDim)
+            .fontColor(isScaledFont(this.termFontFamily) ? this.uiTheme.textPrimary : this.uiTheme.textDim)
             .fontFamily(this.uiFontFamily)
             .width(28)
           Slider({
@@ -543,8 +544,8 @@ export struct AppearanceSettings {
             style: SliderStyle.OutSet
           })
             .layoutWeight(1)
-            .selectedColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.border)
-            .trackColor(Palette.border)
+            .selectedColor(isScaledFont(this.termFontFamily) ? this.uiTheme.accent : this.uiTheme.border)
+            .trackColor(this.uiTheme.border)
             .focusable(false)
             .onChange((value: number, mode: SliderChangeMode) => {
               if (!isScaledFont(this.termFontFamily)) { return; }
@@ -556,7 +557,7 @@ export struct AppearanceSettings {
             })
           Text(this.fontScaleBoostDraft + 'x')
             .fontSize(11)
-            .fontColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.textDim)
+            .fontColor(isScaledFont(this.termFontFamily) ? this.uiTheme.accent : this.uiTheme.textDim)
             .width(36)
             .textAlign(TextAlign.End)
         }
@@ -564,15 +565,15 @@ export struct AppearanceSettings {
         .height(28)
         .padding({ left: 8, right: 8 })
         .alignItems(VerticalAlign.Center)
-        .backgroundColor('#080F18')
+        .backgroundColor(this.uiTheme.bgInput)
         .borderRadius(14)
-        .border({ width: 1, color: Palette.border })
+        .border({ width: 1, color: this.uiTheme.border })
         .opacity(isScaledFont(this.termFontFamily) ? 1.0 : 0.45)
 
         Row({ space: 6 }) {
           Text('CJK')
             .fontSize(11)
-            .fontColor(isScaledFont(this.termFontFamily) ? Palette.text : Palette.textDim)
+            .fontColor(isScaledFont(this.termFontFamily) ? this.uiTheme.textPrimary : this.uiTheme.textDim)
             .fontFamily(this.uiFontFamily)
             .width(28)
           Slider({
@@ -583,8 +584,8 @@ export struct AppearanceSettings {
             style: SliderStyle.OutSet
           })
             .layoutWeight(1)
-            .selectedColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.border)
-            .trackColor(Palette.border)
+            .selectedColor(isScaledFont(this.termFontFamily) ? this.uiTheme.accent : this.uiTheme.border)
+            .trackColor(this.uiTheme.border)
             .focusable(false)
             .onChange((value: number, mode: SliderChangeMode) => {
               if (!isScaledFont(this.termFontFamily)) { return; }
@@ -596,7 +597,7 @@ export struct AppearanceSettings {
             })
           Text(this.cjkVerticalOffsetDraft + ' dp')
             .fontSize(11)
-            .fontColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.textDim)
+            .fontColor(isScaledFont(this.termFontFamily) ? this.uiTheme.accent : this.uiTheme.textDim)
             .width(44)
             .textAlign(TextAlign.End)
         }
@@ -604,15 +605,15 @@ export struct AppearanceSettings {
         .height(28)
         .padding({ left: 8, right: 8 })
         .alignItems(VerticalAlign.Center)
-        .backgroundColor('#080F18')
+        .backgroundColor(this.uiTheme.bgInput)
         .borderRadius(14)
-        .border({ width: 1, color: Palette.border })
+        .border({ width: 1, color: this.uiTheme.border })
         .opacity(isScaledFont(this.termFontFamily) ? 1.0 : 0.45)
 
         Row({ space: 6 }) {
           Text('间距')
             .fontSize(11)
-            .fontColor(isScaledFont(this.termFontFamily) ? Palette.text : Palette.textDim)
+            .fontColor(isScaledFont(this.termFontFamily) ? this.uiTheme.textPrimary : this.uiTheme.textDim)
             .fontFamily(this.uiFontFamily)
             .width(28)
           Slider({
@@ -623,8 +624,8 @@ export struct AppearanceSettings {
             style: SliderStyle.OutSet
           })
             .layoutWeight(1)
-            .selectedColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.border)
-            .trackColor(Palette.border)
+            .selectedColor(isScaledFont(this.termFontFamily) ? this.uiTheme.accent : this.uiTheme.border)
+            .trackColor(this.uiTheme.border)
             .focusable(false)
             .onChange((value: number, mode: SliderChangeMode) => {
               if (!isScaledFont(this.termFontFamily)) { return; }
@@ -636,7 +637,7 @@ export struct AppearanceSettings {
             })
           Text(this.characterSpacingDraft + ' dp')
             .fontSize(11)
-            .fontColor(isScaledFont(this.termFontFamily) ? Palette.accent : Palette.textDim)
+            .fontColor(isScaledFont(this.termFontFamily) ? this.uiTheme.accent : this.uiTheme.textDim)
             .width(44)
             .textAlign(TextAlign.End)
         }
@@ -644,9 +645,9 @@ export struct AppearanceSettings {
         .height(28)
         .padding({ left: 8, right: 8 })
         .alignItems(VerticalAlign.Center)
-        .backgroundColor('#080F18')
+        .backgroundColor(this.uiTheme.bgInput)
         .borderRadius(14)
-        .border({ width: 1, color: Palette.border })
+        .border({ width: 1, color: this.uiTheme.border })
         .opacity(isScaledFont(this.termFontFamily) ? 1.0 : 0.45)
       }
       .alignItems(HorizontalAlign.Start)
@@ -658,7 +659,7 @@ export struct AppearanceSettings {
         Row({ space: 6 }) {
           Text('字体'.toUpperCase())
             .fontSize(11)
-            .fontColor(Palette.textDim)
+            .fontColor(this.uiTheme.textDim)
             .fontWeight(FontWeight.Medium)
             .fontFamily(this.uiFontFamily)
 
@@ -666,13 +667,13 @@ export struct AppearanceSettings {
             Row({ space: 3 }) {
               Text('⚠')
                 .fontSize(10)
-                .fontColor('#E8B44F')
+                .fontColor(this.uiTheme.warn)
               Text('比例字体渲染可能偏位')
                 .fontSize(10)
-                .fontColor('#E8B44F')
+                .fontColor(this.uiTheme.warn)
             }
             .padding({ left: 6, right: 8, top: 2, bottom: 2 })
-            .backgroundColor('#1FE8B44F')
+            .backgroundColor(this.uiTheme.warnBg)
             .borderRadius(4)
           }
         }
@@ -687,7 +688,7 @@ export struct AppearanceSettings {
             Text('UI 字体')
               .fontSize(11)
               .fontFamily(this.uiFontFamily)
-              .fontColor(Palette.textDim)
+              .fontColor(this.uiTheme.textDim)
               .width('100%')
               .margin({ bottom: 4 })
 
@@ -696,7 +697,7 @@ export struct AppearanceSettings {
               Row() {
                 Text(this.fontLabel(this.uiFontFamily, UI_FONT_OPTIONS))
                   .fontSize(12)
-                  .fontColor(Palette.text)
+                  .fontColor(this.uiTheme.textPrimary)
                   .fontFamily(this.uiFontFamily.length > 0 ? this.uiFontFamily : 'monospace')
                   .layoutWeight(1)
                   .maxLines(1)
@@ -704,7 +705,7 @@ export struct AppearanceSettings {
 
                 Text('▼')
                   .fontSize(8)
-                  .fontColor(Palette.textDim)
+                  .fontColor(this.uiTheme.textDim)
                   .rotate({ angle: this.uiFontDropdownOpen ? 180 : 0 })
                   .animation({ curve: curves.springMotion(0.6, 0.8) })
               }
@@ -713,9 +714,9 @@ export struct AppearanceSettings {
               .padding({ left: 10, right: 10 })
               .justifyContent(FlexAlign.SpaceBetween)
               .alignItems(VerticalAlign.Center)
-              .backgroundColor(Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: this.uiFontDropdownOpen ? Palette.accent : Palette.border })
+              .backgroundColor(this.uiTheme.bgSurface)
+              .borderRadius(RADIUS_CONTROL)
+              .border({ width: 1, color: this.uiFontDropdownOpen ? this.uiTheme.accent : this.uiTheme.border })
               .focusable(false)
               .onClick(() => {
                 this.uiFontDropdownOpen = !this.uiFontDropdownOpen;
@@ -740,10 +741,10 @@ export struct AppearanceSettings {
               .clip(true)
               .animation({ curve: this.dropdownRevealCurve, duration: 220 })
               .zIndex(10)
-              .backgroundColor(Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: Palette.accent })
-              .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
+              .backgroundColor(this.uiTheme.bgSurface)
+              .borderRadius(RADIUS_CONTROL)
+              .border({ width: 1, color: this.uiTheme.accent })
+              .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 4 })
             }
             .width('100%')
             .height(36)
@@ -758,7 +759,7 @@ export struct AppearanceSettings {
             Text('终端字体')
               .fontSize(11)
               .fontFamily(this.uiFontFamily)
-              .fontColor(Palette.textDim)
+              .fontColor(this.uiTheme.textDim)
               .width('100%')
               .margin({ bottom: 4 })
 
@@ -767,7 +768,7 @@ export struct AppearanceSettings {
               Row() {
                 Text(this.fontLabel(this.termFontFamily, TERM_FONT_OPTIONS))
                   .fontSize(12)
-                  .fontColor(Palette.text)
+                  .fontColor(this.uiTheme.textPrimary)
                   .fontFamily(this.termFontFamily.length > 0 ? this.termFontFamily : 'monospace')
                   .layoutWeight(1)
                   .maxLines(1)
@@ -775,7 +776,7 @@ export struct AppearanceSettings {
 
                 Text('▼')
                   .fontSize(8)
-                  .fontColor(Palette.textDim)
+                  .fontColor(this.uiTheme.textDim)
                   .rotate({ angle: this.termFontDropdownOpen ? 180 : 0 })
                   .animation({ curve: curves.springMotion(0.6, 0.8) })
               }
@@ -784,9 +785,9 @@ export struct AppearanceSettings {
               .padding({ left: 10, right: 10 })
               .justifyContent(FlexAlign.SpaceBetween)
               .alignItems(VerticalAlign.Center)
-              .backgroundColor(Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: this.termFontDropdownOpen ? Palette.accent : Palette.border })
+              .backgroundColor(this.uiTheme.bgSurface)
+              .borderRadius(RADIUS_CONTROL)
+              .border({ width: 1, color: this.termFontDropdownOpen ? this.uiTheme.accent : this.uiTheme.border })
               .focusable(false)
               .onClick(() => {
                 this.termFontDropdownOpen = !this.termFontDropdownOpen;
@@ -811,10 +812,10 @@ export struct AppearanceSettings {
               .clip(true)
               .animation({ curve: this.dropdownRevealCurve, duration: 220 })
               .zIndex(10)
-              .backgroundColor(Palette.surface)
-              .borderRadius(8)
-              .border({ width: 1, color: Palette.accent })
-              .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
+              .backgroundColor(this.uiTheme.bgSurface)
+              .borderRadius(RADIUS_CONTROL)
+              .border({ width: 1, color: this.uiTheme.accent })
+              .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 4 })
             }
             .width('100%')
             .height(36)
@@ -836,13 +837,13 @@ export struct AppearanceSettings {
         TextInput({ text: this.themeSearch, placeholder: '搜索主题…' })
           .height(36)
           .fontSize(13)
-          .fontColor(Palette.text)
-          .placeholderColor(Palette.textDim)
-          .backgroundColor(Palette.inputBg)
-          .caretColor(Palette.accent)
-          .borderRadius(8)
+          .fontColor(this.uiTheme.textPrimary)
+          .placeholderColor(this.uiTheme.textDim)
+          .backgroundColor(this.uiTheme.bgInput)
+          .caretColor(this.uiTheme.accent)
+          .borderRadius(RADIUS_CONTROL)
           .borderWidth(1)
-          .borderColor(Palette.border)
+          .borderColor(this.uiTheme.border)
           .margin({ bottom: 8 })
           .onChange((v: string) => { this.filterThemes(v); })
 
@@ -867,20 +868,20 @@ export struct AppearanceSettings {
                 .height(34)
                 .borderRadius(7)
                 .backgroundColor(this.colorsFor(item).bg)
-                .border({ width: 1, color: Palette.border })
+                .border({ width: 1, color: this.uiTheme.border })
                 .flexShrink(0)
                 .clip(true)
 
                 Column({ space: 1 }) {
                   Text(item.split('_').join(' '))
                     .fontSize(13)
-                    .fontColor(Palette.text)
+                    .fontColor(this.uiTheme.textPrimary)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                   if (this.recommendedSet.has(item)) {
                     Text('★ 推荐')
                       .fontSize(10)
-                      .fontColor(Palette.accent)
+                      .fontColor(this.uiTheme.accent)
                   }
                 }
                 .layoutWeight(1)
@@ -890,13 +891,13 @@ export struct AppearanceSettings {
                   Text('✓')
                     .fontSize(14)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor(Palette.accent)
+                    .fontColor(this.uiTheme.accent)
                 }
               }
               .width('100%')
               .height(48)
               .padding({ left: 10, right: 12 })
-              .backgroundColor(this.hoverTheme === item ? '#17FFFFFF' : Color.Transparent)
+              .backgroundColor(this.hoverTheme === item ? this.uiTheme.hoverOverlay : Color.Transparent)
               .animation({ duration: 100, curve: Curve.EaseOut })
               .focusable(false)
               .onHover((h: boolean) => { this.hoverTheme = h ? item : ''; })
@@ -913,10 +914,10 @@ export struct AppearanceSettings {
         }
         .width('100%')
         .height(300)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
-        .divider({ strokeWidth: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
+        .divider({ strokeWidth: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -931,15 +932,15 @@ export struct AppearanceSettings {
                 .layoutWeight(1)
                 .fontSize(13)
                 .textAlign(TextAlign.Center)
-                .fontColor(this.cursorStyle === opt.value ? Palette.base : Palette.text)
+                .fontColor(this.cursorStyle === opt.value ? this.uiTheme.bgBase : this.uiTheme.textPrimary)
                 .height(34)
-                .backgroundColor(this.cursorStyle === opt.value ? Palette.accent
-                  : (this.hoverCursorIdx === opt.value ? '#1FFFFFFF' : Color.Transparent))
-                .borderRadius(8)
+                .backgroundColor(this.cursorStyle === opt.value ? this.uiTheme.accent
+                  : (this.hoverCursorIdx === opt.value ? this.uiTheme.pressOverlay : Color.Transparent))
+                .borderRadius(RADIUS_CONTROL)
                 .border({
                   width: 1,
-                  color: this.cursorStyle === opt.value ? Palette.accent
-                    : (this.hoverCursorIdx === opt.value ? Palette.textDim : Palette.border)
+                  color: this.cursorStyle === opt.value ? this.uiTheme.accent
+                    : (this.hoverCursorIdx === opt.value ? this.uiTheme.textDim : this.uiTheme.border)
                 })
                 .margin({ right: 4 })
                 .animation({ duration: 120, curve: Curve.EaseOut })
@@ -961,9 +962,9 @@ export struct AppearanceSettings {
         }
         .width('100%')
         .padding(4)
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -975,9 +976,9 @@ export struct AppearanceSettings {
           Text('启用光标闪烁')
             .layoutWeight(1)
             .fontSize(14)
-            .fontColor(Palette.text)
+            .fontColor(this.uiTheme.textPrimary)
           Toggle({ type: ToggleType.Switch, isOn: this.cursorBlink })
-            .selectedColor(Palette.accent)
+            .selectedColor(this.uiTheme.accent)
             .focusable(false)
             .onChange((on: boolean) => {
               this.cursorBlink = on;
@@ -995,9 +996,9 @@ export struct AppearanceSettings {
         .width('100%')
         .height(44)
         .padding({ left: 12, right: 12 })
-        .backgroundColor(Palette.surface)
-        .borderRadius(10)
-        .border({ width: 1, color: Palette.border })
+        .backgroundColor(this.uiTheme.bgSurface)
+        .borderRadius(RADIUS_CARD)
+        .border({ width: 1, color: this.uiTheme.border })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
