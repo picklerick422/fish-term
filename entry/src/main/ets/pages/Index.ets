@@ -1089,7 +1089,7 @@ struct Index {
             Column() {
               Row()
                 .width('100%')
-                .height(2)
+                .height(this.uiTheme.accentGradient ? 2 : 0)
                 .linearGradient({ angle: 0, colors: [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]] })
                 .opacity(this.uiTheme.accentGradient ? 1 : 0)
                 .borderRadius({ topLeft: RADIUS_CARD, topRight: RADIUS_CARD })
