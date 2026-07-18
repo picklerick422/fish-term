@@ -169,7 +169,9 @@ export struct TabStrip {
                 this.buildTabChip(tab)
               }, (tab: TabMeta) => tab.id + '_' + tab.title)
             }
-            .padding({ right: 4 })
+            // Futuristic: leave room on the left so the active capsule's glow
+            // isn't clipped by the Scroll bounds.
+            .padding({ left: this.uiTheme.accentGradient ? 8 : 0, right: 4 })
             .alignItems(VerticalAlign.Bottom)
           }
           .height(40)
@@ -310,7 +312,12 @@ export struct TabStrip {
       Text(tab.title)
         .fontSize(Math.max(10, this.fontSize - 1))
         .fontFamily(this.uiFontFamily)
-        .fontColor(tab.id === this.activeId ? this.themeFg : this.uiTheme.textDim)
+        // Futuristic: capsule chip floats on the strip, so it uses chrome text
+        // colors; refined: chip merges with the terminal card, so it uses the
+        // terminal theme's fg (themeFg).
+        .fontColor(tab.id === this.activeId
+          ? (this.uiTheme.accentGradient ? this.uiTheme.textPrimary : this.themeFg)
+          : this.uiTheme.textDim)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(this.tabCompact ? 1 : 0)
@@ -318,21 +325,33 @@ export struct TabStrip {
       Text('✕')
         .fontSize(11)
         .fontColor(this.hoverCloseId === tab.id ? this.uiTheme.danger
-          : (tab.id === this.activeId ? this.themeFg : this.uiTheme.textDim))
+          : (tab.id === this.activeId
+            ? (this.uiTheme.accentGradient ? this.uiTheme.textPrimary : this.themeFg)
+            : this.uiTheme.textDim))
         .opacity(this.hoverCloseId === tab.id ? 1.0 : 0.6)
         .animation({ duration: 120, curve: Curve.EaseOut })
         .focusable(false)
         .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
         .onClick(() => { this.onCloseTab(tab.id); })
     }
-    .height(tab.id === this.activeId ? 32 : 26)
+    .height(tab.id === this.activeId ? (this.uiTheme.accentGradient ? 28 : 32) : 26)
+    // Futuristic lifts chips off the strip baseline so the capsule and its
+    // glow read as a floating element; refined keeps chips flush (merged look).
+    .margin({ bottom: this.uiTheme.accentGradient ? 6 : 0 })
     .layoutWeight(this.tabCompact ? 1 : 0)
     .padding({ left: 12, right: 10 })
     .borderRadius(tab.id === this.activeId
-      ? { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses
-      : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses)
-    // Inactive tab gets a subtle highlight on hover
-    .backgroundColor(tab.id === this.activeId ? this.themeBg
+      ? (this.uiTheme.accentGradient
+        ? { topLeft: 14, topRight: 14, bottomLeft: 14, bottomRight: 14 } as BorderRadiuses
+        : { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses)
+      : (this.uiTheme.accentGradient
+        ? { topLeft: 13, topRight: 13, bottomLeft: 13, bottomRight: 13 } as BorderRadiuses
+        : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses))
+    // Inactive tab gets a subtle highlight on hover. Active tab: futuristic uses
+    // the elevated chrome surface (floating capsule); refined merges with the
+    // terminal background (themeBg) as before.
+    .backgroundColor(tab.id === this.activeId
+      ? (this.uiTheme.accentGradient ? this.uiTheme.bgElevated : this.themeBg)
       : (this.hoverTabId === tab.id ? this.uiTheme.pressOverlay : Color.Transparent))
     // Active chip: borderStrong outline (both schemes — brief-mandated) plus
     // accent glow; glowAccent is fully transparent in refined, so the shadow
