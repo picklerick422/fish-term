@@ -59,6 +59,7 @@ export class TerminalSession {
   private sessionIdCb: ((id: string) => void) | null = null;
   private taskDataCb: ((data: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
+  private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -134,6 +135,16 @@ export class TerminalSession {
           this.replayStateCb(replaying);
         }
       });
+      (this.driver as FishWebSocketDriver).onAwaitingInput((awaiting: boolean): void => {
+        // Suppress backend awaiting signal during replay — historical output
+        // silence must not fire "awaiting input" notifications.
+        if (this.replaying) {
+          return;
+        }
+        if (this.awaitingInputCb) {
+          this.awaitingInputCb(awaiting);
+        }
+      });
     }
   }
 
@@ -163,6 +174,14 @@ export class TerminalSession {
   // replay after a reconnect. The page uses this to drive the loading overlay.
   onReplayState(cb: (replaying: boolean) => void): void {
     this.replayStateCb = cb;
+  }
+
+  // Backend-driven awaiting-input signal from fish-agent.  Fires when the
+  // server detects the child process is blocked waiting for stdin (3 s output
+  // silence + process sleeping).  The page wires this to TaskEvent-based
+  // notifications.
+  onAwaitingInput(cb: (awaiting: boolean) => void): void {
+    this.awaitingInputCb = cb;
   }
 
   // Decode a [start, start+len) window of a batch for auxiliary analysis.

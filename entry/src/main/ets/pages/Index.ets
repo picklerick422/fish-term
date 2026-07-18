@@ -777,9 +777,26 @@ struct Index {
         this.replayLoading = replaying;
       }
     });
-    // Wire task detector to session output for notification analysis
+    // Backend-driven awaiting-input signal (fish-agent detects process blocked
+    // on stdin).  Convert to a TaskEvent so it flows through the same
+    // notification pipeline as the regex-based TaskDetector.
     const tabId: number = id;
     const tabTitleRef: string = tabTitle;
+    session.onAwaitingInput((awaiting: boolean): void => {
+      if (!awaiting) {
+        return; // only fire on the rising edge — notifications are one-shot
+      }
+      const t: TabMeta | undefined = this.tabs.find((x: TabMeta) => x.id === tabId);
+      const title: string = t ? t.title : tabTitleRef;
+      this.handleTaskEvent({
+        type: TaskEventType.TASK_AWAITING_INPUT,
+        tabId: tabId,
+        tabTitle: title,
+        detail: '等待用户输入',
+        timestamp: Date.now(),
+      });
+    });
+    // Wire task detector to session output for notification analysis
     session.onTaskData((data: string): void => {
       const event: TaskEvent | null = this.detector.detect(data, tabId, tabTitleRef);
       if (event !== null) {

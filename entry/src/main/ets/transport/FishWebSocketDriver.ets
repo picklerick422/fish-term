@@ -32,6 +32,7 @@ interface ServerCtrl {
   dir?: string;
   error?: string;
   id?: string;  // session id from server on first connect
+  state?: boolean; // awaiting_input state
 }
 
 export class FishWebSocketDriver implements TerminalDriver {
@@ -45,6 +46,7 @@ export class FishWebSocketDriver implements TerminalDriver {
   private cwdCb: ((dir: string) => void) | null = null;
   private sessionIdCb: ((id: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
+  private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
 
   private cols: number = 80;
   private rows: number = 24;
@@ -101,6 +103,13 @@ export class FishWebSocketDriver implements TerminalDriver {
   // drive the full-screen loading overlay and to mute replay-time analysis.
   onReplayState(cb: (replaying: boolean) => void): void {
     this.replayStateCb = cb;
+  }
+
+  // Backend-driven awaiting-input signal.  Fires when the fish-agent detects
+  // the child process is idle and blocked on terminal input (3 s output
+  // silence + process in S state).  Fires with `false` once output resumes.
+  onAwaitingInput(cb: (awaiting: boolean) => void): void {
+    this.awaitingInputCb = cb;
   }
 
   start(cols: number, rows: number): void {
@@ -365,6 +374,10 @@ export class FishWebSocketDriver implements TerminalDriver {
       this.sessionId = ctrl.id;
       if (this.sessionIdCb) {
         this.sessionIdCb(ctrl.id);
+      }
+    } else if (ctrl.type === 'awaiting_input') {
+      if (this.awaitingInputCb) {
+        this.awaitingInputCb(ctrl.state ?? false);
       }
     }
     // 'shells' / 'forked' ignored in v1.
