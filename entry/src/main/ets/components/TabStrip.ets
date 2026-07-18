@@ -353,10 +353,10 @@ export struct TabStrip {
     .backgroundColor(tab.id === this.activeId
       ? (this.uiTheme.accentGradient ? this.uiTheme.bgElevated : this.themeBg)
       : (this.hoverTabId === tab.id ? this.uiTheme.pressOverlay : Color.Transparent))
-    // Active chip: borderStrong outline (both schemes — brief-mandated) plus
-    // accent glow; glowAccent is fully transparent in refined, so the shadow
-    // is visually neutral there.
-    .border(tab.id === this.activeId
+    // Active chip outline: futuristic only (part of the floating capsule look).
+    // Refined keeps the original seamless merge with the terminal background —
+    // no ring. The accent glow shadow below stays fully transparent in refined.
+    .border(tab.id === this.activeId && this.uiTheme.accentGradient
       ? { width: 1, color: this.uiTheme.borderStrong }
       : { width: 0, color: Color.Transparent })
     // The dragged chip follows the finger via a residual X translate; the other
@@ -527,37 +527,37 @@ export struct TabStrip {
 
   // Thin-line "sliders" icon, monochrome to match the system window-control
   // buttons (minimize / maximize / close) it sits beside: hollow knobs, no
-  // fill, no accent color. Unified icon spec (Task 8): 18×18 viewport, 1.8
+  // fill, no accent color. Unified icon spec (Task 8): 14×14 viewport, 1.6
   // stroke, textDim → textPrimary on hover.
   @Builder
   private settingsIcon() {
-    Column({ space: 6 }) {
+    Column({ space: 5 }) {
       // top slider: knob on the right
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(18).height(1.8).borderRadius(0.9)
+        Row().width(14).height(1.6).borderRadius(0.8)
           .backgroundColor(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
-        Circle({ width: 5.5, height: 5.5 })
+        Circle({ width: 4.5, height: 4.5 })
           .fill(this.uiTheme.bgSurface)
           .stroke(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
-          .strokeWidth(1.8)
-          .margin({ left: 9 })
+          .strokeWidth(1.6)
+          .margin({ left: 7 })
       }
-      .width(18).height(5.5)
+      .width(14).height(4.5)
 
       // bottom slider: knob on the left
       Stack({ alignContent: Alignment.Start }) {
-        Row().width(18).height(1.8).borderRadius(0.9)
+        Row().width(14).height(1.6).borderRadius(0.8)
           .backgroundColor(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
-        Circle({ width: 5.5, height: 5.5 })
+        Circle({ width: 4.5, height: 4.5 })
           .fill(this.uiTheme.bgSurface)
           .stroke(this.hoverSettings ? this.uiTheme.textPrimary : this.uiTheme.textDim)
-          .strokeWidth(1.8)
-          .margin({ left: 3.5 })
+          .strokeWidth(1.6)
+          .margin({ left: 2.5 })
       }
-      .width(18).height(5.5)
+      .width(14).height(4.5)
     }
-    .width(18)
-    .height(18)
+    .width(14)
+    .height(14)
     .justifyContent(FlexAlign.Center)
     .animation({ duration: 120, curve: Curve.EaseOut })
   }
