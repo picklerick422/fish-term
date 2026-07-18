@@ -1,3 +1,4 @@
+import { util } from '@kit.ArkTS';
 import { TerminalController, TerminalSize } from 'libghostty_ohos';
 import { DriverState, DriverStatus, TerminalDriver } from '../transport/TerminalDriver';
 import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
@@ -42,6 +43,13 @@ function extractOscTitle(data: string): string | null {
   return last;
 }
 
+// Decode bounds for the auxiliary string analysis done per output batch.
+// The terminal itself is fed raw bytes — strings are only needed for OSC
+// title extraction and task-pattern detection, so we decode small slices
+// instead of the whole batch (which can be hundreds of KB during replay).
+const TITLE_SCAN_BYTES: number = 65536; // first 64 KB of a batch
+const TASK_SCAN_BYTES: number = 4096;   // last 4 KB of a batch
+
 export class TerminalSession {
   private readonly controller: TerminalController;
   private readonly driver: TerminalDriver;
@@ -50,6 +58,7 @@ export class TerminalSession {
   private cwdCb: ((cwd: string) => void) | null = null;
   private sessionIdCb: ((id: string) => void) | null = null;
   private taskDataCb: ((data: string) => void) | null = null;
+  private replayStateCb: ((replaying: boolean) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -57,29 +66,40 @@ export class TerminalSession {
   private startRetryTimer: number = -1;
   private lastCols: number = 0;
   private lastRows: number = 0;
+  // True while the driver is receiving the server's cached-output replay.
+  // Task detection is muted during replay — historical output must not fire
+  // "task completed / awaiting input" notifications.
+  private replaying: boolean = false;
+  private readonly sliceDecoder: util.TextDecoder =
+    util.TextDecoder.create('utf-8', { fatal: false, ignoreBOM: true });
+  private readonly decodeOpts: util.DecodeToStringOptions = { stream: false };
 
   constructor(controller: TerminalController, driver: TerminalDriver) {
     this.controller = controller;
     this.driver = driver;
-    this.driver.onOutput((data: string): void => {
-      if (!this.stopped) {
-        const title = extractOscTitle(data);
-        if (title !== null) {
-          console.info(`[TerminalSession] OSC title detected: "${title}"`);
-          if (this.titleCb) {
-            this.titleCb(title);
-          } else {
-            console.warn('[TerminalSession] titleCb is null, callback not registered');
-          }
+    this.driver.onOutputBytes((data: ArrayBuffer): void => {
+      if (this.stopped) {
+        return;
+      }
+      // Feed raw bytes straight to the terminal — no string conversion on the
+      // UI thread.  The VT parser is a streaming state machine, so partial
+      // escape sequences / UTF-8 characters at batch boundaries resume safely.
+      this.controller.feedBytes(data);
+      // OSC title: decode only the batch prefix (titles appear early).
+      const title: string | null =
+        extractOscTitle(this.decodeSlice(data, 0, TITLE_SCAN_BYTES));
+      if (title !== null) {
+        console.info(`[TerminalSession] OSC title detected: "${title}"`);
+        if (this.titleCb) {
+          this.titleCb(title);
+        } else {
+          console.warn('[TerminalSession] titleCb is null, callback not registered');
         }
-        // Feed in chunks when the data is large (e.g. server ring-buffer
-        // replay on reconnect).  Processing megabytes synchronously on the
-        // main thread blocks rendering and triggers the system ANR watchdog.
-        this.feedChunked(data);
-        // Forward raw output to task detector for notification analysis
-        if (this.taskDataCb) {
-          this.taskDataCb(data);
-        }
+      }
+      // Task detection: recent output only, and never during replay.
+      if (this.taskDataCb && !this.replaying) {
+        const tailStart: number = Math.max(0, data.byteLength - TASK_SCAN_BYTES);
+        this.taskDataCb(this.decodeSlice(data, tailStart, data.byteLength - tailStart));
       }
     });
     this.driver.onStatus((s: DriverStatus): void => {
@@ -108,6 +128,12 @@ export class TerminalSession {
           this.sessionIdCb(id);
         }
       });
+      (this.driver as FishWebSocketDriver).onReplayState((replaying: boolean): void => {
+        this.replaying = replaying;
+        if (this.replayStateCb) {
+          this.replayStateCb(replaying);
+        }
+      });
     }
   }
 
@@ -133,10 +159,21 @@ export class TerminalSession {
     this.taskDataCb = cb;
   }
 
-  // Max bytes to feed to the terminal emulator in one synchronous call.
-  // Beyond this threshold data is split into chunks with setTimeout yields
-  // between them so the main thread stays responsive (avoids THREAD_BLOCK_6S).
-  private static readonly FEED_CHUNK_BYTES: number = 262144; // 256 KB
+  // Fires when the driver starts/finishes receiving the server's cached-output
+  // replay after a reconnect. The page uses this to drive the loading overlay.
+  onReplayState(cb: (replaying: boolean) => void): void {
+    this.replayStateCb = cb;
+  }
+
+  // Decode a [start, start+len) window of a batch for auxiliary analysis.
+  // One-shot (non-streaming) decode: partial characters at slice edges become
+  // U+FFFD, which is harmless for title/pattern matching.
+  private decodeSlice(data: ArrayBuffer, start: number, len: number): string {
+    if (len <= 0) {
+      return '';
+    }
+    return this.sliceDecoder.decodeToString(new Uint8Array(data, start, len), this.decodeOpts);
+  }
 
   onForeground(): void {
     if (this.driver instanceof FishWebSocketDriver) {
@@ -191,31 +228,6 @@ export class TerminalSession {
     this.controller.setSizeListener(null);
     this.started = false;
     this.driver.stop();
-  }
-
-  // Feed terminal output in chunks when it exceeds FEED_CHUNK_BYTES.
-  // The terminal parser is a state machine — partial escape sequences at
-  // chunk boundaries are safely resumed by the next chunk.  Yielding via
-  // setTimeout(0) keeps the main thread responsive during bulk data
-  // (e.g. server ring-buffer replay on reconnect).
-  private feedChunked(data: string): void {
-    if (data.length <= TerminalSession.FEED_CHUNK_BYTES) {
-      this.controller.feed(data);
-      return;
-    }
-    let offset: number = 0;
-    const feedNext = (): void => {
-      if (this.stopped || offset >= data.length) {
-        return;
-      }
-      const end: number = Math.min(offset + TerminalSession.FEED_CHUNK_BYTES, data.length);
-      this.controller.feed(data.substring(offset, end));
-      offset = end;
-      if (offset < data.length) {
-        setTimeout(feedNext, 0);
-      }
-    };
-    feedNext();
   }
 
   private startWhenSized(): void {

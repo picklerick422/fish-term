@@ -218,11 +218,11 @@ export struct SettingsPanel {
   @Builder
   private buildTabButton(label: string, index: number) {
     Text(label)
-      .fontSize(13)
+      .fontSize(12)
       .fontFamily(this.uiFontFamily)
       .fontColor(this.tab === index ? this.uiTheme.textOnAccent : this.uiTheme.textDim)
       .fontWeight(this.tab === index ? FontWeight.Medium : FontWeight.Normal)
-      .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
       // All three pill states expressed as gradient stops so a single
       // linearGradient replaces backgroundColor: active uses the degenerate
       // accent gradient (solid under refined), hover/base stay as before.

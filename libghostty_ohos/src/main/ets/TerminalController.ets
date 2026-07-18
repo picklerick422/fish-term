@@ -19,6 +19,7 @@ import {
 interface TerminalNativeBridge {
   writeInput: (data: string) => void;
   feedOutput: (data: string) => void;
+  feedOutputBytes: (data: ArrayBuffer) => void;
   drainPendingInput: () => string;
   setInputCallback: (callback: ((data: string) => void) | null) => void;
   drainPendingLinkActivation: () => string;
@@ -266,6 +267,18 @@ export class TerminalController {
       return;
     }
     this.native.feedOutput(data);
+  }
+
+  // Byte-oriented feed for bulk output (server ring-buffer replay). Raw frame
+  // bytes go straight to the native VT parser — no decodeToString / UTF-16
+  // round-trip on the UI thread. The parser is a streaming state machine, so
+  // partial escape sequences and UTF-8 characters at chunk boundaries resume
+  // safely on the next call.
+  feedBytes(data: ArrayBuffer): void {
+    if (!this.native || data.byteLength === 0) {
+      return;
+    }
+    this.native.feedOutputBytes(data);
   }
 
   resize(cols: number, rows: number): void {

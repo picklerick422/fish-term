@@ -1,4 +1,5 @@
 import { curves } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 import { DEFAULT_UI_FONT } from '../theme/FontScale';
 
@@ -21,6 +22,7 @@ export struct GuideOverlay {
   @State private guideBgOpacity: number = 0;
   // Hover state for the guide card buttons.
   @State private guideHover: string = '';
+  @State private hoverGitHubLink: boolean = false;
   @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
   // Drives the native horizontal slide between guide pages.
   private guideTabs: TabsController = new TabsController();
@@ -31,6 +33,16 @@ export struct GuideOverlay {
     animateTo({ duration: 280, curve: this.guideAnimCurve }, () => {
       this.guideBgOpacity = 1;
     });
+  }
+
+  // Open the fish-agent GitHub repo in the system browser.
+  private openGitHub(): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      ctx.openLink('https://github.com/picklerick422/fish-agent');
+    } catch (_e) {
+      // fail silently
+    }
   }
 
   // Fade the mask out, then hand control back to the page (it tears the
@@ -59,11 +71,11 @@ export struct GuideOverlay {
       case 0:
         return 'fish-term 是一个连接到 fish-agent 的 HarmonyOS 终端。\n只需几步就能在手机/平板上获得完整的远程终端体验。';
       case 1:
-        return 'fish-agent 基于 wand-agent 修改，是一个 Go 编写的 WebSocket PTY 代理。\n\n安装方式一：下载预编译二进制（Linux）\n\n  # ARM64（树莓派/ARM 服务器）\n  curl -LO https://github.com/<repo>/releases/latest/download/fish-agent-linux-arm64\n\n  # x86_64（普通 PC/服务器）\n  curl -LO https://github.com/<repo>/releases/latest/download/fish-agent-linux-amd64\n\n  chmod +x fish-agent-linux-*\n\n安装方式二：从源码编译\n\n  git clone <repo-url> && cd fish-agent\n  go build -buildvcs=false -o fish-agent .\n\n编译完成后将 fish-agent 复制到任意目录即可运行。';
+        return 'fish-agent 是一个 Go 编写的 WebSocket PTY 代理，fork 自 ystyle/fish-agent，增加了会话持久化、环形缓冲区屏幕恢复、CWD 轮询和会话 fork 功能。运行在 openEuler 容器中。\n\n安装方式一：下载预编译二进制\n\n  # ARM64（openEuler 容器）\n  curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-arm64\n  mv fish-agent-linux-arm64 fish-agent\n  chmod +x fish-agent\n\n  # x86_64\n  curl -LO https://github.com/picklerick422/fish-agent/releases/latest/download/fish-agent-linux-amd64\n  mv fish-agent-linux-amd64 fish-agent\n  chmod +x fish-agent\n\n安装方式二：从源码编译（需要 Go）\n\n  git clone https://github.com/picklerick422/fish-agent.git\n  cd fish-agent\n  go build -buildvcs=false -ldflags="-s -w" -o fish-agent .';
       case 2:
-        return '启动 fish-agent：\n\n  ./fish-agent --host 0.0.0.0 --port 8765 --token <你的token>\n\n参数说明：\n  --host  监听地址，默认 0.0.0.0（所有网卡）\n  --port  监听端口，默认 8765\n  --token  鉴权令牌，客户端连接时需携带\n\n启动后会输出 host、port、token 三项信息。\n用 ip addr 查看服务器 IP，确保设备和服务器在同一网络可达。\n如开启防火墙，请放行对应端口。';
+        return '启动 fish-agent：\n\n  ./fish-agent --token <你的token>\n\n命令行参数（均有默认值）：\n  --host    监听地址，默认 0.0.0.0\n  --port    监听端口，默认 8765\n  --token   鉴权令牌，默认 harmonyterm\n  --max-sessions  最大并发会话数，默认 10\n\n容器 IP 通常是 172.16.100.2，用 ip addr show eth0 确认。\n\n如需开机自启，可使用 zinit 注册为服务（详见 fish-agent README）。';
       case 3:
-        return '回到 fish-term，在首页填入 host / 端口 / token，\n如需加密传输可打开 TLS(wss)，点击「连接」即可开启第一个终端标签页。';
+        return '回到 fish-term，在首页填入容器的 host（如 172.16.100.2）、端口（默认 8765）和 token，点击「连接」即可开启第一个终端标签页。\n\nfish-agent 支持会话持久化——断开连接后 PTY 进程不会终止，重连时自动恢复终端画面（基于 1 MiB 环形缓冲区回放）。';
       default:
         return '常用操作：\n\n  · 右键终端：复制 / 粘贴 / 查找 / 缓冲区\n  · Ctrl+Shift+F：查找\n  · Ctrl+Shift+T 新建标签，Ctrl+Shift+W 关闭，Ctrl+Tab 切换\n  · 标签可拖拽排序；设置里可换主题、字号、光标样式';
     }
@@ -201,6 +213,7 @@ export struct GuideOverlay {
           .fontColor(this.uiTheme.textPrimary)
           .width('100%')
           .margin({ bottom: 10 })
+          .copyOption(CopyOptions.LocalDevice)
 
         Text(this.guideDesc(step))
           .fontSize(14)
@@ -208,6 +221,7 @@ export struct GuideOverlay {
           .fontColor(this.uiTheme.textDim)
           .lineHeight(22)
           .width('100%')
+          .copyOption(CopyOptions.LocalDevice)
       }
       .width('100%')
       .padding({ top: 0 })
@@ -242,7 +256,7 @@ export struct GuideOverlay {
           TabContent() { this.guideBody(4) }
         }
         .barHeight(0)
-        .scrollable(true)
+        .scrollable(false) // Disable swipe — only buttons navigate; allows text selection on desktop
         .animationDuration(300)
         .width('100%')
         .height(320)
@@ -255,8 +269,23 @@ export struct GuideOverlay {
               .fill(Number(s) === this.guideStep ? this.uiTheme.accent : this.uiTheme.border)
           }, (s: string) => s)
         }
-        .margin({ top: 20, bottom: 18 })
+        .margin({ top: 20, bottom: 12 })
         .justifyContent(FlexAlign.Center)
+
+        // GitHub link — always visible regardless of step
+        Row() {
+          Text('详情请见 GitHub 页面 →')
+            .fontSize(12)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(this.hoverGitHubLink ? this.uiTheme.accentHover : this.uiTheme.accent)
+            .decoration({ type: TextDecorationType.Underline })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ bottom: 14 })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverGitHubLink = h; })
+        .onClick(() => { this.openGitHub(); })
 
         Row({ space: 10 }) {
           Text('跳过')

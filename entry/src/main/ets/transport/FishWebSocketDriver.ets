@@ -2,11 +2,30 @@ import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { DriverState, DriverStatus, TerminalDriver, FishConnectConfig } from './TerminalDriver';
-import { Utf8Framer } from './Utf8Framer';
 import { buildFishUrl } from './FishUrl';
 import { Backoff } from './Backoff';
 
 const HEARTBEAT_MS: number = 15000;
+
+// --- Output batching ---------------------------------------------------------
+// The server replays its ring-buffer snapshot as thousands of tiny WebSocket
+// frames (measured: ~14.6k frames, median 114 B, for a 2.2 MB snapshot).
+// Running the full per-frame pipeline (decode, regex scans, N-API crossing,
+// vt_write) for each of those frames on the UI thread is what made cache
+// restore take seconds.  Instead, binary frames are accumulated here and
+// flushed as one large ArrayBuffer: immediately once FLUSH_THRESHOLD_BYTES
+// have piled up, otherwise on a zero-delay trailing timer so interactive
+// echo latency stays within a few milliseconds.
+const FLUSH_THRESHOLD_BYTES: number = 262144; // 256 KB
+
+// --- Replay (cache restore) tracking -----------------------------------------
+// A connection opened with a known session_id attaches to an existing server
+// session, which then replays its output buffer.  There is no explicit
+// "replay done" protocol message (the server's resize control frame precedes
+// the snapshot), so completion is detected by a quiet period after the last
+// binary frame, with a hard cap as a fallback.
+const REPLAY_QUIET_MS: number = 500;
+const REPLAY_GUARD_MS: number = 15000;
 
 interface ServerCtrl {
   type: string;
@@ -18,14 +37,14 @@ interface ServerCtrl {
 export class FishWebSocketDriver implements TerminalDriver {
   private readonly config: FishConnectConfig;
   private ws: webSocket.WebSocket | null = null;
-  private readonly framer: Utf8Framer = new Utf8Framer();
   private readonly encoder: util.TextEncoder = new util.TextEncoder();
   private readonly backoff: Backoff = new Backoff(1000, 30000);
 
-  private outputCb: ((data: string) => void) | null = null;
+  private outputBytesCb: ((data: ArrayBuffer) => void) | null = null;
   private statusCb: ((s: DriverStatus) => void) | null = null;
   private cwdCb: ((dir: string) => void) | null = null;
   private sessionIdCb: ((id: string) => void) | null = null;
+  private replayStateCb: ((replaying: boolean) => void) | null = null;
 
   private cols: number = 80;
   private rows: number = 24;
@@ -35,12 +54,23 @@ export class FishWebSocketDriver implements TerminalDriver {
   private heartbeatTimer: number = -1;
   private sessionId: string = '';
 
+  // Pending binary output not yet handed to the session (see batching note).
+  private pendingFrames: ArrayBuffer[] = [];
+  private pendingBytes: number = 0;
+  private flushTimer: number = -1;
+
+  // Replay state: true between a reconnect's `open` and the end of the
+  // server's snapshot burst.
+  private replaying: boolean = false;
+  private replayQuietTimer: number = -1;
+  private replayGuardTimer: number = -1;
+
   constructor(config: FishConnectConfig) {
     this.config = config;
   }
 
-  onOutput(cb: (data: string) => void): void {
-    this.outputCb = cb;
+  onOutputBytes(cb: (data: ArrayBuffer) => void): void {
+    this.outputBytesCb = cb;
   }
 
   onStatus(cb: (s: DriverStatus) => void): void {
@@ -64,6 +94,13 @@ export class FishWebSocketDriver implements TerminalDriver {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  // Fires with `true` when a reconnect begins receiving the server's cached
+  // output replay, and with `false` once the replay burst has ended.  Used to
+  // drive the full-screen loading overlay and to mute replay-time analysis.
+  onReplayState(cb: (replaying: boolean) => void): void {
+    this.replayStateCb = cb;
   }
 
   start(cols: number, rows: number): void {
@@ -128,13 +165,14 @@ export class FishWebSocketDriver implements TerminalDriver {
         console.error('fish-term close failed: ' + JSON.stringify(err));
       });
     }
-    this.framer.reset();
+    this.endReplay();
+    this.discardPendingFrames();
     this.emit(DriverState.Closed);
   }
 
   private connect(): void {
     this.clearReconnect();
-    this.framer.reset();
+    this.discardPendingFrames();
     const url: string = buildFishUrl(this.config, this.cols, this.rows);
     const ws: webSocket.WebSocket = webSocket.createWebSocket();
     this.ws = ws;
@@ -145,6 +183,11 @@ export class FishWebSocketDriver implements TerminalDriver {
       this.backoff.reset();
       this.emit(DriverState.Connected);
       this.startHeartbeat();
+      // Attaching to a known session makes the server replay its output
+      // buffer; announce the replay so the page can show the loading overlay.
+      if (this.expectsReplay()) {
+        this.beginReplay();
+      }
       // Send initial resize to trigger server-side screen redraw after reconnect.
       this.sendText(`{"type":"resize","cols":${this.cols},"rows":${this.rows}}`);
     });
@@ -156,6 +199,8 @@ export class FishWebSocketDriver implements TerminalDriver {
     ws.on('close', (_err: BusinessError, _info: webSocket.CloseResult) => {
       this.connected = false;
       this.stopHeartbeat();
+      this.endReplay();
+      this.discardPendingFrames();
       if (this.manualStop) {
         this.emit(DriverState.Closed);
         return;
@@ -165,6 +210,7 @@ export class FishWebSocketDriver implements TerminalDriver {
     });
 
     ws.on('error', (err: BusinessError) => {
+      this.endReplay();
       this.emit(DriverState.Error, 'connection error (' + err.code + ')');
     });
 
@@ -183,9 +229,120 @@ export class FishWebSocketDriver implements TerminalDriver {
       this.handleCtrl(value);
       return;
     }
-    const text: string = this.framer.push(new Uint8Array(value));
-    if (text.length > 0 && this.outputCb) {
-      this.outputCb(text);
+    if (value.byteLength === 0) {
+      return;
+    }
+    // Binary output frame — batch it (see batching note at the top).
+    if (this.replaying) {
+      this.armReplayQuietTimer();
+    }
+    this.pendingFrames.push(value);
+    this.pendingBytes += value.byteLength;
+    if (this.pendingBytes >= FLUSH_THRESHOLD_BYTES) {
+      this.flushPendingFrames();
+    } else if (this.flushTimer < 0) {
+      this.flushTimer = setTimeout((): void => {
+        this.flushTimer = -1;
+        this.flushPendingFrames();
+      }, 0) as number;
+    }
+  }
+
+  // Merge accumulated frames into one buffer and hand it to the session.
+  // Synchronous so a threshold flush keeps big bursts inside one task.
+  private flushPendingFrames(): void {
+    if (this.flushTimer >= 0) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = -1;
+    }
+    if (this.pendingFrames.length === 0) {
+      return;
+    }
+    let merged: ArrayBuffer;
+    if (this.pendingFrames.length === 1) {
+      merged = this.pendingFrames[0];
+    } else {
+      // NOTE: assign new ArrayBuffer(...) directly — Uint8Array.buffer is
+      // ArrayBufferLike, which ArkTS rejects under arkts-no-structural-typing.
+      merged = new ArrayBuffer(this.pendingBytes);
+      const out: Uint8Array = new Uint8Array(merged);
+      let offset: number = 0;
+      for (let i: number = 0; i < this.pendingFrames.length; i++) {
+        out.set(new Uint8Array(this.pendingFrames[i]), offset);
+        offset += this.pendingFrames[i].byteLength;
+      }
+    }
+    this.pendingFrames = [];
+    this.pendingBytes = 0;
+    if (this.outputBytesCb) {
+      this.outputBytesCb(merged);
+    }
+  }
+
+  private discardPendingFrames(): void {
+    if (this.flushTimer >= 0) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = -1;
+    }
+    this.pendingFrames = [];
+    this.pendingBytes = 0;
+  }
+
+  // --- replay (cache restore) tracking ---------------------------------------
+
+  private expectsReplay(): boolean {
+    const configured: string = this.config.sessionId ?? '';
+    return configured.length > 0 || this.sessionId.length > 0;
+  }
+
+  private beginReplay(): void {
+    this.clearReplayTimers();
+    this.replaying = true;
+    if (this.replayStateCb) {
+      this.replayStateCb(true);
+    }
+    // Arm the quiet timer up front too: a replay with an (almost) empty buffer
+    // produces few or no binary frames, and must not wait for the guard.
+    this.armReplayQuietTimer();
+    // Fallback: never leave the loading overlay up if the replay stalls.
+    this.replayGuardTimer = setTimeout((): void => {
+      this.replayGuardTimer = -1;
+      this.endReplay();
+    }, REPLAY_GUARD_MS) as number;
+  }
+
+  private armReplayQuietTimer(): void {
+    if (this.replayQuietTimer >= 0) {
+      clearTimeout(this.replayQuietTimer);
+    }
+    this.replayQuietTimer = setTimeout((): void => {
+      this.replayQuietTimer = -1;
+      this.endReplay();
+    }, REPLAY_QUIET_MS) as number;
+  }
+
+  private endReplay(): void {
+    if (!this.replaying) {
+      return;
+    }
+    this.clearReplayTimers();
+    this.replaying = false;
+    // Deliver any buffered tail before announcing completion so the screen is
+    // fully restored when the overlay hides.
+    this.flushPendingFrames();
+    if (this.replayStateCb) {
+      this.replayStateCb(false);
+    }
+  }
+
+  private clearReplayTimers(): void {
+    if (this.replayQuietTimer >= 0) {
+      clearTimeout(this.replayQuietTimer);
+      this.replayQuietTimer = -1;
+    }
+    if (this.replayGuardTimer >= 0) {
+      clearTimeout(this.replayGuardTimer);
+      this.replayGuardTimer = -1;
     }
   }
 
@@ -198,6 +355,7 @@ export class FishWebSocketDriver implements TerminalDriver {
       return;
     }
     if (ctrl.type === 'error') {
+      this.endReplay();  // e.g. stale session_id — no snapshot will follow
       this.emit(DriverState.Error, ctrl.error ?? 'server error');
     } else if (ctrl.type === 'cwd') {
       if (this.cwdCb && ctrl.dir) {

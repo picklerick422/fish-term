@@ -1562,6 +1562,14 @@ public:
         }
     }
 
+    // Byte-oriented feed used by the WebSocket replay path — hands the raw
+    // frame bytes straight to the VT parser without a UTF-16 round-trip.
+    void FeedOutputBytes(const char* data, size_t len) {
+        if (m_terminal && data && len > 0) {
+            m_terminal->feedOutput(data, len);
+        }
+    }
+
     std::string DrainPendingInput() {
         std::lock_guard<std::mutex> lock(m_inputMutex);
         std::string drained;
@@ -3314,6 +3322,32 @@ static napi_value FeedOutput(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// Byte-oriented feed for bulk output (server ring-buffer replay). The WebSocket
+// driver hands received frames over without UTF-16 string conversion, so the
+// data crosses JS→native with zero copies/transcoding. ghostty's vt_write is a
+// streaming state machine, so partial escape sequences / UTF-8 characters at
+// frame boundaries resume safely on the next call.
+static napi_value FeedOutputBytes(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, args);
+    if (!host || argc < 1) {
+        return nullptr;
+    }
+
+    bool isArrayBuffer = false;
+    if (napi_is_arraybuffer(env, args[0], &isArrayBuffer) != napi_ok || !isArrayBuffer) {
+        return nullptr;
+    }
+    void* data = nullptr;
+    size_t len = 0;
+    if (napi_get_arraybuffer_info(env, args[0], &data, &len) != napi_ok || !data || len == 0) {
+        return nullptr;
+    }
+    host->FeedOutputBytes(static_cast<const char*>(data), len);
+    return nullptr;
+}
+
 static napi_value DrainPendingInput(napi_env env, napi_callback_info info) {
     size_t argc = 0;
     TerminalHost* host = GetHostFromCallback(env, info, &argc, nullptr);
@@ -3914,6 +3948,7 @@ static napi_value Init(napi_env env, napi_value exports) {
     napi_property_descriptor desc[] = {
         {"writeInput", nullptr, WriteInput, nullptr, nullptr, nullptr, napi_default, host},
         {"feedOutput", nullptr, FeedOutput, nullptr, nullptr, nullptr, napi_default, host},
+        {"feedOutputBytes", nullptr, FeedOutputBytes, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingInput", nullptr, DrainPendingInput, nullptr, nullptr, nullptr, napi_default, host},
         {"setInputCallback", nullptr, SetInputCallback, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingLinkActivation", nullptr, DrainPendingLinkActivation, nullptr, nullptr, nullptr, napi_default, host},

@@ -26,8 +26,10 @@ entry/             ← app: pages, sessions, transport drivers, connection persi
 
 ```
 Terminal input → driver.write(data) → network
-Network output → driver.onOutput(data) → controller.feed(data) → renderer
+Network output → driver.onOutputBytes(ArrayBuffer) → controller.feedBytes(ArrayBuffer) → renderer
 ```
+
+Binary output is batched in the driver (flush at 256 KB or next tick) and fed as raw bytes — no UTF-16 string round-trip on the UI thread. This is what makes server ring-buffer replay fast (measured: ~14.6k tiny WS frames per 2.2 MB snapshot). String-based `controller.feed(data)` remains for local/PTY-style drivers.
 
 The TerminalController is persistent (one per tab, never unmounted). The driver (WebSocket/PTY/SSH) connects and disconnects independently — the surface stays alive. This avoids the crash that occurred when disconnect destroyed the rendering surface.
 
@@ -41,7 +43,9 @@ Two independent channels must both move to the active tab:
 
 ### Transport abstraction
 
-`TerminalDriver` interface in `entry/src/main/ets/transport/TerminalDriver.ets` defines `start/write/resize/stop/onOutput/onStatus`. The only active implementation is `FishWebSocketDriver` (connect to a fish-agent backend via WebSocket). SSH driver stubs exist but are `OFF` by default.
+`TerminalDriver` interface in `entry/src/main/ets/transport/TerminalDriver.ets` defines `start/write/resize/stop/onOutputBytes/onStatus`. The only active implementation is `FishWebSocketDriver` (connect to a fish-agent backend via WebSocket). SSH driver stubs exist but are `OFF` by default.
+
+`FishWebSocketDriver` also tracks **replay state**: a connection opened with a known `session_id` attaches to a live server session, which replays its cached output (there is no "replay done" protocol frame — completion is detected by a 500 ms output-quiet window with a 15 s guard). `onReplayState` drives the full-screen `LoadingScreen` overlay in `Index.ets` and mutes task-pattern detection during replay.
 
 ### Color system
 

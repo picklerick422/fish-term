@@ -21,6 +21,7 @@ export struct ConnectionForm {
   @Prop showNewConnection: boolean = false;
   onConnect: () => void = () => {};
   onCancel: () => void = () => {};
+  onOpenGuide: () => void = () => {};
 
   @State private focusedField: string = '';
   @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
@@ -189,6 +190,21 @@ export struct ConnectionForm {
           })
           .borderRadius(RADIUS_CARD)
           .onClick(() => { this.onConnect(); })
+
+        // Guide entry — subtle link below the connect button so first-time
+        // users can discover the onboarding guide from the connection screen.
+        Row() {
+          Text('查看使用指南 ›')
+            .fontSize(13)
+            .fontFamily(this.uiFontFamily)
+            .fontColor(this.uiTheme.textDim)
+        }
+        .width('100%')
+        .height(32)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(RADIUS_CONTROL)
+        .focusable(false)
+        .onClick(() => { this.onOpenGuide(); })
       }
       .width('100%')
       .constraintSize({ maxWidth: 420 })

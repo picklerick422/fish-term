@@ -95,6 +95,10 @@ struct Index {
   @State private characterSpacing: number = DEFAULT_CHARACTER_SPACING;
   @State private restoreTabsEnabled: boolean = true;
   @State private restoreChecked: boolean = false;
+  // Full-screen loading overlay while the active tab is receiving the server's
+  // cached-output replay after a reconnect (per-tab flags live in replayTabs).
+  @State private replayLoading: boolean = false;
+  private replayTabs: Set<number> = new Set<number>();
   // Bumped on Ctrl+Shift+F to open the find overlay on the active terminal.
   @State private searchSignal: number = 0;
   // First-run onboarding guide.
@@ -762,6 +766,17 @@ struct Index {
       rt.sessionId = id;
       this.saveSession();
     });
+    // Replay (cached-output restore) drives the full-screen loading overlay.
+    session.onReplayState((replaying: boolean): void => {
+      if (replaying) {
+        this.replayTabs.add(id);
+      } else {
+        this.replayTabs.delete(id);
+      }
+      if (this.activeId === id) {
+        this.replayLoading = replaying;
+      }
+    });
     // Wire task detector to session output for notification analysis
     const tabId: number = id;
     const tabTitleRef: string = tabTitle;
@@ -793,6 +808,8 @@ struct Index {
       return;
     }
     this.activeId = id;
+    // Reflect the target tab's replay state on the loading overlay.
+    this.replayLoading = this.replayTabs.has(id);
     // Dismiss notification for the newly active tab
     this.notifyService.dismiss(id);
     this.focusActiveTerminal();
@@ -880,6 +897,7 @@ struct Index {
     // Stop the driver immediately so no more output/input flows.
     rt.session?.stop();
     this.notifyService.dismiss(id);
+    this.replayTabs.delete(id);
 
     const remaining: TabMeta[] = this.tabs.filter((t: TabMeta) => t.id !== id);
 
@@ -890,6 +908,7 @@ struct Index {
       this.activeId = remaining[remaining.length - 1].id;
       this.focusActiveTerminal();
     }
+    this.replayLoading = this.replayTabs.has(this.activeId);
 
     // Defer the actual removal (surface unmount + native teardown) to the next
     // tick so the focus/visibility change commits before the XComponent is
@@ -1017,35 +1036,44 @@ struct Index {
     }
   }
 
+  // Full-screen loading page: app logo + spinner + caption on an opaque
+  // background. Shown at startup (while saved tabs are read & restored) and as
+  // an overlay whenever the active tab is replaying the server's cached output
+  // after a reconnect.
+  @Builder
+  LoadingScreen() {
+    Column() {
+      Column({ space: 16 }) {
+        Image($r('app.media.app_logo'))
+          .width(72)
+          .height(72)
+          .borderRadius(16)
+
+        LoadingProgress()
+          .width(32)
+          .height(32)
+          .color(this.uiTheme.accent)
+
+        Text('连接中...')
+          .fontSize(15)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textDim)
+      }
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.uiTheme.bgBase)
+  }
+
   build() {
     Stack() {
       if (!this.restoreChecked) {
         // Startup loading — full-screen centered indicator shown while reading
         // saved sessions from preferences and restoring connections.  Stays
         // visible until ALL tabs are created, not just the first one.
-        Column() {
-          Column({ space: 16 }) {
-            Image($r('app.media.app_logo'))
-              .width(72)
-              .height(72)
-              .borderRadius(16)
-
-            LoadingProgress()
-              .width(32)
-              .height(32)
-              .color(this.uiTheme.accent)
-
-            Text('连接中...')
-              .fontSize(15)
-              .fontFamily(this.uiFontFamily)
-              .fontColor(this.uiTheme.textDim)
-          }
-          .alignItems(HorizontalAlign.Center)
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.uiTheme.bgBase)
+        this.LoadingScreen()
       } else {
         Column() {
           if (this.tabs.length > 0) {
@@ -1143,6 +1171,14 @@ struct Index {
         })
       }
 
+      // Reconnect replay overlay — the active tab is re-reading the server's
+      // cached output. Rendered as a sibling ABOVE the terminal Column (not an
+      // if/else branch) so the XComponent surfaces stay mounted underneath;
+      // unmounting them here would tear down the native renderers (crash).
+      if (this.restoreChecked && this.replayLoading) {
+        this.LoadingScreen()
+      }
+
       // Invisible anchor for the crash log sheet — third bindSheet because
       // a component can only host one bindSheet. Animation identical to settings.
       Text('')
@@ -1185,7 +1221,8 @@ struct Index {
           uiFontFamily: this.uiFontFamily,
           showNewConnection: this.showNewConnection,
           onConnect: (): void => { this.connectFromForm(); },
-          onCancel: (): void => { this.showNewConnection = false; this.focusActiveTerminal(); }
+          onCancel: (): void => { this.showNewConnection = false; this.focusActiveTerminal(); },
+          onOpenGuide: (): void => { this.openGuide(); }
         })
       }
 
