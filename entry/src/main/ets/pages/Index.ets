@@ -24,7 +24,7 @@ import { GuideOverlay } from '../components/GuideOverlay';
 import { CrashHandler } from '../crash/CrashHandler';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
-import { TaskEvent } from '../notifications/TaskEvent';
+import { TaskEvent, TaskEventType } from '../notifications/TaskEvent';
 import { TaskDetector } from '../notifications/TaskDetector';
 import { NotificationService } from '../notifications/NotificationService';
 import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/ConnectionStore';
