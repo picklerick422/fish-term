@@ -169,10 +169,11 @@ export class TerminalSession {
   // One-shot (non-streaming) decode: partial characters at slice edges become
   // U+FFFD, which is harmless for title/pattern matching.
   private decodeSlice(data: ArrayBuffer, start: number, len: number): string {
-    if (len <= 0) {
+    if (len <= 0 || start >= data.byteLength) {
       return '';
     }
-    return this.sliceDecoder.decodeToString(new Uint8Array(data, start, len), this.decodeOpts);
+    const clamped: number = Math.min(len, data.byteLength - start);
+    return this.sliceDecoder.decodeToString(new Uint8Array(data, start, clamped), this.decodeOpts);
   }
 
   onForeground(): void {
