@@ -1339,23 +1339,69 @@ public:
         int col = 0;
         MapPointToCell(mouseEvent.x, mouseEvent.y, row, col);
 
+        // Always track the last known mouse cell position so axis (wheel) events
+        // can use real coordinates even without a preceding mouse move.
+        m_lastMouseCellCol = col + 1;  // 1-based
+        m_lastMouseCellRow = row + 1;  // 1-based
+
+        // ── Mouse tracking: forward events to the terminal app ──────────
+        // When the alternate-screen application has enabled mouse tracking
+        // (DEC private modes 1000/1002/1003), send mouse escape sequences
+        // so the app can react to clicks, moves, and drags. Without this,
+        // TUIs like opencode never receive mouse position information and
+        // cannot route wheel events to the correct pane.
         switch (mouseEvent.action) {
-            case OH_NATIVEXCOMPONENT_MOUSE_PRESS:
+            case OH_NATIVEXCOMPONENT_MOUSE_PRESS: {
+                m_isMousePressed = true;
+                m_isMouseSelecting = false;
+                m_mouseDragged = false;
+                m_mousePressRow = row;
+                m_mousePressCol = col;
+                m_mouseHadSelectionOnPress = m_terminal->hasSelection();
+                m_mousePressOnSelection = m_terminal->isSelectionAt(row, col);
+
+                int btn = 0;  // 0=left, 1=middle, 2=right
+                if (mouseEvent.button == OH_NATIVEXCOMPONENT_MIDDLE_BUTTON) btn = 1;
+                else if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) btn = 2;
+
+                if (m_terminal->reportMouse(col + 1, row + 1, btn, true)) {
+                    // Event was forwarded to the app — skip local selection logic
+                    // for this press. The app owns mouse handling now.
+                    break;
+                }
+
+                // Mouse tracking not active: local selection logic.
                 if (mouseEvent.button == OH_NATIVEXCOMPONENT_LEFT_BUTTON) {
-                    m_isMousePressed = true;
-                    m_isMouseSelecting = false;
-                    m_mouseDragged = false;
-                    m_mousePressRow = row;
-                    m_mousePressCol = col;
-                    m_mouseHadSelectionOnPress = m_terminal->hasSelection();
-                    m_mousePressOnSelection = m_terminal->isSelectionAt(row, col);
                     if (m_mouseHadSelectionOnPress && !m_mousePressOnSelection) {
                         m_terminal->clearSelection();
                     }
                 }
                 break;
+            }
 
-            case OH_NATIVEXCOMPONENT_MOUSE_MOVE:
+            case OH_NATIVEXCOMPONENT_MOUSE_MOVE: {
+                // Forward move to app when mouse tracking is active and the app
+                // wants move events (mode 1002 with button held, or mode 1003 for
+                // all moves). The terminal's reportMouse will silently drop moves
+                // that aren't applicable to the current tracking mode.
+                if (m_isMousePressed) {
+                    int btn = 0;
+                    // Report as move-with-button: embed button in the "move" prefix
+                    // (32 = move with button 0, 33 = move with button 1, etc.)
+                    if (mouseEvent.button == OH_NATIVEXCOMPONENT_MIDDLE_BUTTON) btn = 1;
+                    else if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) btn = 2;
+                    const int moveBtn = 32 + btn;
+                    if (m_terminal->reportMouse(col + 1, row + 1, moveBtn, true)) {
+                        break;
+                    }
+                } else {
+                    // Move without button pressed — only reported in mode 1003.
+                    if (m_terminal->reportMouse(col + 1, row + 1, 35, true)) {
+                        break;
+                    }
+                }
+
+                // Not forwarded: local selection logic.
                 if (m_isMousePressed && !m_isMouseSelecting &&
                     (row != m_mousePressRow || col != m_mousePressCol)) {
                     m_terminal->startSelection(m_mousePressRow, m_mousePressCol);
@@ -1366,11 +1412,24 @@ public:
                     m_terminal->updateSelection(row, col);
                 }
                 break;
+            }
 
-            case OH_NATIVEXCOMPONENT_MOUSE_RELEASE:
+            case OH_NATIVEXCOMPONENT_MOUSE_RELEASE: {
                 if (m_isMouseSelecting) {
                     m_terminal->updateSelection(row, col);
-                } else if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) {
+                }
+
+                // Forward release to app when mouse tracking is active.
+                if (m_terminal->reportMouse(col + 1, row + 1, 3, false)) {
+                    m_isMousePressed = false;
+                    m_isMouseSelecting = false;
+                    m_mouseDragged = false;
+                    m_mouseHadSelectionOnPress = false;
+                    m_mousePressOnSelection = false;
+                    break;
+                }
+
+                if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) {
                     QueueContextMenuRequest(mouseEvent.x, mouseEvent.y);
                 } else if (m_isMousePressed && mouseEvent.button == OH_NATIVEXCOMPONENT_LEFT_BUTTON) {
                     ShowImeLocked(IME_REQUEST_REASON_MOUSE);
@@ -1406,6 +1465,7 @@ public:
                 m_mouseHadSelectionOnPress = false;
                 m_mousePressOnSelection = false;
                 break;
+            }
 
             case OH_NATIVEXCOMPONENT_MOUSE_CANCEL:
                 m_isMousePressed = false;
@@ -1445,13 +1505,31 @@ public:
             return;
         }
 
+        // Resolve the pointer cell position from the axis event itself so that
+        // mouse-wheel sequences carry the real cursor coordinates.  TUIs like
+        // opencode use the coordinates to determine which pane to scroll.
+        int eventCol = m_lastMouseCellCol;
+        int eventRow = m_lastMouseCellRow;
+        {
+            const float x = OH_ArkUI_PointerEvent_GetX(event);
+            const float y = OH_ArkUI_PointerEvent_GetY(event);
+            if (std::isfinite(x) && std::isfinite(y)) {
+                int row = 0, col = 0;
+                MapPointToCell(x, y, row, col);
+                eventCol = col + 1;
+                eventRow = row + 1;
+                m_lastMouseCellCol = eventCol;
+                m_lastMouseCellRow = eventRow;
+            }
+        }
+
         const int32_t sourceType = OH_ArkUI_UIInputEvent_GetSourceType(event);
         const int32_t toolType = OH_ArkUI_UIInputEvent_GetToolType(event);
         if (sourceType == UI_INPUT_EVENT_SOURCE_TYPE_MOUSE ||
             toolType == UI_INPUT_EVENT_TOOL_TYPE_MOUSE) {
             constexpr double kWheelStepDegrees = 15.0;
             const int scrollLines = std::max(1, static_cast<int>(std::lround(std::abs(vertical) / kWheelStepDegrees)));
-            m_terminal->wheelScroll(vertical > 0.0 ? scrollLines : -scrollLines);
+            m_terminal->wheelScroll(vertical > 0.0 ? scrollLines : -scrollLines, eventCol, eventRow);
             return;
         }
 
@@ -1461,7 +1539,7 @@ public:
             return;
         }
 
-        m_terminal->wheelScroll(scrollLines);
+        m_terminal->wheelScroll(scrollLines, eventCol, eventRow);
         m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
     }
 
@@ -3095,6 +3173,10 @@ private:
     int m_lastClickRow = -1;
     int m_lastClickCol = -1;
     int m_lastClickCount = 0;
+    // Track the last known mouse cell position (1-based) so axis/wheel events
+    // can use real coordinates in mouse tracking escape sequences.
+    int m_lastMouseCellCol = 1;
+    int m_lastMouseCellRow = 1;
     float m_touchStartX = 0.0f;
     float m_touchStartY = 0.0f;
     float m_touchScrollRemainderY = 0.0f;

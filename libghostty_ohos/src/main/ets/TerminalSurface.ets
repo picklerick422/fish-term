@@ -204,6 +204,16 @@ export struct TerminalSurface {
         // single XComponent owns keyboard, IME, scrolling, selection and paste.
         this.requestTerminalFocus();
       })
+      // Register an onMouse handler so ArkUI considers this XComponent a mouse-
+      // interested target and routes mouse events (including wheel/axis events) to
+      // the native callbacks (DispatchMouseEvent / DispatchAxisEvent). Without this
+      // the framework may not deliver axis events to the XComponent at all, and the
+      // user cannot scroll with the mouse wheel inside terminal applications like
+      // opencode, vim, or less.
+      .onMouse((_event?: MouseEvent) => {
+        // Mouse events are fully handled on the native side — this ArkTS handler
+        // exists only to declare interest so ArkUI routes mouse events here.
+      })
       // Event-driven focus restoration: when this XComponent transitions from
       // Hidden to Visible (tab switch or return-from-background), request ArkUI
       // focus immediately. Unlike the retry-loop in focusActiveTerminal(), this

@@ -41,9 +41,17 @@ public:
     // Mouse-wheel scroll that is alternate-screen aware: on the primary screen it
     // scrolls the viewport; on the alternate screen (full-screen TUIs like vim,
     // less, claude code) it translates the wheel into cursor up/down keys so the
-    // running application scrolls its own content.
-    void wheelScroll(int lines);
+    // running application scrolls its own content. col/row (1-based) carry the
+    // pointer cell position so that mouse-tracking-aware TUIs (opencode, vim, …)
+    // can route wheel events to the correct pane.
+    void wheelScroll(int lines, int col = 1, int row = 1);
     void resetViewScroll();
+    // Report a mouse event to the terminal application when mouse tracking is
+    // active (DEC private modes 1000/1002/1003). col/row are 1-based cell
+    // coordinates. button: 0=left, 1=middle, 2=right, 3=release, 35=move-no-btn.
+    // pressed: true for press/move/wheel, false for release. Returns true if the
+    // event was forwarded to the app (mouse tracking active on alt screen).
+    bool reportMouse(int col, int row, int button, bool pressed);
     // Full RIS reset of the emulator. Used when (re)connecting to a fresh
     // server session so stale modes (mouse tracking, alt screen, …) from the
     // previous session don't leak — e.g. wheel events being reported as SGR

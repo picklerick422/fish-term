@@ -1013,7 +1013,7 @@ void Terminal::scrollView(int delta) {
     notifyRenderNeeded();
 }
 
-void Terminal::wheelScroll(int lines) {
+void Terminal::wheelScroll(int lines, int col, int row) {
     if (lines == 0) return;
 
     bool altScreen = false;
@@ -1053,6 +1053,12 @@ void Terminal::wheelScroll(int lines) {
             // Mode 1006 = SGR extended mouse coordinates.
             ghostty_terminal_mode_get(m_vt, 1006, &sgrMouse);
         }
+
+        // Clamp coordinates to valid range (1-based).
+        if (col < 1) col = 1;
+        if (row < 1) row = 1;
+        if (col > m_cols) col = m_cols;
+        if (row > m_rows) row = m_rows;
     }
 
     if (!altScreen) {
@@ -1062,7 +1068,9 @@ void Terminal::wheelScroll(int lines) {
 
     // When mouse tracking is active the app handles wheel events via escape
     // sequences, not cursor keys. Send proper mouse wheel sequences so apps
-    // like claude code, vim, less can scroll rather than navigating history.
+    // like opencode, claude code, vim, less can scroll rather than navigating
+    // history. Use the actual pointer cell position so the TUI can route the
+    // wheel event to the correct pane.
     if (anyMouseTracking) {
         const int count = std::abs(lines);
         // On HarmonyOS vertical > 0 means the finger moves DOWN (scroll down).
@@ -1073,15 +1081,16 @@ void Terminal::wheelScroll(int lines) {
         if (sgrMouse) {
             // SGR extended: \x1b[<BTN;COL;ROWM
             char buf[32];
-            snprintf(buf, sizeof(buf), "\x1b[<%d;1;1M", btn);
+            snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%dM", btn, col, row);
             for (int i = 0; i < count; ++i) out += buf;
         } else {
             // X10 classic: \x1b[M + (btn+32) + (col+32) + (row+32)
             const char btnC = static_cast<char>(btn + 32);
-            const char posC = static_cast<char>(1 + 32); // col/row 1
+            const char colC = static_cast<char>(col + 32);
+            const char rowC = static_cast<char>(row + 32);
             for (int i = 0; i < count; ++i) {
                 out += '\x1b'; out += '['; out += 'M';
-                out += btnC; out += posC; out += posC;
+                out += btnC; out += colC; out += rowC;
             }
         }
         emitInput(out.data(), out.size());
@@ -1100,6 +1109,62 @@ void Terminal::wheelScroll(int lines) {
     out.reserve(static_cast<size_t>(count) * 3);
     for (int i = 0; i < count; ++i) out += seq;
     emitInput(out.data(), out.size());
+}
+
+bool Terminal::reportMouse(int col, int row, int button, bool pressed) {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_vt) return false;
+
+    // Only report on alternate screen — on the primary screen mouse events are
+    // handled locally for text selection / link activation.
+    ghostty_terminal_screen_t screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    ghostty_terminal_get(m_vt, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
+    if (screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE) return false;
+
+    // Check mouse tracking.
+    bool hasTracking = false;
+    bool mouseTrackingData = false;
+    ghostty_terminal_get(m_vt, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &mouseTrackingData);
+    if (mouseTrackingData) {
+        hasTracking = true;
+    } else {
+        bool m1000 = false, m1002 = false, m1003 = false;
+        ghostty_terminal_mode_get(m_vt, 1000, &m1000);
+        ghostty_terminal_mode_get(m_vt, 1002, &m1002);
+        ghostty_terminal_mode_get(m_vt, 1003, &m1003);
+        hasTracking = m1000 || m1002 || m1003;
+    }
+    if (!hasTracking) return false;
+
+    bool sgrMouse = false;
+    ghostty_terminal_mode_get(m_vt, 1006, &sgrMouse);
+
+    // Clamp coordinates (1-based).
+    if (col < 1) col = 1;
+    if (row < 1) row = 1;
+    if (col > m_cols) col = m_cols;
+    if (row > m_rows) row = m_rows;
+
+    std::string out;
+    if (sgrMouse) {
+        // SGR extended: \x1b[<BTN;COL;ROWM (press) / \x1b[<BTN;COL;ROWm (release)
+        char buf[32];
+        snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%d%c", button, col, row, pressed ? 'M' : 'm');
+        out = buf;
+    } else {
+        // X10 encoding: \x1b[M + (btn+32) + (col+32) + (row+32)
+        char buf[6];
+        buf[0] = '\x1b';
+        buf[1] = '[';
+        buf[2] = 'M';
+        buf[3] = static_cast<char>(button + 32);
+        buf[4] = static_cast<char>(col + 32);
+        buf[5] = static_cast<char>(row + 32);
+        out.assign(buf, 6);
+    }
+
+    emitInput(out.data(), out.size());
+    return true;
 }
 
 void Terminal::resetViewScroll() {
