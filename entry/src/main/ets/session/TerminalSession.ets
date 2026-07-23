@@ -134,6 +134,18 @@ export class TerminalSession {
         if (this.replayStateCb) {
           this.replayStateCb(replaying);
         }
+        // After the server's cached-output replay completes, clear any stale
+        // mouse-tracking modes (DEC private modes 1000/1002/1003/1006) that the
+        // replay may have restored. The ring-buffer snapshot contains all escape
+        // sequences the TUI app emitted, including mode-enable sequences. If the
+        // server reattached to the same PTY (TUI still running), the app will
+        // re-enable tracking on its next redraw (e.g. in response to the resize
+        // SIGWINCH). If the server attached to a fresh shell (session expired),
+        // stale tracking would otherwise cause every mouse move / wheel scroll
+        // to be forwarded as escape-sequence garbage into the shell.
+        if (!replaying) {
+          this.controller.feed('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+        }
       });
       (this.driver as FishWebSocketDriver).onAwaitingInput((awaiting: boolean): void => {
         // Suppress backend awaiting signal during replay — historical output

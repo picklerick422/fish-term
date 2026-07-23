@@ -365,6 +365,15 @@ export class FishWebSocketDriver implements TerminalDriver {
     }
     if (ctrl.type === 'error') {
       this.endReplay();  // e.g. stale session_id — no snapshot will follow
+      // If the server says the session is gone, clear the cached session_id
+      // so the next reconnect creates a fresh session instead of looping on a
+      // dead session_id. The server push a new session id on fresh connect.
+      if (ctrl.error && (ctrl.error.includes('session not found') || ctrl.error.includes('expired'))) {
+        (this.config as Record<string, string | undefined>).sessionId = undefined;
+        this.sessionId = '';
+        // Reset backoff so the reconnect happens quickly with the fresh session.
+        this.backoff.reset();
+      }
       this.emit(DriverState.Error, ctrl.error ?? 'server error');
     } else if (ctrl.type === 'cwd') {
       if (this.cwdCb && ctrl.dir) {
