@@ -129,6 +129,13 @@ export class TerminalSession {
           this.sessionIdCb(id);
         }
       });
+      (this.driver as FishWebSocketDriver).onSessionReset((): void => {
+        // The server assigned a new session ID (the old PTY died and was
+        // replaced).  Clear the terminal screen so the stale TUI content
+        // from the previous session doesn't appear above the new shell output.
+        // ESC[H = cursor home, ESC[2J = clear entire screen.
+        this.controller.feed('\x1b[H\x1b[2J');
+      });
       (this.driver as FishWebSocketDriver).onReplayState((replaying: boolean): void => {
         this.replaying = replaying;
         if (this.replayStateCb) {
@@ -143,8 +150,13 @@ export class TerminalSession {
         // SIGWINCH). If the server attached to a fresh shell (session expired),
         // stale tracking would otherwise cause every mouse move / wheel scroll
         // to be forwarded as escape-sequence garbage into the shell.
+        //
+        // Use the native clearMouseTracking() which calls ghostty_terminal_mode_set
+        // directly rather than feeding CSI sequences through vt_write.  The
+        // native path guarantees the composited MOUSE_TRACKING flag queried by
+        // reportMouse() / wheelScroll() is also reset.
         if (!replaying) {
-          this.controller.feed('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+          this.controller.clearMouseTracking();
         }
       });
       (this.driver as FishWebSocketDriver).onAwaitingInput((awaiting: boolean): void => {

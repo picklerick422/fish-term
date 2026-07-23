@@ -1174,6 +1174,15 @@ void Terminal::resetViewScroll() {
     notifyRenderNeeded();
 }
 
+void Terminal::clearMouseTracking() {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_vt) return;
+    ghostty_terminal_mode_set(m_vt, 1000, false);
+    ghostty_terminal_mode_set(m_vt, 1002, false);
+    ghostty_terminal_mode_set(m_vt, 1003, false);
+    ghostty_terminal_mode_set(m_vt, 1006, false);
+}
+
 void Terminal::resetState() {
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);

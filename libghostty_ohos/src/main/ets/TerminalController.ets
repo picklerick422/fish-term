@@ -20,6 +20,7 @@ interface TerminalNativeBridge {
   writeInput: (data: string) => void;
   feedOutput: (data: string) => void;
   feedOutputBytes: (data: ArrayBuffer) => void;
+  clearMouseTracking: () => void;
   drainPendingInput: () => string;
   setInputCallback: (callback: ((data: string) => void) | null) => void;
   drainPendingLinkActivation: () => string;
@@ -279,6 +280,17 @@ export class TerminalController {
       return;
     }
     this.native.feedOutputBytes(data);
+  }
+
+  // Clear mouse tracking modes (DEC private 1000/1002/1003/1006) directly
+  // through the ghostty mode API.  Unlike feeding CSI sequences through
+  // vt_write (feed), this guarantees the composited MOUSE_TRACKING flag
+  // queried by reportMouse / wheelScroll is also reset.
+  clearMouseTracking(): void {
+    if (!this.native) {
+      return;
+    }
+    this.native.clearMouseTracking();
   }
 
   resize(cols: number, rows: number): void {

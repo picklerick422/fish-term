@@ -1640,6 +1640,12 @@ public:
         }
     }
 
+    void ClearMouseTracking() {
+        if (m_terminal) {
+            m_terminal->clearMouseTracking();
+        }
+    }
+
     // Byte-oriented feed used by the WebSocket replay path — hands the raw
     // frame bytes straight to the VT parser without a UTF-16 round-trip.
     void FeedOutputBytes(const char* data, size_t len) {
@@ -3404,6 +3410,17 @@ static napi_value FeedOutput(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+static napi_value ClearMouseTracking(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    TerminalHost* host = GetHostFromCallback(env, info, &argc, args);
+    if (!host) {
+        return nullptr;
+    }
+    host->ClearMouseTracking();
+    return nullptr;
+}
+
 // Byte-oriented feed for bulk output (server ring-buffer replay). The WebSocket
 // driver hands received frames over without UTF-16 string conversion, so the
 // data crosses JS→native with zero copies/transcoding. ghostty's vt_write is a
@@ -4031,6 +4048,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"writeInput", nullptr, WriteInput, nullptr, nullptr, nullptr, napi_default, host},
         {"feedOutput", nullptr, FeedOutput, nullptr, nullptr, nullptr, napi_default, host},
         {"feedOutputBytes", nullptr, FeedOutputBytes, nullptr, nullptr, nullptr, napi_default, host},
+        {"clearMouseTracking", nullptr, ClearMouseTracking, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingInput", nullptr, DrainPendingInput, nullptr, nullptr, nullptr, napi_default, host},
         {"setInputCallback", nullptr, SetInputCallback, nullptr, nullptr, nullptr, napi_default, host},
         {"drainPendingLinkActivation", nullptr, DrainPendingLinkActivation, nullptr, nullptr, nullptr, napi_default, host},

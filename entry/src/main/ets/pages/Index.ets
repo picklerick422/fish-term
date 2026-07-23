@@ -1082,6 +1082,14 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor(this.uiTheme.bgBase)
+    // Swallow mouse events so they don't leak through to the XComponent surface
+    // beneath during replay.  Without this, mouse moves can reach
+    // DispatchMouseEvent, and if the replay snapshot has just restored a TUI's
+    // mouse-tracking modes (DEC 1000/1002/1003), the events get forwarded as
+    // SGR escape sequences via emitInput, disrupting the replay stream.
+    .onMouse((_event?: MouseEvent) => {
+      // no-op: only here to stop event propagation
+    })
   }
 
   build() {

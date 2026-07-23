@@ -52,6 +52,14 @@ public:
     // pressed: true for press/move/wheel, false for release. Returns true if the
     // event was forwarded to the app (mouse tracking active on alt screen).
     bool reportMouse(int col, int row, int button, bool pressed);
+    // Clear mouse tracking modes (DEC private 1000/1002/1003/1006) using the
+    // ghostty mode API.  This is called after a replay completes so that stale
+    // modes from a TUI app don't cause mouse events to be forwarded as escape
+    // sequences to a non-TUI session.
+    // Unlike feeding CSI sequences through vt_write, this directly updates the
+    // terminal's mode table, ensuring GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING
+    // returns false — the same flag checked by reportMouse() / wheelScroll().
+    void clearMouseTracking();
     // Full RIS reset of the emulator. Used when (re)connecting to a fresh
     // server session so stale modes (mouse tracking, alt screen, …) from the
     // previous session don't leak — e.g. wheel events being reported as SGR

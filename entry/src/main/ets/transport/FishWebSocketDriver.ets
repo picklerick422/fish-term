@@ -47,6 +47,7 @@ export class FishWebSocketDriver implements TerminalDriver {
   private sessionIdCb: ((id: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
   private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
+  private sessionResetCb: (() => void) | null = null;
 
   private cols: number = 80;
   private rows: number = 24;
@@ -103,6 +104,14 @@ export class FishWebSocketDriver implements TerminalDriver {
   // drive the full-screen loading overlay and to mute replay-time analysis.
   onReplayState(cb: (replaying: boolean) => void): void {
     this.replayStateCb = cb;
+  }
+
+  // Fires when the server assigns a new session ID different from the one the
+  // driver expected.  This means the previous PTY session died and the server
+  // created a fresh one — the terminal's screen buffer (still holding the old
+  // TUI content) must be cleared so new output doesn't appear below stale cache.
+  onSessionReset(cb: () => void): void {
+    this.sessionResetCb = cb;
   }
 
   // Backend-driven awaiting-input signal.  Fires when the fish-agent detects
@@ -380,7 +389,17 @@ export class FishWebSocketDriver implements TerminalDriver {
         this.cwdCb(ctrl.dir);
       }
     } else if (ctrl.type === 'session' && ctrl.id) {
+      const prevId: string = this.sessionId;
       this.sessionId = ctrl.id;
+      // Detect session replacement: if the server assigned a different ID than
+      // the one we expected (and we had one before), the old PTY died and a
+      // fresh session was created.  Clear the terminal's screen buffer so the
+      // stale cached content doesn't appear above the new shell output.
+      if (prevId.length > 0 && prevId !== ctrl.id) {
+        if (this.sessionResetCb) {
+          this.sessionResetCb();
+        }
+      }
       if (this.sessionIdCb) {
         this.sessionIdCb(ctrl.id);
       }
