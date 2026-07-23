@@ -378,7 +378,7 @@ export class FishWebSocketDriver implements TerminalDriver {
       // so the next reconnect creates a fresh session instead of looping on a
       // dead session_id. The server push a new session id on fresh connect.
       if (ctrl.error && (ctrl.error.includes('session not found') || ctrl.error.includes('expired'))) {
-        (this.config as Record<string, string | undefined>).sessionId = undefined;
+        this.config.sessionId = undefined;
         this.sessionId = '';
         // Reset backoff so the reconnect happens quickly with the fresh session.
         this.backoff.reset();
