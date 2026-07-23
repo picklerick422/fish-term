@@ -71,6 +71,11 @@ export class TerminalSession {
   // Task detection is muted during replay — historical output must not fire
   // "task completed / awaiting input" notifications.
   private replaying: boolean = false;
+  // True when the server assigned a new session ID during this reconnect cycle
+  // (meaning the old PTY died and was replaced).  Used to gate clearMouseTracking
+  // only for genuine session resets — not for normal resume where the TUI app
+  // still expects its mouse-tracking modes to be intact.
+  private sessionWasReset: boolean = false;
   private readonly sliceDecoder: util.TextDecoder =
     util.TextDecoder.create('utf-8', { fatal: false, ignoreBOM: true });
   private readonly decodeOpts: util.DecodeToStringOptions = { stream: false };
@@ -135,28 +140,39 @@ export class TerminalSession {
         // from the previous session doesn't appear above the new shell output.
         // ESC[H = cursor home, ESC[2J = clear entire screen.
         this.controller.feed('\x1b[H\x1b[2J');
+        // Flag that a genuine session reset happened — any stale mouse-tracking
+        // modes restored by the replay must be cleared once replay ends.
+        this.sessionWasReset = true;
       });
       (this.driver as FishWebSocketDriver).onReplayState((replaying: boolean): void => {
         this.replaying = replaying;
         if (this.replayStateCb) {
           this.replayStateCb(replaying);
         }
-        // After the server's cached-output replay completes, clear any stale
-        // mouse-tracking modes (DEC private modes 1000/1002/1003/1006) that the
-        // replay may have restored. The ring-buffer snapshot contains all escape
-        // sequences the TUI app emitted, including mode-enable sequences. If the
-        // server reattached to the same PTY (TUI still running), the app will
-        // re-enable tracking on its next redraw (e.g. in response to the resize
-        // SIGWINCH). If the server attached to a fresh shell (session expired),
-        // stale tracking would otherwise cause every mouse move / wheel scroll
-        // to be forwarded as escape-sequence garbage into the shell.
+        // After the server's cached-output replay completes, clear stale
+        // mouse-tracking modes ONLY when the PTY session was replaced (old
+        // process died, server created a fresh shell).  The ring-buffer snapshot
+        // faithfully replays every mode-setting sequence the TUI app emitted,
+        // but when the TUI app is gone those stale modes would cause every
+        // mouse move / wheel scroll to be forwarded as escape-sequence garbage
+        // into the new shell.
         //
-        // Use the native clearMouseTracking() which calls ghostty_terminal_mode_set
-        // directly rather than feeding CSI sequences through vt_write.  The
-        // native path guarantees the composited MOUSE_TRACKING flag queried by
-        // reportMouse() / wheelScroll() is also reset.
+        // When reconnecting to the SAME session (TUI still running), we MUST
+        // NOT clear mouse tracking — the TUI app expects it to stay enabled.
+        // Clearing it on the emulator side would cause the first mouse event
+        // after replay to be intercepted by the terminal (text selection instead
+        // of click, wheel-as-arrow-keys instead of scroll events), until the app
+        // reinitializes on a subsequent event.
+        //
+        // Uses the native clearMouseTracking() which calls
+        // ghostty_terminal_mode_set directly rather than feeding CSI sequences
+        // through vt_write — the native path guarantees the composited
+        // MOUSE_TRACKING flag is also reset.
         if (!replaying) {
-          this.controller.clearMouseTracking();
+          if (this.sessionWasReset) {
+            this.sessionWasReset = false;
+            this.controller.clearMouseTracking();
+          }
         }
       });
       (this.driver as FishWebSocketDriver).onAwaitingInput((awaiting: boolean): void => {
