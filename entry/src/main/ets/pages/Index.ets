@@ -4,7 +4,7 @@ import { font, window } from '@kit.ArkUI';
 import { TerminalController, TerminalSurface } from 'libghostty_ohos';
 import { TerminalSession } from '../session/TerminalSession';
 import { TerminalRuntime } from '../session/TerminalTab';
-import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
+import { FishWebSocketDriver, ServerCtrl } from '../transport/FishWebSocketDriver';
 import { DriverState, DriverStatus, FishConnectConfig } from '../transport/TerminalDriver';
 import { ConnectionStore, ConnectionProfile, TerminalPrefs, DEFAULT_TERMINAL_PREFS, SavedSession, SavedTab } from '../store/ConnectionStore';
 import { UiTheme, UiThemeStore, REFINED_DARK_THEME, RADIUS_CARD, RADIUS_CONTROL, RADIUS_SHEET, toSurfaceTheme } from '../theme/UiTheme';
@@ -905,8 +905,8 @@ struct Index {
       }
     });
     // File tree: receive directory listings from the server
-    session.onListDirResult((result: Record<string, Object>): void => {
-      const res: ListDirResult = result as ListDirResult;
+    session.onListDirResult((result: ServerCtrl): void => {
+      const res: ListDirResult = result as unknown as ListDirResult;
       if (!rt.fileTreeRoot && res.path === rt.cwd) {
         // First listing for this tab — create root node
         rt.fileTreeRoot = FileTreeModel.createRoot(rt.cwd, res);

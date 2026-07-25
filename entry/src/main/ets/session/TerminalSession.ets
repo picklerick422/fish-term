@@ -1,7 +1,7 @@
 import { util } from '@kit.ArkTS';
 import { TerminalController, TerminalSize } from 'libghostty_ohos';
 import { DriverState, DriverStatus, TerminalDriver } from '../transport/TerminalDriver';
-import { FishWebSocketDriver } from '../transport/FishWebSocketDriver';
+import { FishWebSocketDriver, ServerCtrl } from '../transport/FishWebSocketDriver';
 
 // Wires one driver to an externally-owned, persistent TerminalController
 // (spec §3.3 dataflow). The controller + its XComponent surface are owned by the
@@ -60,7 +60,7 @@ export class TerminalSession {
   private taskDataCb: ((data: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
   private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
-  private listDirResultCb: ((result: Record<string, Object>) => void) | null = null;
+  private listDirResultCb: ((result: ServerCtrl) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -186,7 +186,7 @@ export class TerminalSession {
           this.awaitingInputCb(awaiting);
         }
       });
-      (this.driver as FishWebSocketDriver).onListDirResult((result: Record<string, Object>): void => {
+      (this.driver as FishWebSocketDriver).onListDirResult((result: ServerCtrl): void => {
         if (this.listDirResultCb) {
           this.listDirResultCb(result);
         }
@@ -231,7 +231,7 @@ export class TerminalSession {
   }
 
   // File tree: receives directory listing results from the server.
-  onListDirResult(cb: (result: Record<string, Object>) => void): void {
+  onListDirResult(cb: (result: ServerCtrl) => void): void {
     this.listDirResultCb = cb;
   }
 

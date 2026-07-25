@@ -14,12 +14,11 @@ import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
 import { DEFAULT_UI_FONT } from '../theme/FontScale';
 import { FileTreeNode } from '../filetree/FileTreeTypes';
 
-const COLORS = {
-  ROW_HEIGHT: 28,
-  INDENT_WIDTH: 14,
-  CHEV_WIDTH: 16,
-  ICON_WIDTH: 20,
-};
+// Layout constants — individual consts to satisfy arkts-no-untyped-obj-literals
+const ROW_HEIGHT: number = 28;
+const INDENT_WIDTH: number = 14;
+const CHEV_WIDTH: number = 16;
+const ICON_WIDTH: number = 20;
 
 // Flat node: one visible row in the tree list.  We flatten the tree so
 // ForEach can handle rendering without recursive @Builder (which has
@@ -52,8 +51,6 @@ export struct FileTreePanel {
   // ── build ──────────────────────────────────────────────────────────────
 
   build() {
-    const visibleNodes: FlatNode[] = this.computeFlatList();
-
     Column() {
       // Header
       this.buildHeader()
@@ -64,7 +61,7 @@ export struct FileTreePanel {
       } else {
         Scroll() {
           Column() {
-            ForEach(visibleNodes, (fn: FlatNode) => {
+            ForEach(this.computeFlatList(), (fn: FlatNode) => {
               this.buildNodeRow(fn)
             }, (fn: FlatNode) => fn.treeNode.path)
           }
@@ -118,7 +115,7 @@ export struct FileTreePanel {
     Row() {
       // Indentation
       if (fn.indent > 0) {
-        Blank().width(fn.indent * COLORS.INDENT_WIDTH)
+        Blank().width(fn.indent * INDENT_WIDTH)
       }
 
       // Chevron
@@ -126,18 +123,18 @@ export struct FileTreePanel {
         Text(fn.treeNode.expanded ? '▼' : '▶')
           .fontSize(10)
           .fontColor(this.uiTheme.textFaint)
-          .width(COLORS.CHEV_WIDTH)
+          .width(CHEV_WIDTH)
           .textAlign(TextAlign.Center)
           .focusable(false)
           .onClick(() => { this.onChevronClick(fn.treeNode); })
       } else {
-        Blank().width(COLORS.CHEV_WIDTH)
+        Blank().width(CHEV_WIDTH)
       }
 
       // Icon
       Text(fn.treeNode.type === 'directory' ? '📁' : '📄')
         .fontSize(14)
-        .width(COLORS.ICON_WIDTH)
+        .width(ICON_WIDTH)
         .textAlign(TextAlign.Center)
 
       // Name
@@ -159,7 +156,7 @@ export struct FileTreePanel {
       }
     }
     .width('100%')
-    .height(COLORS.ROW_HEIGHT)
+    .height(ROW_HEIGHT)
     .padding({ left: 4, right: 6 })
     .backgroundColor(
       this.hoveredPath === fn.treeNode.path
@@ -182,7 +179,7 @@ export struct FileTreePanel {
   @Builder
   buildErrorRow(fn: FlatNode) {
     Row() {
-      Blank().width((fn.indent + 1) * COLORS.INDENT_WIDTH + COLORS.CHEV_WIDTH)
+      Blank().width((fn.indent + 1) * INDENT_WIDTH + CHEV_WIDTH)
       Text('⚠ ' + fn.treeNode.error)
         .fontSize(11)
         .fontColor(this.uiTheme.danger)

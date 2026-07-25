@@ -27,14 +27,23 @@ const FLUSH_THRESHOLD_BYTES: number = 262144; // 256 KB
 const REPLAY_QUIET_MS: number = 500;
 const REPLAY_GUARD_MS: number = 15000;
 
-interface ServerCtrl {
+// Single directory entry in a list_dir_result message.
+interface ServerDirEntry {
+  name: string;
+  type: string;
+  size?: number;
+  mtime?: number;
+  mode?: string;
+}
+
+export interface ServerCtrl {
   type: string;
   dir?: string;
   error?: string;
   id?: string;  // session id from server on first connect
   state?: boolean; // awaiting_input state
   path?: string;   // list_dir_result path
-  entries?: Array<{name: string, type: string, size?: number, mtime?: number, mode?: string}>;
+  entries?: ServerDirEntry[];
   truncated?: boolean;
 }
 
