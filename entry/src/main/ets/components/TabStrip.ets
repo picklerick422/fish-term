@@ -59,10 +59,13 @@ export struct TabStrip {
   onOpenSettings: () => void = () => {};
   onOpenAbout: () => void = () => {};
   onOpenOverflow: () => void = () => {};
+  onToggleSidebar: () => void = () => {};
+  @Prop sidebarVisible: boolean = true;
 
   @State private hoverAddTab: boolean = false;
   @State private hoverSettings: boolean = false;
   @State private hoverLogo: boolean = false;
+  @State private hoverSidebarToggle: boolean = false;
   @State private hoverCloseId: number = -1;
   @State private hoverTabId: number = -1;
   @State private hoverMenuAction: string = '';
@@ -155,6 +158,23 @@ export struct TabStrip {
         .focusable(false)
         .onHover((h: boolean) => { this.hoverLogo = h; })
         .onClick(() => { this.onOpenAbout(); })
+
+      // Sidebar toggle
+      Row() {
+        Text(this.sidebarVisible ? '◧' : '◨')
+          .fontSize(14)
+          .fontColor(this.hoverSidebarToggle ? this.uiTheme.textDim : this.uiTheme.textFaint)
+      }
+      .width(24)
+      .height(24)
+      .margin({ left: 2, right: 4, top: 7 })
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(5)
+      .backgroundColor(this.hoverSidebarToggle ? this.uiTheme.pressOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((hover: boolean) => { this.hoverSidebarToggle = hover; })
+      .onClick(() => { this.onToggleSidebar(); })
 
       if (!this.tabCompact) {
         // Non-compact: horizontal scroll, variable width chips

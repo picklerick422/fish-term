@@ -33,6 +33,9 @@ interface ServerCtrl {
   error?: string;
   id?: string;  // session id from server on first connect
   state?: boolean; // awaiting_input state
+  path?: string;   // list_dir_result path
+  entries?: Array<{name: string, type: string, size?: number, mtime?: number, mode?: string}>;
+  truncated?: boolean;
 }
 
 export class FishWebSocketDriver implements TerminalDriver {
@@ -48,6 +51,7 @@ export class FishWebSocketDriver implements TerminalDriver {
   private replayStateCb: ((replaying: boolean) => void) | null = null;
   private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
   private sessionResetCb: (() => void) | null = null;
+  private listDirResultCb: ((result: ServerCtrl) => void) | null = null;
 
   private cols: number = 80;
   private rows: number = 24;
@@ -119,6 +123,16 @@ export class FishWebSocketDriver implements TerminalDriver {
   // silence + process in S state).  Fires with `false` once output resumes.
   onAwaitingInput(cb: (awaiting: boolean) => void): void {
     this.awaitingInputCb = cb;
+  }
+
+  // File tree: receives directory listing results from the server.
+  onListDirResult(cb: (result: ServerCtrl) => void): void {
+    this.listDirResultCb = cb;
+  }
+
+  // File tree: request a directory listing from the server.
+  listDir(path: string): void {
+    this.sendText(JSON.stringify({ type: 'list_dir', path: path }));
   }
 
   start(cols: number, rows: number): void {
@@ -407,6 +421,8 @@ export class FishWebSocketDriver implements TerminalDriver {
       if (this.awaitingInputCb) {
         this.awaitingInputCb(ctrl.state ?? false);
       }
+    } else if (ctrl.type === 'list_dir_result' && this.listDirResultCb) {
+      this.listDirResultCb(ctrl);
     }
     // 'shells' / 'forked' ignored in v1.
   }

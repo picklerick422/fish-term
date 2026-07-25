@@ -1,6 +1,8 @@
 import { TerminalController } from 'libghostty_ohos';
 import { TerminalSession } from './TerminalSession';
 import { FishConnectConfig } from '../transport/TerminalDriver';
+import { AIChatService } from '../ai/AIChatService';
+import { FileTreeNode } from '../filetree/FileTreeTypes';
 
 // Non-reactive per-tab runtime. Owns the terminal controller (one native VT +
 // its own XComponent surface) and the active driver session. These heavy objects
@@ -14,6 +16,8 @@ export class TerminalRuntime {
   cwd: string = '';
   sessionId: string = '';  // PTY session id from server, persisted for tab restore
   connectionConfig: FishConnectConfig | null = null;
+  aiService: AIChatService | null = null;  // AI chat service, one per tab
+  fileTreeRoot: FileTreeNode | null = null;  // file tree root node for this tab
 
   constructor(id: number) {
     this.id = id;

@@ -60,6 +60,7 @@ export class TerminalSession {
   private taskDataCb: ((data: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
   private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
+  private listDirResultCb: ((result: Record<string, Object>) => void) | null = null;
 
   private started: boolean = false;
   private stopped: boolean = false;
@@ -185,6 +186,11 @@ export class TerminalSession {
           this.awaitingInputCb(awaiting);
         }
       });
+      (this.driver as FishWebSocketDriver).onListDirResult((result: Record<string, Object>): void => {
+        if (this.listDirResultCb) {
+          this.listDirResultCb(result);
+        }
+      });
     }
   }
 
@@ -222,6 +228,24 @@ export class TerminalSession {
   // notifications.
   onAwaitingInput(cb: (awaiting: boolean) => void): void {
     this.awaitingInputCb = cb;
+  }
+
+  // File tree: receives directory listing results from the server.
+  onListDirResult(cb: (result: Record<string, Object>) => void): void {
+    this.listDirResultCb = cb;
+  }
+
+  // Request a directory listing from the server (pass-through to driver).
+  listDir(path: string): void {
+    if (this.driver instanceof FishWebSocketDriver) {
+      (this.driver as FishWebSocketDriver).listDir(path);
+    }
+  }
+
+  // Write a command string directly to the terminal PTY (used by file tree
+  // click actions — cd, cat, touch, mkdir, rm, mv, etc.).
+  writeToTerminal(cmd: string): void {
+    this.driver.write(cmd + '\n');
   }
 
   // Decode a [start, start+len) window of a batch for auxiliary analysis.

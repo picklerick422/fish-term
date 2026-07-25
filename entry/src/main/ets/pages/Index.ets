@@ -21,6 +21,7 @@ import { TabStrip, TabMeta } from '../components/TabStrip';
 import { StatusBanner, BannerKind } from '../components/StatusBanner';
 import { ConnectionForm } from '../components/ConnectionForm';
 import { GuideOverlay } from '../components/GuideOverlay';
+import { FileTreePanel } from '../components/FileTreePanel';
 import { CrashHandler } from '../crash/CrashHandler';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
@@ -28,6 +29,8 @@ import { TaskEvent, TaskEventType } from '../notifications/TaskEvent';
 import { TaskDetector } from '../notifications/TaskDetector';
 import { NotificationService } from '../notifications/NotificationService';
 import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/ConnectionStore';
+import { ListDirResult } from '../filetree/FileTreeTypes';
+import { FileTreeModel } from '../filetree/FileTreeModel';
 
 function stateLabel(s: DriverStatus): string {
   switch (s.state) {
@@ -122,6 +125,10 @@ struct Index {
   private notifyService: NotificationService = new NotificationService();
   @State private notifyPrefs: NotificationPrefs = DEFAULT_NOTIFICATION_PREFS;
   @State private isForeground: boolean = true;
+  @State private sidebarVisible: boolean = true;
+  @State private sidebarWidth: number = 260;
+  @State private fileTreeVersion: number = 0;
+  private fileTreePollTimer: number = -1;
   @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
 
   aboutToAppear(): void {
@@ -254,6 +261,8 @@ struct Index {
             // banners between the loading indicator and the first content.
             setTimeout(() => {
               this.restoreChecked = true;
+              // Start file tree polling if sidebar is visible
+              this.manageFileTreePolling();
               // Re-apply saved titles after another short delay to survive any
               // async callbacks that fire during session startup (status events,
               // OSC title detection, etc.).
@@ -542,6 +551,87 @@ struct Index {
     return this.tabs.length > 0 && !this.showSettings && !this.showNewConnection && !this.showGuide && !this.showRenameDialog;
   }
 
+  // ── File tree sidebar ─────────────────────────────────────────────────
+
+  private toggleSidebar(): void {
+    animateTo({ duration: 200, curve: Curve.Friction }, () => {
+      this.sidebarVisible = !this.sidebarVisible;
+    });
+    this.manageFileTreePolling();
+  }
+
+  private handleListDir(path: string): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (rt?.session) {
+      rt.session.listDir(path);
+    }
+  }
+
+  private handleFileAction(action: 'cd' | 'cat', path: string): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (rt?.session) {
+      // Escape double quotes in path for shell safety
+      const escaped: string = path.replace(/"/g, '\\"');
+      rt.session.writeToTerminal(`${action} "${escaped}"`);
+    }
+    this.focusActiveTerminal();
+  }
+
+  private handleWriteCommand(cmd: string): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (rt?.session) {
+      rt.session.writeToTerminal(cmd);
+    }
+    this.focusActiveTerminal();
+  }
+
+  private handleRefreshTree(): void {
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (rt?.session && rt.cwd) {
+      rt.fileTreeRoot = null;
+      this.fileTreeVersion++;
+      rt.session.listDir(rt.cwd);
+    }
+  }
+
+  // Bump tree version after model mutation so FileTreePanel re-renders.
+  private bumpFileTree(): void {
+    this.fileTreeVersion++;
+  }
+
+  // ── File tree polling ────────────────────────────────────────────────
+
+  // Start/stop a 3-second poll timer that re-requests directory listings
+  // for all expanded directories while the sidebar is visible.
+  private manageFileTreePolling(): void {
+    if (this.sidebarVisible) {
+      if (this.fileTreePollTimer < 0) {
+        this.fileTreePollTimer = setInterval((): void => {
+          this.refreshExpandedDirs();
+        }, 3000) as number;
+      }
+    } else {
+      if (this.fileTreePollTimer >= 0) {
+        clearInterval(this.fileTreePollTimer);
+        this.fileTreePollTimer = -1;
+      }
+    }
+  }
+
+  private refreshExpandedDirs(): void {
+    if (!this.isForeground) {
+      return; // don't waste network while app is in background
+    }
+    const rt: TerminalRuntime | null = this.activeRuntime();
+    if (!rt?.session || !rt.fileTreeRoot) {
+      return;
+    }
+    const paths: string[] = FileTreeModel.collectExpandedPaths(rt.fileTreeRoot);
+    for (const p of paths) {
+      rt.session.listDir(p);
+    }
+  }
+
   // Requesting focus right after a tab switch or return-to-foreground races the
   // XComponent's visibility/layout commit: the target surface may not be
   // focusable yet, so focusControl.requestFocus() silently fails and keystrokes
@@ -760,6 +850,12 @@ struct Index {
     });
     session.onCwdChange((dir: string): void => {
       rt.cwd = dir;
+      // Re-root file tree on CWD change
+      rt.fileTreeRoot = null;
+      this.bumpFileTree();
+      if (rt.session) {
+        rt.session.listDir(dir);
+      }
       this.saveSession();
     });
     session.onSessionId((id: string): void => {
@@ -807,6 +903,18 @@ struct Index {
         }
         this.handleTaskEvent(event);
       }
+    });
+    // File tree: receive directory listings from the server
+    session.onListDirResult((result: Record<string, Object>): void => {
+      const res: ListDirResult = result as ListDirResult;
+      if (!rt.fileTreeRoot && res.path === rt.cwd) {
+        // First listing for this tab — create root node
+        rt.fileTreeRoot = FileTreeModel.createRoot(rt.cwd, res);
+      } else {
+        // Merge into existing tree (subdirectory expansion or refresh)
+        FileTreeModel.mergeResult(rt.fileTreeRoot, res);
+      }
+      this.bumpFileTree();
     });
     rt.session = session;
     session.start();
@@ -1127,49 +1235,66 @@ struct Index {
               onOpenGuide: (): void => { this.openGuide(); },
               onOpenSettings: (): void => { this.openSettings(); },
               onOpenAbout: (): void => { this.settingsInitialTab = 3; this.showSettings = true; },
-              onOpenOverflow: (): void => { this.showOverflow = !this.showOverflow; }
+              onOpenOverflow: (): void => { this.showOverflow = !this.showOverflow; },
+              onToggleSidebar: (): void => { this.toggleSidebar(); },
+              sidebarVisible: this.sidebarVisible
             })
-            // Terminal content as a rounded card. The frame (bgChrome,
-            // same color as the strip) shows on left/right/bottom because the
-            // parent Column pads those sides. Cross-axis stretch fills the rest,
-            // so no width('100%') is set (that would overflow the padding and
-            // clip the right border).
-            // Task 6: the card is now a Column whose first child is the scheme-B
-            // signature line (accent→accentAlt gradient). Under refined the line
-            // is fully transparent and the card radius is RADIUS_CARD on all
-            // corners, so pixels match the pre-Task-6 baseline. The terminal
-            // background stays themeBg-driven (terminal theme, not a chrome token).
-            Column() {
-              Row()
-                .width('100%')
-                .height(this.uiTheme.accentGradient ? 2 : 0)
-                .linearGradient({ angle: 90, colors: [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]] })
-                .opacity(this.uiTheme.accentGradient ? 1 : 0)
-                .borderRadius({ topLeft: RADIUS_CARD, topRight: RADIUS_CARD })
-              Stack({ alignContent: Alignment.Top }) {
-                ForEach(this.tabs, (tab: TabMeta) => {
-                  this.buildSurface(tab.id);
-                }, (tab: TabMeta) => tab.id.toString())
-                StatusBanner({
-                  visible: this.bannerVisible(),
-                  text: this.activeMeta().statusText,
-                  kind: this.bannerKind(),
-                  // No manual reconnect while the first connect is still in
-                  // flight — matches the old `state !== Connecting` check.
-                  actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
+            // Sidebar + terminal row (replaces the old solitary terminal card)
+            Row() {
+              if (this.sidebarVisible) {
+                FileTreePanel({
+                  root: this.activeRuntime()?.fileTreeRoot ?? null,
+                  cwd: this.activeRuntime()?.cwd ?? '',
+                  treeVersion: this.fileTreeVersion,
                   uiFontFamily: this.uiFontFamily,
-                  onAction: (): void => { this.reconnectActive(); }
+                  onToggleDir: (path: string): void => { this.handleListDir(path); },
+                  onFileAction: (action: 'cd' | 'cat', path: string): void => { this.handleFileAction(action, path); },
+                  onWriteCommand: (cmd: string): void => { this.handleWriteCommand(cmd); },
+                  onRefresh: (): void => { this.handleRefreshTree(); }
                 })
+                  .width(this.sidebarWidth)
+                  .height('100%')
+                  .backgroundColor(this.uiTheme.bgSurface)
+                  .border({ width: { right: 1 }, color: this.uiTheme.divider })
               }
-              .width('100%')
+
+              // Terminal content — same card as before, now inside Row
+              Column() {
+                Row()
+                  .width('100%')
+                  .height(this.uiTheme.accentGradient ? 2 : 0)
+                  .linearGradient({ angle: 90, colors: [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]] })
+                  .opacity(this.uiTheme.accentGradient ? 1 : 0)
+                  .borderRadius(this.sidebarVisible
+                    ? { topLeft: 0, topRight: RADIUS_CARD }
+                    : { topLeft: RADIUS_CARD, topRight: RADIUS_CARD })
+                Stack({ alignContent: Alignment.Top }) {
+                  ForEach(this.tabs, (tab: TabMeta) => {
+                    this.buildSurface(tab.id);
+                  }, (tab: TabMeta) => tab.id.toString())
+                  StatusBanner({
+                    visible: this.bannerVisible(),
+                    text: this.activeMeta().statusText,
+                    kind: this.bannerKind(),
+                    // No manual reconnect while the first connect is still in
+                    // flight — matches the old `state !== Connecting` check.
+                    actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
+                    uiFontFamily: this.uiFontFamily,
+                    onAction: (): void => { this.reconnectActive(); }
+                  })
+                }
+                .width('100%')
+                .layoutWeight(1)
+              }
               .layoutWeight(1)
+              .backgroundColor(this.themeBg)
+              .borderRadius(this.sidebarVisible
+                ? { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: RADIUS_CARD } as BorderRadiuses
+                : RADIUS_CARD)
+              .clip(true)
             }
             .layoutWeight(1)
-            .backgroundColor(this.themeBg)
-            .borderRadius(this.uiTheme.accentGradient
-              ? { topLeft: 0, topRight: 0, bottomLeft: RADIUS_CARD, bottomRight: RADIUS_CARD } as BorderRadiuses
-              : RADIUS_CARD)
-            .clip(true)
+            .width('100%')
           }
         }
         .width('100%')
@@ -1316,6 +1441,7 @@ struct Index {
     // with: (a) terminal escape sequences that use bare Ctrl (Ctrl+W, Ctrl+T,
     // Ctrl+1~9 are meaningful to shells/readline); (b) IME mode-switch keys
     // that many Chinese input methods assign to Ctrl combinations.
+    .keyboardShortcut('b', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.toggleSidebar(); })
     .keyboardShortcut('f', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.requestSearch(); })
     .keyboardShortcut('t', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.openTab(); })
     .keyboardShortcut('w', [ModifierKey.CTRL, ModifierKey.SHIFT], () => { this.closeTab(this.activeId); })
