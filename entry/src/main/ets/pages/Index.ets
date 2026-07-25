@@ -29,7 +29,7 @@ import { TaskEvent, TaskEventType } from '../notifications/TaskEvent';
 import { TaskDetector } from '../notifications/TaskDetector';
 import { NotificationService } from '../notifications/NotificationService';
 import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/ConnectionStore';
-import { ListDirResult } from '../filetree/FileTreeTypes';
+import { ListDirResult, FileEntry } from '../filetree/FileTreeTypes';
 import { FileTreeModel } from '../filetree/FileTreeModel';
 
 function stateLabel(s: DriverStatus): string {
@@ -906,7 +906,7 @@ struct Index {
     });
     // File tree: receive directory listings from the server
     session.onListDirResult((result: ServerCtrl): void => {
-      const res: ListDirResult = result as unknown as ListDirResult;
+      const res: ListDirResult = toListDirResult(result);
       if (!rt.fileTreeRoot && res.path === rt.cwd) {
         // First listing for this tab — create root node
         rt.fileTreeRoot = FileTreeModel.createRoot(rt.cwd, res);
@@ -1735,4 +1735,35 @@ struct Index {
       }
     })
   }
+}
+
+// Convert server control message to typed ListDirResult without using unknown.
+function toListDirResult(ctrl: ServerCtrl): ListDirResult {
+  const entries: FileEntry[] = [];
+  if (ctrl.entries) {
+    for (const e of ctrl.entries) {
+      let fileType: 'file' | 'directory' | 'symlink' = 'file';
+      if (e.type === 'directory') {
+        fileType = 'directory';
+      } else if (e.type === 'symlink') {
+        fileType = 'symlink';
+      }
+      const entry: FileEntry = {
+        name: e.name,
+        type: fileType,
+        size: e.size,
+        mtime: e.mtime,
+        mode: e.mode
+      };
+      entries.push(entry);
+    }
+  }
+  const result: ListDirResult = {
+    type: 'list_dir_result',
+    path: ctrl.path ?? '',
+    entries: entries,
+    truncated: ctrl.truncated ?? false,
+    error: ctrl.error ?? ''
+  };
+  return result;
 }
