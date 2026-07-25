@@ -7,7 +7,7 @@
  * Reactivity: ArkTS V1 中 @Prop 只在引用变化时触发重渲染。
  * 由于 FileTreeNode 树是原地修改的（非 @Observed），该组件
  * 每次 build() 时从 root 重新计算可见节点列表。
- * 交互处理函数操作节点状态后通过重新计算列表来触发 UI 更新。
+ * 交互处理函数操作节点状态后通过 renderVersion 来触发 UI 更新。
  */
 
 import { UiTheme, REFINED_DARK_THEME, RADIUS_CONTROL } from '../theme/UiTheme';
@@ -47,6 +47,13 @@ export struct FileTreePanel {
   onRefresh: () => void = () => {};
 
   @State private hoveredPath: string = '';
+  // Bump after any local node mutation (expand/collapse toggle, loading flag)
+  // so ArkUI re-runs build() → computeFlatList() with the updated tree state.
+  // FileTreeNode is NOT @Observed, so without this the UI would freeze until
+  // the next treeVersion prop change from the parent.
+  @State private renderVersion: number = 0;
+  // Context menu hover tracking (single string, same pattern as TabStrip).
+  @State private hoverMenuAction: string = '';
 
   // ── build ──────────────────────────────────────────────────────────────
 
@@ -61,7 +68,9 @@ export struct FileTreePanel {
       } else {
         Scroll() {
           Column() {
-            ForEach(this.computeFlatList(), (fn: FlatNode) => {
+            // renderVersion is referenced to force re-computation when local
+            // tree-node mutations (expand/collapse) change the visible set.
+            ForEach(this.computeFlatList(this.renderVersion), (fn: FlatNode) => {
               this.buildNodeRow(fn)
             }, (fn: FlatNode) => fn.treeNode.path)
           }
@@ -73,7 +82,7 @@ export struct FileTreePanel {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.uiTheme.bgSurface)
+    .backgroundColor(this.uiTheme.bgChrome)
   }
 
   // ── Header ─────────────────────────────────────────────────────────────
@@ -91,9 +100,7 @@ export struct FileTreePanel {
 
       // Refresh button
       Row() {
-        Text('↻')
-          .fontSize(14)
-          .fontColor(this.uiTheme.textDim)
+        this.refreshIcon()
       }
       .width(22)
       .height(22)
@@ -120,22 +127,21 @@ export struct FileTreePanel {
 
       // Chevron
       if (fn.treeNode.type === 'directory') {
-        Text(fn.treeNode.expanded ? '▼' : '▶')
-          .fontSize(10)
-          .fontColor(this.uiTheme.textFaint)
-          .width(CHEV_WIDTH)
-          .textAlign(TextAlign.Center)
-          .focusable(false)
-          .onClick(() => { this.onChevronClick(fn.treeNode); })
+        Row() {
+          Text(fn.treeNode.expanded ? '▾' : '▸')
+            .fontSize(9)
+            .fontColor(this.uiTheme.textFaint)
+        }
+        .width(CHEV_WIDTH)
+        .justifyContent(FlexAlign.Center)
+        .focusable(false)
+        .onClick(() => { this.onChevronClick(fn.treeNode); })
       } else {
         Blank().width(CHEV_WIDTH)
       }
 
       // Icon
-      Text(fn.treeNode.type === 'directory' ? '📁' : '📄')
-        .fontSize(14)
-        .width(ICON_WIDTH)
-        .textAlign(TextAlign.Center)
+      this.nodeTypeIcon(fn.treeNode.type)
 
       // Name
       Text(fn.treeNode.name)
@@ -180,7 +186,19 @@ export struct FileTreePanel {
   buildErrorRow(fn: FlatNode) {
     Row() {
       Blank().width((fn.indent + 1) * INDENT_WIDTH + CHEV_WIDTH)
-      Text('⚠ ' + fn.treeNode.error)
+      Row() {
+        Text('!')
+          .fontSize(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.uiTheme.danger)
+          .width(14)
+          .height(14)
+          .textAlign(TextAlign.Center)
+          .border({ width: 1.2, color: this.uiTheme.danger })
+          .borderRadius(7)
+      }
+      .margin({ right: 4 })
+      Text(fn.treeNode.error)
         .fontSize(11)
         .fontColor(this.uiTheme.danger)
         .maxLines(2)
@@ -196,35 +214,155 @@ export struct FileTreePanel {
   }
 
   // ── Context menu ───────────────────────────────────────────────────────
+  // Matches TabStrip context menu style: custom Column with hover-aware
+  // rows, dividers, and unified card styling (no system Menu/MenuItem).
 
   @Builder
   buildContextMenu(node: FileTreeNode) {
-    Menu() {
-      MenuItem({ content: '复制路径' })
-        .onClick(() => {
-          // Write path into terminal so user can paste it into a command
-          this.onWriteCommand(`# ${node.path}`);
-        })
-      MenuItem({ content: '在终端中打开' })
-        .onClick(() => {
-          const target: string = node.type === 'directory' ? node.path : this.parentDir(node.path);
-          this.onFileAction('cd', target);
-        })
-      MenuItem({ content: '新建文件…' })
-        .onClick(() => { this.createWithTimestamp(node, 'file'); })
-      MenuItem({ content: '新建目录…' })
-        .onClick(() => { this.createWithTimestamp(node, 'directory'); })
-      MenuItem({ content: '重命名…' })
-        .onClick(() => {
-          const p: string = node.path;
-          this.onWriteCommand(`# rename: mv "${p}" "${this.parentDir(p)}/NEW_NAME"`);
-        })
-      MenuItem({ content: '删除…' })
-        .onClick(() => {
-          this.onWriteCommand(`rm -rf "${node.path}"`);
-          setTimeout(() => { this.onRefresh(); }, 300);
-        })
+    Column() {
+      // 复制路径
+      Row({ space: 8 }) {
+        this.menuCopyIcon()
+        Text('复制路径')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'copy_path' ? this.uiTheme.hoverOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'copy_path' : ''; })
+      .onClick(() => {
+        this.hoverMenuAction = '';
+        this.onWriteCommand(`# ${node.path}`);
+      })
+
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 在终端中打开
+      Row({ space: 8 }) {
+        this.menuTerminalIcon()
+        Text('在终端中打开')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'open_term' ? this.uiTheme.hoverOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'open_term' : ''; })
+      .onClick(() => {
+        this.hoverMenuAction = '';
+        const target: string = node.type === 'directory' ? node.path : this.parentDir(node.path);
+        this.onFileAction('cd', target);
+      })
+
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 新建文件
+      Row({ space: 8 }) {
+        this.menuNewFileIcon()
+        Text('新建文件…')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'new_file' ? this.uiTheme.hoverOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'new_file' : ''; })
+      .onClick(() => {
+        this.hoverMenuAction = '';
+        this.createWithTimestamp(node, 'file');
+      })
+
+      // 新建目录
+      Row({ space: 8 }) {
+        this.menuNewDirIcon()
+        Text('新建目录…')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'new_dir' ? this.uiTheme.hoverOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'new_dir' : ''; })
+      .onClick(() => {
+        this.hoverMenuAction = '';
+        this.createWithTimestamp(node, 'directory');
+      })
+
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 重命名
+      Row({ space: 8 }) {
+        this.menuRenameIcon()
+        Text('重命名…')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'rename' ? this.uiTheme.hoverOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'rename' : ''; })
+      .onClick(() => {
+        this.hoverMenuAction = '';
+        const p: string = node.path;
+        this.onWriteCommand(`# rename: mv "${p}" "${this.parentDir(p)}/NEW_NAME"`);
+      })
+
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 删除
+      Row({ space: 8 }) {
+        this.menuDeleteIcon()
+        Text('删除…')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'delete' ? this.uiTheme.dangerBg : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'delete' : ''; })
+      .onClick(() => {
+        this.hoverMenuAction = '';
+        this.onWriteCommand(`rm -rf "${node.path}"`);
+        setTimeout(() => { this.onRefresh(); }, 300);
+      })
     }
+    .width(170)
+    .padding(4)
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
+    .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 6 })
   }
 
   // ── Empty state ────────────────────────────────────────────────────────
@@ -232,9 +370,13 @@ export struct FileTreePanel {
   @Builder
   buildEmptyState() {
     Column() {
-      Text('📂')
-        .fontSize(36)
-        .opacity(0.3)
+      // Simple folder shape — accent-colored rounded rect at larger size
+      Row()
+        .width(36)
+        .height(28)
+        .backgroundColor(this.uiTheme.accent)
+        .borderRadius(4)
+        .opacity(0.25)
         .margin({ bottom: 8 })
       Text(this.cwd ? '加载中…' : '未连接')
         .fontSize(13)
@@ -254,12 +396,14 @@ export struct FileTreePanel {
       return;
     }
     if (node.children === null && !node.loading) {
-      // Request lazy load from server
+      // Request lazy load from server — show spinner immediately
       node.loading = true;
+      this.renderVersion++;
       this.onToggleDir(node.path);
     } else if (node.children !== null) {
-      // Toggle expand/collapse
+      // Toggle expand/collapse — re-render immediately
       node.expanded = !node.expanded;
+      this.renderVersion++;
     }
   }
 
@@ -282,6 +426,141 @@ export struct FileTreePanel {
     setTimeout(() => { this.onRefresh(); }, 500);
   }
 
+  // ── Icon builders ─────────────────────────────────────────────────────
+  @Builder
+  nodeTypeIcon(type: string) {
+    if (type === 'directory') {
+      // Folder: accent-colored filled rounded rectangle
+      Row()
+        .width(14)
+        .height(11)
+        .backgroundColor(this.uiTheme.accent)
+        .borderRadius(2.5)
+        .opacity(0.85)
+        .margin({ left: 3, right: 3 })
+    } else {
+      // File: dim outlined rounded rectangle
+      Row()
+        .width(14)
+        .height(11)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 1.2, color: this.uiTheme.textFaint })
+        .borderRadius(2.5)
+        .opacity(0.6)
+        .margin({ left: 3, right: 3 })
+    }
+  }
+
+  @Builder
+  refreshIcon() {
+    // Thin circular arrow — geometric, not emoji
+    Stack({ alignContent: Alignment.Center }) {
+      Circle({ width: 12, height: 12 })
+        .fill(Color.Transparent)
+        .stroke(this.uiTheme.textDim)
+        .strokeWidth(1.4)
+      // Arrowhead: small triangle indicating direction
+      Text('↺')
+        .fontSize(10)
+        .fontColor(this.uiTheme.textDim)
+    }
+    .width(14)
+    .height(14)
+  }
+
+  // ── Menu icon builders ────────────────────────────────────────────────
+  // Thin line-art icons matching TabStrip's design language.
+
+  @Builder
+  menuCopyIcon() {
+    // Two overlapping rectangles — "copy" metaphor
+    Stack({ alignContent: Alignment.TopStart }) {
+      Row()
+        .width(8).height(9)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 1.2, color: this.uiTheme.textDim })
+        .borderRadius(1.5)
+        .margin({ left: 3, top: 3 })
+      Row()
+        .width(8).height(9)
+        .backgroundColor(this.uiTheme.bgSurface)
+        .border({ width: 1.2, color: this.uiTheme.textDim })
+        .borderRadius(1.5)
+    }
+    .width(14).height(14)
+  }
+
+  @Builder
+  menuTerminalIcon() {
+    // Terminal prompt symbol: ">_"
+    Text('>_')
+      .fontSize(11)
+      .fontFamily('monospace')
+      .fontColor(this.uiTheme.textDim)
+  }
+
+  @Builder
+  menuNewFileIcon() {
+    // Document with a "+" badge
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Row()
+        .width(10).height(12)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 1.2, color: this.uiTheme.textDim })
+        .borderRadius(1.5)
+      Text('+')
+        .fontSize(8)
+        .fontColor(this.uiTheme.accent)
+        .fontWeight(FontWeight.Bold)
+        .margin({ right: -2, top: -2 })
+    }
+    .width(14).height(14)
+  }
+
+  @Builder
+  menuNewDirIcon() {
+    // Folder with a "+" badge
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Row()
+        .width(12).height(9)
+        .backgroundColor(this.uiTheme.accent)
+        .borderRadius(2)
+        .opacity(0.7)
+      Text('+')
+        .fontSize(8)
+        .fontColor(this.uiTheme.accent)
+        .fontWeight(FontWeight.Bold)
+        .margin({ right: -2, top: -2 })
+    }
+    .width(14).height(14)
+  }
+
+  @Builder
+  menuRenameIcon() {
+    // Pencil/edit glyph: diagonal line
+    Text('/')
+      .fontSize(12)
+      .fontColor(this.uiTheme.textDim)
+      .fontWeight(FontWeight.Lighter)
+  }
+
+  @Builder
+  menuDeleteIcon() {
+    // Trash bin: simple outlined rectangle with a lid
+    Column({ space: 0 }) {
+      Row()
+        .width(12).height(2)
+        .backgroundColor(this.uiTheme.textDim)
+        .borderRadius(1)
+      Row()
+        .width(10).height(9)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 1.2, color: this.uiTheme.textDim })
+        .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 2, bottomRight: 2 })
+    }
+    .width(14).height(13)
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────
 
   private parentDir(path: string): string {
@@ -292,7 +571,7 @@ export struct FileTreePanel {
     return path.substring(0, idx);
   }
 
-  private computeFlatList(): FlatNode[] {
+  private computeFlatList(_version: number): FlatNode[] {
     const list: FlatNode[] = [];
     if (this.root) {
       this.collectVisible(this.root, list);

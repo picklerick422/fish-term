@@ -1239,71 +1239,77 @@ struct Index {
               onToggleSidebar: (): void => { this.toggleSidebar(); },
               sidebarVisible: this.sidebarVisible
             })
-            // Sidebar + terminal row (replaces the old solitary terminal card)
-            Row() {
-              if (this.sidebarVisible) {
-                FileTreePanel({
-                  root: this.activeRuntime()?.fileTreeRoot ?? null,
-                  cwd: this.activeRuntime()?.cwd ?? '',
-                  treeVersion: this.fileTreeVersion,
-                  uiFontFamily: this.uiFontFamily,
-                  onToggleDir: (path: string): void => { this.handleListDir(path); },
-                  onFileAction: (action: 'cd' | 'cat', path: string): void => { this.handleFileAction(action, path); },
-                  onWriteCommand: (cmd: string): void => { this.handleWriteCommand(cmd); },
-                  onRefresh: (): void => { this.handleRefreshTree(); }
-                })
-                  .width(this.sidebarWidth)
-                  .height('100%')
-                  .backgroundColor(this.uiTheme.bgSurface)
-                  .border({ width: { right: 1 }, color: this.uiTheme.divider })
-              }
-
-              // Terminal content — same card as before, now inside Row
-              Column() {
-                Row()
-                  .width('100%')
-                  .height(this.uiTheme.accentGradient ? 2 : 0)
-                  .linearGradient({ angle: 90, colors: [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]] })
-                  .opacity(this.uiTheme.accentGradient ? 1 : 0)
-                  .borderRadius(this.sidebarVisible
-                    ? { topLeft: 0, topRight: RADIUS_CARD }
-                    : { topLeft: RADIUS_CARD, topRight: RADIUS_CARD })
-                Stack({ alignContent: Alignment.Top }) {
-                  ForEach(this.tabs, (tab: TabMeta) => {
-                    this.buildSurface(tab.id);
-                  }, (tab: TabMeta) => tab.id.toString())
-                  StatusBanner({
-                    visible: this.bannerVisible(),
-                    text: this.activeMeta().statusText,
-                    kind: this.bannerKind(),
-                    // No manual reconnect while the first connect is still in
-                    // flight — matches the old `state !== Connecting` check.
-                    actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
+            // Sidebar + terminal area.
+            // Dual-layer clip strategy:
+            //   1. Outer Row clips the entire content block (sidebar + terminal)
+            //      at the Row border for the bgChrome frame look.
+            //   2. Each child (FileTreePanel / terminal Column) also has its own
+            //      clip+borderRadius on its outer edges, so XComponent TEXTURE
+            //      corners stay rounded regardless of multi-child Row behaviour.
+            //   3. Outer Column padding creates the 8px bgChrome frame gap.
+            Column() {
+              Row() {
+                if (this.sidebarVisible) {
+                  FileTreePanel({
+                    root: this.activeRuntime()?.fileTreeRoot ?? null,
+                    cwd: this.activeRuntime()?.cwd ?? '',
+                    treeVersion: this.fileTreeVersion,
                     uiFontFamily: this.uiFontFamily,
-                    onAction: (): void => { this.reconnectActive(); }
+                    onToggleDir: (path: string): void => { this.handleListDir(path); },
+                    onFileAction: (action: 'cd' | 'cat', path: string): void => { this.handleFileAction(action, path); },
+                    onWriteCommand: (cmd: string): void => { this.handleWriteCommand(cmd); },
+                    onRefresh: (): void => { this.handleRefreshTree(); }
                   })
+                    .width(this.sidebarWidth)
+                    .height('100%')
+                    .clip(true)
+                    .borderRadius(
+                      { topLeft: RADIUS_CARD, bottomLeft: RADIUS_CARD } as BorderRadiuses)
+                    .border({ width: { right: 1 }, color: this.uiTheme.bgChrome })
                 }
-                .width('100%')
+
+                Column() {
+                  Row()
+                    .width('100%')
+                    .height(this.uiTheme.accentGradient ? 2 : 0)
+                    .linearGradient({ angle: 90, colors: [[this.uiTheme.accent, 0.0], [this.uiTheme.accentAlt, 1.0]] })
+                    .opacity(this.uiTheme.accentGradient ? 1 : 0)
+                  Stack({ alignContent: Alignment.Top }) {
+                    ForEach(this.tabs, (tab: TabMeta) => {
+                      this.buildSurface(tab.id);
+                    }, (tab: TabMeta) => tab.id.toString())
+                    StatusBanner({
+                      visible: this.bannerVisible(),
+                      text: this.activeMeta().statusText,
+                      kind: this.bannerKind(),
+                      actionText: this.activeMeta().state === DriverState.Connecting ? '' : '立即重连',
+                      uiFontFamily: this.uiFontFamily,
+                      onAction: (): void => { this.reconnectActive(); }
+                    })
+                  }
+                  .width('100%')
+                  .layoutWeight(1)
+                }
                 .layoutWeight(1)
+                .height('100%')
+                .clip(true)
+                .borderRadius(RADIUS_CARD)
+                .backgroundColor(this.themeBg)
               }
               .layoutWeight(1)
-              .backgroundColor(this.themeBg)
-              .borderRadius(this.sidebarVisible
-                ? { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: RADIUS_CARD } as BorderRadiuses
-                : RADIUS_CARD)
+              .width('100%')
+              .height('100%')
               .clip(true)
+              .borderRadius(RADIUS_CARD)
             }
             .layoutWeight(1)
             .width('100%')
+            .padding({ left: 8, right: 8, bottom: 8 })
           }
         }
         .width('100%')
         .height('100%')
-        // Frame: bgChrome border on left / right / bottom. The top frame
-        // above the tabs is produced inside the (full-height) strip by making
-        // the tab chips shorter than the strip — so the strip stays aligned with
-        // the system window controls.
-        .padding({ left: 8, right: 8, bottom: 8 })
+        .backgroundColor(this.uiTheme.bgChrome)
         .bindSheet($$this.showSettings, this.buildSettingsSheet(), {
           preferType: SheetType.CENTER,
           width: '50%',
