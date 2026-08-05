@@ -4,9 +4,11 @@ import { DEFAULT_FONT_SIZE, DEFAULT_UI_FONT } from '../theme/FontScale';
 
 // Reactive per-tab metadata that drives the tab strip. The heavy controller /
 // session live in TerminalRuntime, keyed by id in `runtimes` on the page.
-// Must be @Observed class — ArkUI V1 tracks nested changes on interface fields
-// only when the whole array is reassigned AND ForEach keys differ. @Observed
-// makes property changes reliably trigger UI refresh.
+// Must be @Observed class — TabChip observes it via @ObjectLink, so in-place
+// title/status edits re-render the chip without rebuilding it (the stable
+// ForEach key keeps an open right-click context menu alive across title
+// changes). The page still reassigns `tabs` so its own getters (StatusBanner,
+// status capsule, overflow list) re-evaluate.
 @Observed
 export class TabMeta {
   id: number;
@@ -33,7 +35,14 @@ export class TabMeta {
 // statusColor is accepted for interface stability but not rendered here.
 @Component
 export struct TabStrip {
-  @Prop tabs: TabMeta[] = [];
+  // @Link (not @Prop): @Prop deep-copies the array AND its TabMeta elements, so
+  // the chips' @ObjectLink would observe copies — never the instances the page
+  // mutates in place via updateTabTitle/updateTabMeta. @Link shares the real
+  // instances, so in-place @Observed field edits reach TabChip directly and the
+  // chip re-renders without being rebuilt (stable ForEach key keeps an open
+  // context menu alive). TabStrip never mutates the array itself — reordering
+  // goes through onReorder back to the page.
+  @Link tabs: TabMeta[];
   @Prop activeId: number = -1;
   @Prop themeBg: string = REFINED_DARK_THEME.bgBase;
   @Prop themeFg: string = REFINED_DARK_THEME.textPrimary;
@@ -66,19 +75,16 @@ export struct TabStrip {
   @State private hoverSettings: boolean = false;
   @State private hoverLogo: boolean = false;
   @State private hoverSidebarToggle: boolean = false;
-  @State private hoverCloseId: number = -1;
-  @State private hoverTabId: number = -1;
-  @State private hoverMenuAction: string = '';
   @State private hoverGuide: boolean = false;
   @State private hoverOverflow: boolean = false;
   // Tab drag-reorder via horizontal PanGesture (live reorder, stays on baseline).
+  // Per-chip hover / drag bookkeeping (hoverClose, hoverSelf, didDrag,
+  // lastDragEnd) lives inside TabChip.
   @State private dragTabId: number = -1;
   @State private dragOffsetX: number = 0;
   @State private dragSwaps: number = 0;
   @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
   private dragUnit: number = 110;
-  private didDrag: boolean = false;
-  private lastDragEnd: number = 0;
   // Pending index of the dragged chip during a live reorder. The tabs array is
   // owned (and spliced) by the page via onReorder; this tracks where the chip
   // sits so rapid successive moves within one gesture event stay consistent
@@ -116,9 +122,6 @@ export struct TabStrip {
   // tabs re-flow live (with animation) under the finger.
   private onDragUpdate(offsetX: number): void {
     this.dragOffsetX = offsetX;
-    if (Math.abs(offsetX) > 4) {
-      this.didDrag = true;
-    }
     let guard: number = 0;
     while (guard < 20) {
       guard = guard + 1;
@@ -139,6 +142,30 @@ export struct TabStrip {
         break;
       }
     }
+  }
+
+  // Drag lifecycle entry points, called from TabChip's PanGesture handlers.
+  // The shared drag state lives here so every chip re-flows live during a drag
+  // (each chip receives it as props and mirrors its translate/zIndex/scale).
+  // NOTE: names avoid ArkUI's built-in onDragStart / onDragEnd / onMeasure
+  // universal-attribute methods, which collide inside a @Component.
+  private beginDrag(tabId: number): void {
+    this.dragTabId = tabId;
+    this.dragOffsetX = 0;
+    this.dragSwaps = 0;
+    this.dragUnit = this.avgChipWidth();
+    this.dragCurIdx = this.tabs.findIndex((t: TabMeta) => t.id === tabId);
+  }
+
+  private endDrag(): void {
+    this.dragTabId = -1;
+    this.dragOffsetX = 0;
+    this.dragSwaps = 0;
+    this.dragCurIdx = -1;
+  }
+
+  private cancelDrag(): void {
+    this.endDrag();
   }
 
   build() {
@@ -186,8 +213,29 @@ export struct TabStrip {
 
             Row({ space: 4 }) {
               ForEach(this.tabs, (tab: TabMeta) => {
-                this.buildTabChip(tab)
-              }, (tab: TabMeta) => tab.id + '_' + tab.title)
+                TabChip({
+                  tab: tab,
+                  isActive: tab.id === this.activeId,
+                  themeBg: this.themeBg,
+                  themeFg: this.themeFg,
+                  fontSize: this.fontSize,
+                  uiFontFamily: this.uiFontFamily,
+                  tabCompact: this.tabCompact,
+                  dragTabId: this.dragTabId,
+                  dragOffsetX: this.dragOffsetX,
+                  dragSwaps: this.dragSwaps,
+                  dragUnit: this.dragUnit,
+                  onSwitchTab: (id: number): void => { this.onSwitchTab(id); },
+                  onCloseTab: (id: number): void => { this.onCloseTab(id); },
+                  onRenameTab: (id: number): void => { this.onRenameTab(id); },
+                  onCloseOthers: (id: number): void => { this.onCloseOthers(id); },
+                  beginDrag: (id: number): void => { this.beginDrag(id); },
+                  continueDrag: (x: number): void => { this.onDragUpdate(x); },
+                  endDrag: (): void => { this.endDrag(); },
+                  cancelDrag: (): void => { this.cancelDrag(); },
+                  measureWidth: (w: number): void => { this.chipWidths.set(tab.id, w); }
+                })
+              }, (tab: TabMeta) => tab.id.toString())
             }
             // Futuristic: leave room on the left so the active capsule's glow
             // isn't clipped by the Scroll bounds.
@@ -240,8 +288,29 @@ export struct TabStrip {
         // Compact: equal-width chips, no scroll, all tabs visible
         Row({ space: 4 }) {
           ForEach(this.tabs, (tab: TabMeta) => {
-            this.buildTabChip(tab)
-          }, (tab: TabMeta) => tab.id + '_' + tab.title)
+            TabChip({
+              tab: tab,
+              isActive: tab.id === this.activeId,
+              themeBg: this.themeBg,
+              themeFg: this.themeFg,
+              fontSize: this.fontSize,
+              uiFontFamily: this.uiFontFamily,
+              tabCompact: this.tabCompact,
+              dragTabId: this.dragTabId,
+              dragOffsetX: this.dragOffsetX,
+              dragSwaps: this.dragSwaps,
+              dragUnit: this.dragUnit,
+              onSwitchTab: (id: number): void => { this.onSwitchTab(id); },
+              onCloseTab: (id: number): void => { this.onCloseTab(id); },
+              onRenameTab: (id: number): void => { this.onRenameTab(id); },
+              onCloseOthers: (id: number): void => { this.onCloseOthers(id); },
+              beginDrag: (id: number): void => { this.beginDrag(id); },
+              continueDrag: (x: number): void => { this.onDragUpdate(x); },
+              endDrag: (): void => { this.endDrag(); },
+              cancelDrag: (): void => { this.cancelDrag(); },
+              measureWidth: (w: number): void => { this.chipWidths.set(tab.id, w); }
+            })
+          }, (tab: TabMeta) => tab.id.toString())
         }
         .height(40)
         .padding({ right: 4 })
@@ -326,204 +395,6 @@ export struct TabStrip {
     .backgroundColor(this.uiTheme.bgChrome)
   }
 
-  @Builder
-  private buildTabChip(tab: TabMeta) {
-    Row({ space: 6 }) {
-      Text(tab.title)
-        .fontSize(Math.max(10, this.fontSize - 1))
-        .fontFamily(this.uiFontFamily)
-        // Futuristic: capsule chip floats on the strip, so it uses chrome text
-        // colors; refined: chip merges with the terminal card, so it uses the
-        // terminal theme's fg (themeFg).
-        .fontColor(tab.id === this.activeId
-          ? (this.uiTheme.accentGradient ? this.uiTheme.textPrimary : this.themeFg)
-          : this.uiTheme.textDim)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(this.tabCompact ? 1 : 0)
-      // ✕ turns red on hover to signal "this will close"; rests at 0.6 opacity
-      Text('✕')
-        .fontSize(11)
-        .fontColor(this.hoverCloseId === tab.id ? this.uiTheme.danger
-          : (tab.id === this.activeId
-            ? (this.uiTheme.accentGradient ? this.uiTheme.textPrimary : this.themeFg)
-            : this.uiTheme.textDim))
-        .opacity(this.hoverCloseId === tab.id ? 1.0 : 0.6)
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .focusable(false)
-        .onHover((h: boolean) => { this.hoverCloseId = h ? tab.id : -1; })
-        .onClick(() => { this.onCloseTab(tab.id); })
-    }
-    .height(tab.id === this.activeId ? (this.uiTheme.accentGradient ? 28 : 32) : 26)
-    // Futuristic lifts chips off the strip baseline so the capsule and its
-    // glow read as a floating element; refined keeps chips flush (merged look).
-    .margin({ bottom: this.uiTheme.accentGradient ? 6 : 0 })
-    .layoutWeight(this.tabCompact ? 1 : 0)
-    .padding({ left: 12, right: 10 })
-    .borderRadius(tab.id === this.activeId
-      ? (this.uiTheme.accentGradient
-        ? { topLeft: 14, topRight: 14, bottomLeft: 14, bottomRight: 14 } as BorderRadiuses
-        : { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses)
-      : (this.uiTheme.accentGradient
-        ? { topLeft: 13, topRight: 13, bottomLeft: 13, bottomRight: 13 } as BorderRadiuses
-        : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses))
-    // Inactive tab gets a subtle highlight on hover. Active tab: futuristic uses
-    // the elevated chrome surface (floating capsule); refined merges with the
-    // terminal background (themeBg) as before.
-    .backgroundColor(tab.id === this.activeId
-      ? (this.uiTheme.accentGradient ? this.uiTheme.bgElevated : this.themeBg)
-      : (this.hoverTabId === tab.id ? this.uiTheme.pressOverlay : Color.Transparent))
-    // Active chip outline: futuristic only (part of the floating capsule look).
-    // Refined keeps the original seamless merge with the terminal background —
-    // no ring. The accent glow shadow below stays fully transparent in refined.
-    .border(tab.id === this.activeId && this.uiTheme.accentGradient
-      ? { width: 1, color: this.uiTheme.borderStrong }
-      : { width: 0, color: Color.Transparent })
-    // The dragged chip follows the finger via a residual X translate; the other
-    // chips re-flow live (with animation) as the array is spliced mid-drag. The
-    // chip never leaves the tab baseline (y is always 0).
-    .translate({ x: this.dragTabId === tab.id ? (this.dragOffsetX - this.dragSwaps * this.dragUnit) : 0, y: 0 })
-    .zIndex(this.dragTabId === tab.id ? 10 : 0)
-    .scale(this.dragTabId === tab.id ? { x: 1.04, y: 1.04 } : { x: 1.0, y: 1.0 })
-    // Drag shadow wins while dragging; otherwise the active chip carries the
-    // scheme glow (transparent in refined), inactive chips none.
-    .shadow(this.dragTabId === tab.id
-      ? { radius: 12, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 2 }
-      : (tab.id === this.activeId
-        ? { radius: 14, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
-        : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 }))
-    .animation(this.dragTabId === tab.id
-      ? { duration: 0 }          // dragged chip tracks the finger with no lag
-      : { duration: 180, curve: Curve.Friction })
-    .alignItems(VerticalAlign.Center)
-    .focusable(false)
-    // Measure width so live-reorder thresholds match the real chip sizes.
-    .onAreaChange((_o: Area, n: Area) => { this.chipWidths.set(tab.id, Number(n.width)); })
-    .onHover((h: boolean) => { this.hoverTabId = h ? tab.id : -1; })
-    .onClick(() => {
-      // Ignore the click that fires right after a real drag; later taps work.
-      if (Date.now() - this.lastDragEnd > 250) {
-        this.onSwitchTab(tab.id);
-      }
-    })
-    .bindContextMenu(this.buildTabContextMenu(tab), ResponseType.RightClick)
-    // Whole-chip horizontal PanGesture for drag-to-reorder. priorityGesture
-    // wins over the parent Scroll's horizontal scroll.
-    .priorityGesture(
-      PanGesture({ direction: PanDirection.Horizontal, distance: 5 })
-        .onActionStart(() => {
-          this.dragTabId = tab.id;
-          this.dragOffsetX = 0;
-          this.dragSwaps = 0;
-          this.didDrag = false;
-          this.dragUnit = this.avgChipWidth();
-          this.dragCurIdx = this.tabs.findIndex((t: TabMeta) => t.id === tab.id);
-        })
-        .onActionUpdate((e: GestureEvent) => {
-          this.onDragUpdate(e.offsetX);
-        })
-        .onActionEnd(() => {
-          if (this.didDrag) {
-            this.lastDragEnd = Date.now();
-          }
-          this.dragTabId = -1;
-          this.dragOffsetX = 0;
-          this.dragSwaps = 0;
-          this.dragCurIdx = -1;
-        })
-        .onActionCancel(() => {
-          if (this.didDrag) {
-            this.lastDragEnd = Date.now();
-          }
-          this.dragTabId = -1;
-          this.dragOffsetX = 0;
-          this.dragSwaps = 0;
-          this.dragCurIdx = -1;
-        })
-    )
-  }
-
-  @Builder
-  private buildTabContextMenu(tab: TabMeta) {
-    Column() {
-      // 重命名
-      Row({ space: 8 }) {
-        Text('✎')
-          .fontSize(12)
-          .fontColor(this.uiTheme.textDim)
-        Text('重命名')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(this.uiTheme.textPrimary)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'rename' ? this.uiTheme.hoverOverlay : Color.Transparent)
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'rename' : ''; })
-      .onClick(() => {
-        // Reset the hover highlight here — the page used to clear it when the
-        // rename sheet closed; the menu is already dismissed by then.
-        this.hoverMenuAction = '';
-        this.onRenameTab(tab.id);
-      })
-
-      // Separator with horizontal margins
-      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
-
-      // 关闭其他
-      Row({ space: 8 }) {
-        Text('✕')
-          .fontSize(12)
-          .fontColor(this.uiTheme.textDim)
-        Text('关闭其他标签页')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(this.uiTheme.textPrimary)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'close_others' ? this.uiTheme.warnBg : Color.Transparent)
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close_others' : ''; })
-      .onClick(() => { this.onCloseOthers(tab.id); })
-
-      // Separator
-      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
-
-      // 关闭
-      Row({ space: 8 }) {
-        Text('✕')
-          .fontSize(12)
-          .fontColor(this.uiTheme.textDim)
-        Text('关闭')
-          .fontSize(13)
-          .fontFamily(this.uiFontFamily)
-          .fontColor(this.uiTheme.textPrimary)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .borderRadius(5)
-      .backgroundColor(this.hoverMenuAction === 'close' ? this.uiTheme.dangerBg : Color.Transparent)
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .focusable(false)
-      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close' : ''; })
-      .onClick(() => { this.onCloseTab(tab.id); })
-    }
-    .width(160)
-    .padding(4)
-    .backgroundColor(this.uiTheme.bgSurface)
-    .borderRadius(RADIUS_CONTROL)
-    .border({ width: 1, color: this.uiTheme.border })
-    .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 6 })
-  }
 
   // Line-art help icon (hollow circle + "?") — same stroke weight / hover
   // behavior as the settings icon and the system caption buttons it sits beside.
@@ -580,5 +451,240 @@ export struct TabStrip {
     .height(14)
     .justifyContent(FlexAlign.Center)
     .animation({ duration: 120, curve: Curve.EaseOut })
+  }
+}
+
+// Per-tab chip. Extracted from TabStrip's buildTabChip @Builder so the chip can
+// observe its TabMeta via @ObjectLink: title/status updates re-render the chip
+// in place instead of destroying + recreating it. The old ForEach key
+// `id + '_' + title` rebuilt the chip on every title change, which also closed
+// any open right-click context menu. Drag/hover state that chips must SHARE
+// (drag reflow) stays in TabStrip and is passed down as props + callbacks;
+// per-chip hover / click-vs-drag bookkeeping stays local here.
+@Component
+struct TabChip {
+  @ObjectLink tab: TabMeta;
+  @Prop isActive: boolean = false;
+  @Prop themeBg: string = REFINED_DARK_THEME.bgBase;
+  @Prop themeFg: string = REFINED_DARK_THEME.textPrimary;
+  @Prop fontSize: number = DEFAULT_FONT_SIZE;
+  @Prop uiFontFamily: string = DEFAULT_UI_FONT;
+  @Prop tabCompact: boolean = false;
+  // Shared drag state (owned by TabStrip so non-dragged chips re-flow live).
+  @Prop dragTabId: number = -1;
+  @Prop dragOffsetX: number = 0;
+  @Prop dragSwaps: number = 0;
+  @Prop dragUnit: number = 110;
+
+  @StorageLink('uiTheme') private uiTheme: UiTheme = REFINED_DARK_THEME;
+
+  @State private hoverSelf: boolean = false;
+  @State private hoverClose: boolean = false;
+  @State private hoverMenuAction: string = '';
+  private didDrag: boolean = false;
+  private lastDragEnd: number = 0;
+
+  onSwitchTab: (id: number) => void = (_id: number) => {};
+  onCloseTab: (id: number) => void = (_id: number) => {};
+  onRenameTab: (id: number) => void = (_id: number) => {};
+  onCloseOthers: (id: number) => void = (_id: number) => {};
+  // Drag / measure callbacks are named to avoid ArkUI's built-in universal
+  // attribute methods (onDragStart / onDragEnd / onMeasure) which collide with
+  // @Component member names.
+  beginDrag: (id: number) => void = (_id: number) => {};
+  continueDrag: (offsetX: number) => void = (_x: number) => {};
+  endDrag: () => void = () => {};
+  cancelDrag: () => void = () => {};
+  measureWidth: (width: number) => void = (_w: number) => {};
+
+  build() {
+    Row({ space: 6 }) {
+      Text(this.tab.title)
+        .fontSize(Math.max(10, this.fontSize - 1))
+        .fontFamily(this.uiFontFamily)
+        // Futuristic: capsule chip floats on the strip, so it uses chrome text
+        // colors; refined: chip merges with the terminal card, so it uses the
+        // terminal theme's fg (themeFg).
+        .fontColor(this.isActive
+          ? (this.uiTheme.accentGradient ? this.uiTheme.textPrimary : this.themeFg)
+          : this.uiTheme.textDim)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(this.tabCompact ? 1 : 0)
+      // ✕ turns red on hover to signal "this will close"; rests at 0.6 opacity
+      Text('✕')
+        .fontSize(11)
+        .fontColor(this.hoverClose ? this.uiTheme.danger
+          : (this.isActive
+            ? (this.uiTheme.accentGradient ? this.uiTheme.textPrimary : this.themeFg)
+            : this.uiTheme.textDim))
+        .opacity(this.hoverClose ? 1.0 : 0.6)
+        .animation({ duration: 120, curve: Curve.EaseOut })
+        .focusable(false)
+        .onHover((h: boolean) => { this.hoverClose = h; })
+        .onClick(() => { this.onCloseTab(this.tab.id); })
+    }
+    .height(this.isActive ? (this.uiTheme.accentGradient ? 28 : 32) : 26)
+    // Futuristic lifts chips off the strip baseline so the capsule and its
+    // glow read as a floating element; refined keeps chips flush (merged look).
+    .margin({ bottom: this.uiTheme.accentGradient ? 6 : 0 })
+    .layoutWeight(this.tabCompact ? 1 : 0)
+    .padding({ left: 12, right: 10 })
+    .borderRadius(this.isActive
+      ? (this.uiTheme.accentGradient
+        ? { topLeft: 14, topRight: 14, bottomLeft: 14, bottomRight: 14 } as BorderRadiuses
+        : { topLeft: 9, topRight: 9, bottomLeft: 0, bottomRight: 0 } as BorderRadiuses)
+      : (this.uiTheme.accentGradient
+        ? { topLeft: 13, topRight: 13, bottomLeft: 13, bottomRight: 13 } as BorderRadiuses
+        : { topLeft: 7, topRight: 7, bottomLeft: 7, bottomRight: 7 } as BorderRadiuses))
+    // Inactive tab gets a subtle highlight on hover. Active tab: futuristic uses
+    // the elevated chrome surface (floating capsule); refined merges with the
+    // terminal background (themeBg) as before.
+    .backgroundColor(this.isActive
+      ? (this.uiTheme.accentGradient ? this.uiTheme.bgElevated : this.themeBg)
+      : (this.hoverSelf ? this.uiTheme.pressOverlay : Color.Transparent))
+    // Active chip outline: futuristic only (part of the floating capsule look).
+    // Refined keeps the original seamless merge with the terminal background —
+    // no ring. The accent glow shadow below stays fully transparent in refined.
+    .border(this.isActive && this.uiTheme.accentGradient
+      ? { width: 1, color: this.uiTheme.borderStrong }
+      : { width: 0, color: Color.Transparent })
+    // The dragged chip follows the finger via a residual X translate; the other
+    // chips re-flow live (with animation) as the array is spliced mid-drag. The
+    // chip never leaves the tab baseline (y is always 0).
+    .translate({ x: this.dragTabId === this.tab.id ? (this.dragOffsetX - this.dragSwaps * this.dragUnit) : 0, y: 0 })
+    .zIndex(this.dragTabId === this.tab.id ? 10 : 0)
+    .scale(this.dragTabId === this.tab.id ? { x: 1.04, y: 1.04 } : { x: 1.0, y: 1.0 })
+    // Drag shadow wins while dragging; otherwise the active chip carries the
+    // scheme glow (transparent in refined), inactive chips none.
+    .shadow(this.dragTabId === this.tab.id
+      ? { radius: 12, color: this.uiTheme.shadowCard, offsetX: 0, offsetY: 2 }
+      : (this.isActive
+        ? { radius: 14, color: this.uiTheme.glowAccent, offsetX: 0, offsetY: 0 }
+        : { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 }))
+    .animation(this.dragTabId === this.tab.id
+      ? { duration: 0 }          // dragged chip tracks the finger with no lag
+      : { duration: 180, curve: Curve.Friction })
+    .alignItems(VerticalAlign.Center)
+    .focusable(false)
+    // Measure width so live-reorder thresholds match the real chip sizes.
+    .onAreaChange((_o: Area, n: Area) => { this.measureWidth(Number(n.width)); })
+    .onHover((h: boolean) => { this.hoverSelf = h; })
+    .onClick(() => {
+      // Ignore the click that fires right after a real drag; later taps work.
+      if (Date.now() - this.lastDragEnd > 250) {
+        this.onSwitchTab(this.tab.id);
+      }
+    })
+    .bindContextMenu(this.buildContextMenu(), ResponseType.RightClick)
+    // Whole-chip horizontal PanGesture for drag-to-reorder. priorityGesture
+    // wins over the parent Scroll's horizontal scroll.
+    .priorityGesture(
+      PanGesture({ direction: PanDirection.Horizontal, distance: 5 })
+        .onActionStart(() => {
+          this.didDrag = false;
+          this.beginDrag(this.tab.id);
+        })
+        .onActionUpdate((e: GestureEvent) => {
+          if (Math.abs(e.offsetX) > 4) {
+            this.didDrag = true;
+          }
+          this.continueDrag(e.offsetX);
+        })
+        .onActionEnd(() => {
+          if (this.didDrag) {
+            this.lastDragEnd = Date.now();
+          }
+          this.endDrag();
+        })
+        .onActionCancel(() => {
+          if (this.didDrag) {
+            this.lastDragEnd = Date.now();
+          }
+          this.cancelDrag();
+        })
+    )
+  }
+
+  @Builder
+  private buildContextMenu() {
+    Column() {
+      // 重命名
+      Row({ space: 8 }) {
+        Text('✎')
+          .fontSize(12)
+          .fontColor(this.uiTheme.textDim)
+        Text('重命名')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'rename' ? this.uiTheme.hoverOverlay : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'rename' : ''; })
+      .onClick(() => {
+        // Reset the hover highlight here — the page used to clear it when the
+        // rename sheet closed; the menu is already dismissed by then.
+        this.hoverMenuAction = '';
+        this.onRenameTab(this.tab.id);
+      })
+
+      // Separator with horizontal margins
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 关闭其他
+      Row({ space: 8 }) {
+        Text('✕')
+          .fontSize(12)
+          .fontColor(this.uiTheme.textDim)
+        Text('关闭其他标签页')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'close_others' ? this.uiTheme.warnBg : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close_others' : ''; })
+      .onClick(() => { this.onCloseOthers(this.tab.id); })
+
+      // Separator
+      Divider().color(this.uiTheme.border).width('100%').margin({ left: 8, right: 8 })
+
+      // 关闭
+      Row({ space: 8 }) {
+        Text('✕')
+          .fontSize(12)
+          .fontColor(this.uiTheme.textDim)
+        Text('关闭')
+          .fontSize(13)
+          .fontFamily(this.uiFontFamily)
+          .fontColor(this.uiTheme.textPrimary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(5)
+      .backgroundColor(this.hoverMenuAction === 'close' ? this.uiTheme.dangerBg : Color.Transparent)
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .focusable(false)
+      .onHover((h: boolean) => { this.hoverMenuAction = h ? 'close' : ''; })
+      .onClick(() => { this.onCloseTab(this.tab.id); })
+    }
+    .width(160)
+    .padding(4)
+    .backgroundColor(this.uiTheme.bgSurface)
+    .borderRadius(RADIUS_CONTROL)
+    .border({ width: 1, color: this.uiTheme.border })
+    .shadow({ radius: 12, color: this.uiTheme.shadowCard, offsetY: 6 })
   }
 }

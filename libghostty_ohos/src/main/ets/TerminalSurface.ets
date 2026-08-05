@@ -32,12 +32,11 @@ export struct TerminalSurface {
   private context: common.UIAbilityContext | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private fallbackTimer: number = -1;
-  // Polls the native renderer for freshly flushed frames and bumps
-  // framePresentTick to dirty the XComponent node itself. Dirtying only a
-  // sibling ArkUI node submits a window frame, but it may not re-record the
-  // XComponent and therefore may not sample/latch the latest native buffer.
+  // Bumped when the controller's adaptive poll reports a freshly flushed native
+  // buffer (see onFramePresent). Changing this @State dirties the XComponent
+  // node itself — dirtying only a sibling ArkUI node submits a window frame but
+  // may not re-record the XComponent, so it may not latch the latest buffer.
   // The typed-character lag happens exactly in that gap.
-  private framePresentTimer: number = -1;
   @State private framePresentTick: number = 0;
   // Debounce resize events during window resize to prevent rendering disorder.
   // onAreaChange fires at display refresh rate (~60 Hz) while the user drags a
@@ -103,7 +102,7 @@ export struct TerminalSurface {
       this.resizeDebounceTimer = -1;
     }
     this.stopFallbackPolling();
-    this.stopFramePolling();
+    this.controller.setFramePresentListener(null);
     this.controller.setConfigListener(null);
     this.controller.setLinkListener(null);
     this.controller.setCopyRequestListener(null);
@@ -143,6 +142,12 @@ export struct TerminalSurface {
           return;
         }
 
+        // Register before bindNative so the very first flushed buffer (theme +
+        // config applied during bind) is presented. The controller's adaptive
+        // poll drains the frame-present flag and calls back here to bump
+        // framePresentTick, which dirties the XComponent node so ArkUI
+        // re-samples the fresh native buffer.
+        this.controller.setFramePresentListener((): void => { this.onFramePresent(); });
         this.controller.bindNative(nativeContext, this.context, this.getDisplayDensity());
         this.useTextFallback = !this.controller.isRendererReady();
         this.fallbackError = this.controller.getRendererError();
@@ -151,15 +156,13 @@ export struct TerminalSurface {
         if (this.useTextFallback) {
           this.syncFallbackScreen();
           this.startFallbackPolling();
-          this.stopFramePolling();
         } else {
           this.stopFallbackPolling();
-          this.startFramePolling();
         }
       })
       .onDestroy(() => {
         this.stopFallbackPolling();
-        this.stopFramePolling();
+        this.controller.setFramePresentListener(null);
         this.controller.unbindNative();
       })
       .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -194,6 +197,9 @@ export struct TerminalSurface {
         }, 80) as number;
       })
       .onTouch((_event?: TouchEvent) => {
+        // Gesture-triggered native events (link activation, context menu) are
+        // drained by the adaptive poll — bump so they run at fast cadence.
+        this.controller.bumpActivity();
         if (this.searchVisible) {
           this.searchInputController.stopEditing();
         }
@@ -213,6 +219,9 @@ export struct TerminalSurface {
       .onMouse((_event?: MouseEvent) => {
         // Mouse events are fully handled on the native side — this ArkTS handler
         // exists only to declare interest so ArkUI routes mouse events here.
+        // Bump the adaptive poll so the context-menu / link events that follow a
+        // right-click / click are drained at fast cadence.
+        this.controller.bumpActivity();
       })
       // Event-driven focus restoration: when this XComponent transitions from
       // Hidden to Visible (tab switch or return-from-background), request ArkUI
@@ -438,29 +447,12 @@ export struct TerminalSurface {
     this.fallbackTimer = -1;
   }
 
-  private startFramePolling(): void {
-    if (this.framePresentTimer >= 0) {
-      return;
-    }
-    // One tick per display refresh (~60fps). Each tick asks the native renderer
-    // whether it flushed a new buffer; if so, bump framePresentTick to drive an
-    // ArkUI window frame so RenderService presents it.
-    this.framePresentTimer = setInterval(() => {
-      if (!this.controller.isAttached()) {
-        return;
-      }
-      if (this.controller.drainPendingFrame()) {
-        this.framePresentTick = (this.framePresentTick + 1) % 1000000;
-      }
-    }, 16) as number;
-  }
-
-  private stopFramePolling(): void {
-    if (this.framePresentTimer < 0) {
-      return;
-    }
-    clearInterval(this.framePresentTimer);
-    this.framePresentTimer = -1;
+  // Called by the controller's adaptive poll when the native renderer flushed a
+  // new buffer. Bumping framePresentTick dirties the XComponent node (it flips
+  // one invisible background bit below) so ArkUI records a window frame and
+  // RenderService re-samples/latches the fresh buffer.
+  private onFramePresent(): void {
+    this.framePresentTick = (this.framePresentTick + 1) % 1000000;
   }
 
   private syncFallbackScreen(): void {

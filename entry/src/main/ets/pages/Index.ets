@@ -473,6 +473,13 @@ struct Index {
     if (!rt || this.showSettings || this.showRenameDialog) {
       return;
     }
+    // Skip while idle: the live background can only change through OSC 11,
+    // which always arrives inside terminal output — no output, no change to
+    // catch. This drops the 500 ms getCurrentBgColor N-API poll to ~zero cost
+    // when the terminal is quiet.
+    if (rt.controller.isIdleSince(2000)) {
+      return;
+    }
     const liveArgb: number = rt.controller.getCurrentBgColor();
     const live: string = Index.argbToHex(liveArgb);
     if (live.length > 0 && live !== this.themeBg) {
@@ -662,26 +669,34 @@ struct Index {
     }, 50);
   }
 
+  // Mutate the target TabMeta in place, then reassign the array (same object
+  // instances). TabChip observes the mutated object via @ObjectLink, so the chip
+  // re-renders WITHOUT a ForEach key change — an open right-click context menu
+  // survives title updates (the old key `id + '_' + title` rebuilt the chip on
+  // every title change and closed the menu). The array reassignment re-syncs the
+  // page's own getters (StatusBanner, status capsule, overflow list) that read
+  // tab state directly.
   private updateTabMeta(id: number, state: DriverState, statusText: string): void {
-    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
-      if (t.id === id) {
-        return new TabMeta(t.id, t.title, state, statusText);
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      if (this.tabs[i].id === id) {
+        this.tabs[i].state = state;
+        this.tabs[i].statusText = statusText;
+        break;
       }
-      return new TabMeta(t.id, t.title, t.state, t.statusText);
-    });
-    this.tabs = next;
+    }
+    this.tabs = this.tabs.slice();
   }
 
   private updateTabTitle(id: number, title: string): void {
     const trimmed = title.trim();
     if (trimmed.length === 0) return;
-    const next: TabMeta[] = this.tabs.map((t: TabMeta): TabMeta => {
-      if (t.id === id) {
-        return new TabMeta(t.id, trimmed, t.state, t.statusText);
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      if (this.tabs[i].id === id) {
+        this.tabs[i].title = trimmed;
+        break;
       }
-      return new TabMeta(t.id, t.title, t.state, t.statusText);
-    });
-    this.tabs = next;
+    }
+    this.tabs = this.tabs.slice();
   }
 
   // Called when TaskDetector detects a task state change.
@@ -813,8 +828,22 @@ struct Index {
       port = Number(this.port);
       tls = this.tls;
       if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535 || token.length === 0) {
-        this.formError = '请先填写连接信息';
-        return;
+        // Form never filled (restore-only usage / rememberToken off leaves the
+        // token empty) — inherit the active tab's connection instead of failing
+        // silently. sessionId stays undefined so the new tab gets a FRESH server
+        // session rather than re-attaching to the source tab's PTY.
+        const src: TerminalRuntime | null = this.activeRuntime();
+        const srcCfg: FishConnectConfig | null = src?.connectionConfig ?? null;
+        if (srcCfg && srcCfg.host.length > 0 && srcCfg.token.length > 0) {
+          host = srcCfg.host;
+          port = srcCfg.port;
+          token = srcCfg.token;
+          tls = srcCfg.tls;
+          cwd = (src && src.cwd.length > 0) ? src.cwd : srcCfg.cwd;
+        } else {
+          this.formError = '请先填写连接信息';
+          return;
+        }
       }
     }
 
@@ -1211,7 +1240,10 @@ struct Index {
         Column() {
           if (this.tabs.length > 0) {
             TabStrip({
-              tabs: this.tabs,
+              // $tabs (not this.tabs): TabStrip binds tabs via @Link, which needs
+              // the $ reference to share the real TabMeta instances so in-place
+              // title/status edits reach the chips' @ObjectLink.
+              tabs: $tabs,
               activeId: this.activeId,
               themeBg: this.themeBg,
               themeFg: this.themeFg,

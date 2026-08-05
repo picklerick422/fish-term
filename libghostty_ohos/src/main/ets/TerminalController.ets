@@ -66,6 +66,17 @@ interface TerminalNativeBridge {
 type TerminalConfigListener = (config: TerminalConfig, themeName: string) => void;
 type TerminalSizeListener = (size: TerminalSize) => void;
 
+// Adaptive polling cadence for the native event drains (link activation,
+// context menu, copy/paste requests) and the frame-present notification.
+// Instead of a fixed 16 ms interval that burns N-API crossings even while the
+// terminal is idle, poll fast (16 ms) while there's been recent activity and
+// fall back to an idle cadence (150 ms) otherwise. 150 ms still catches every
+// native cursor-blink frame (250 ms period), so blinking stays smooth without
+// running the fast loop.
+const POLL_FAST_MS: number = 16;
+const POLL_IDLE_MS: number = 150;
+const POLL_ACTIVE_WINDOW_MS: number = 800;
+
 export class TerminalController {
   private native: TerminalNativeBridge | null = null;
   private config: TerminalConfig = cloneTerminalConfig(DEFAULT_TERMINAL_CONFIG);
@@ -78,7 +89,11 @@ export class TerminalController {
   private sizeListener: TerminalSizeListener | null = null;
   private copyRequestListener: (() => void) | null = null;
   private pasteRequestListener: (() => void) | null = null;
-  private inputPollTimer: number = -1;
+  private framePresentListener: (() => void) | null = null;
+  // Adaptive poll state (see POLL_* constants above).
+  private adaptivePollTimer: number = -1;
+  private lastActivityMs: number = 0;
+  private pollFast: boolean = false;
   private trackedWindow: window.Window | null = null;
   private windowRectListener: ((options: window.RectChangeOptions) => void) | null = null;
   private lastReportedSize: TerminalSize = { cols: 0, rows: 0 };
@@ -91,7 +106,10 @@ export class TerminalController {
     this.native.setInputCallback(this.inputListener);
     this.applyTheme();
     this.applyConfig();
-    this.startInputPolling();
+    // Treat the bind itself as activity so the theme/config frames drawn during
+    // bind are polled at fast cadence (the very first frame must be presented).
+    this.bumpActivity();
+    this.updatePolling();
     this.bindWindowMetadata(context);
     this.notifyAttachmentChanged(true);
   }
@@ -105,8 +123,9 @@ export class TerminalController {
       this.native.setInputCallback(null);
     }
     this.unbindWindowMetadata();
-    this.stopInputPolling();
     this.native = null;
+    // Native is gone — the poll (which guards on this.native) stops itself.
+    this.updatePolling();
     this.notifyAttachmentChanged(false);
   }
 
@@ -117,6 +136,7 @@ export class TerminalController {
   setConfig(config: TerminalConfig): void {
     this.config = cloneTerminalConfig(config);
     this.applyConfig();
+    this.bumpActivity();
     this.notifyConfigChanged();
     // A font-size change re-flows the grid into a new column/row count on the
     // native side, so re-publish the terminal size to drive a driver.resize()
@@ -171,6 +191,7 @@ export class TerminalController {
   setTheme(themeName: string): boolean {
     this.themeName = themeName;
     const loaded = this.applyTheme();
+    this.bumpActivity();
     this.notifyConfigChanged();
     return loaded;
   }
@@ -205,43 +226,27 @@ export class TerminalController {
     if (this.native) {
       this.native.setInputCallback(this.inputListener);
     }
-    if (this.linkListener || this.contextMenuListener) {
-      this.startInputPolling();
-    } else {
-      this.stopInputPolling();
-    }
+    this.updatePolling();
   }
 
   setLinkListener(listener: TerminalLinkListener | null): void {
     this.linkListener = listener;
-    if (this.inputListener || this.linkListener || this.contextMenuListener) {
-      this.startInputPolling();
-    } else {
-      this.stopInputPolling();
-    }
+    this.updatePolling();
   }
 
   setContextMenuListener(listener: TerminalContextMenuListener | null): void {
     this.contextMenuListener = listener;
-    if (this.inputListener || this.linkListener || this.contextMenuListener) {
-      this.startInputPolling();
-    } else {
-      this.stopInputPolling();
-    }
+    this.updatePolling();
   }
 
   setCopyRequestListener(listener: (() => void) | null): void {
     this.copyRequestListener = listener;
-    if (listener) {
-      this.startInputPolling();
-    }
+    this.updatePolling();
   }
 
   setPasteRequestListener(listener: (() => void) | null): void {
     this.pasteRequestListener = listener;
-    if (listener) {
-      this.startInputPolling();
-    }
+    this.updatePolling();
   }
 
   setAttachmentListener(listener: TerminalAttachmentListener | null): void {
@@ -268,6 +273,7 @@ export class TerminalController {
       return;
     }
     this.native.feedOutput(data);
+    this.bumpActivity();
   }
 
   // Byte-oriented feed for bulk output (server ring-buffer replay). Raw frame
@@ -280,6 +286,7 @@ export class TerminalController {
       return;
     }
     this.native.feedOutputBytes(data);
+    this.bumpActivity();
   }
 
   // Clear mouse tracking modes (DEC private 1000/1002/1003/1006) directly
@@ -298,6 +305,7 @@ export class TerminalController {
       return;
     }
     this.native.resizeTerminal(cols, rows);
+    this.bumpActivity();
   }
 
   setSurfaceOrigin(left: number, top: number): void {
@@ -317,6 +325,7 @@ export class TerminalController {
       return;
     }
     this.native.setSurfaceFrame(left, top, width, height);
+    this.bumpActivity();
   }
 
   // Update native surface frame AND schedule a debounced size-change
@@ -327,6 +336,7 @@ export class TerminalController {
       return;
     }
     this.native.setSurfaceFrame(left, top, width, height);
+    this.bumpActivity();
     // Defer size-change notification so the native side has time to process the
     // queued resize in OnFrameTick. Without this, getTerminalSize() returns the
     // old grid dimensions and the listener never fires on the first event of a
@@ -460,6 +470,7 @@ export class TerminalController {
       return;
     }
     this.native.resetTerminal();
+    this.bumpActivity();
   }
 
   getSelectedText(): string {
@@ -474,6 +485,7 @@ export class TerminalController {
       return;
     }
     this.native.startSearch(query);
+    this.bumpActivity();
   }
 
   searchSelection(): void {
@@ -488,6 +500,7 @@ export class TerminalController {
       return;
     }
     this.native.updateSearch(query);
+    this.bumpActivity();
   }
 
   navigateSearch(next: boolean): void {
@@ -495,6 +508,7 @@ export class TerminalController {
       return;
     }
     this.native.navigateSearch(next);
+    this.bumpActivity();
   }
 
   endSearch(): void {
@@ -593,52 +607,110 @@ export class TerminalController {
     this.configListener(this.getConfig(), this.themeName);
   }
 
-  private startInputPolling(): void {
-    const needsPoll = this.linkListener !== null ||
-      this.contextMenuListener !== null ||
-      this.copyRequestListener !== null ||
-      this.pasteRequestListener !== null;
-    if (!this.native || !needsPoll || this.inputPollTimer >= 0) {
-      return;
-    }
-
-    this.inputPollTimer = setInterval(() => {
-      if (!this.native) {
-        return;
-      }
-
-      const activatedLink = this.linkListener ? this.native.drainPendingLinkActivation() : '';
-      if (this.linkListener && activatedLink.length > 0) {
-        this.linkListener(activatedLink);
-      }
-
-      const pendingContextMenu = this.contextMenuListener ? this.native.drainPendingContextMenuRequest() : '';
-      if (this.contextMenuListener && pendingContextMenu.length > 0) {
-        const parts = pendingContextMenu.split(',');
-        const x = parts.length > 0 ? Number(parts[0]) : 0;
-        const y = parts.length > 1 ? Number(parts[1]) : 0;
-        this.contextMenuListener(
-          Number.isFinite(x) ? x : 0,
-          Number.isFinite(y) ? y : 0
-        );
-      }
-
-      if (this.copyRequestListener && this.native.drainPendingCopyRequest()) {
-        this.copyRequestListener();
-      }
-
-      if (this.pasteRequestListener && this.native.drainPendingPasteRequest()) {
-        this.pasteRequestListener();
-      }
-    }, 16) as number;
+  setFramePresentListener(listener: (() => void) | null): void {
+    this.framePresentListener = listener;
+    this.updatePolling();
   }
 
-  private stopInputPolling(): void {
-    if (this.inputPollTimer < 0) {
+  // Mark that the terminal just produced/consumed activity (output fed, config
+  // or theme changed, surface resized, search navigated, user gesture on the
+  // surface). Keeps the adaptive poll in fast mode; if the poll was waiting out
+  // an idle tick, jump straight to fast so freshly flushed frames present
+  // without the idle-cadence latency.
+  bumpActivity(): void {
+    const now: number = Date.now();
+    this.lastActivityMs = now;
+    if (this.adaptivePollTimer >= 0 && !this.pollFast) {
+      clearTimeout(this.adaptivePollTimer);
+      this.adaptivePollTimer = -1;
+      this.schedulePoll();
+    }
+  }
+
+  // True when the terminal has been silent for `windowMs`. The page uses this
+  // to skip its live-background poll while idle — a bg change can only arrive
+  // inside terminal output (OSC 11), so no output means no change to catch.
+  isIdleSince(windowMs: number): boolean {
+    return Date.now() - this.lastActivityMs > windowMs;
+  }
+
+  // Adaptive polling core. One self-rescheduling timer drains the native event
+  // queues (link activation / context menu / copy / paste) AND the frame-present
+  // flag. Fast (16 ms) while active, idle (150 ms) otherwise.
+  private shouldRunPoll(): boolean {
+    return this.linkListener !== null ||
+      this.contextMenuListener !== null ||
+      this.copyRequestListener !== null ||
+      this.pasteRequestListener !== null ||
+      this.framePresentListener !== null;
+  }
+
+  private updatePolling(): void {
+    if (!this.shouldRunPoll() || !this.native) {
+      this.stopPolling();
       return;
     }
-    clearInterval(this.inputPollTimer);
-    this.inputPollTimer = -1;
+    this.schedulePoll();
+  }
+
+  private schedulePoll(): void {
+    if (this.adaptivePollTimer >= 0 || !this.native || !this.shouldRunPoll()) {
+      return;
+    }
+    const fast: boolean = Date.now() - this.lastActivityMs < POLL_ACTIVE_WINDOW_MS;
+    if (fast !== this.pollFast) {
+      this.pollFast = fast;
+    }
+    const delay: number = fast ? POLL_FAST_MS : POLL_IDLE_MS;
+    this.adaptivePollTimer = setTimeout((): void => {
+      this.adaptivePollTimer = -1;
+      this.pollTick();
+    }, delay) as number;
+  }
+
+  private stopPolling(): void {
+    if (this.adaptivePollTimer >= 0) {
+      clearTimeout(this.adaptivePollTimer);
+      this.adaptivePollTimer = -1;
+    }
+  }
+
+  private pollTick(): void {
+    if (!this.native) {
+      return;
+    }
+
+    const activatedLink = this.linkListener ? this.native.drainPendingLinkActivation() : '';
+    if (this.linkListener && activatedLink.length > 0) {
+      this.linkListener(activatedLink);
+    }
+
+    const pendingContextMenu = this.contextMenuListener ? this.native.drainPendingContextMenuRequest() : '';
+    if (this.contextMenuListener && pendingContextMenu.length > 0) {
+      const parts = pendingContextMenu.split(',');
+      const x = parts.length > 0 ? Number(parts[0]) : 0;
+      const y = parts.length > 1 ? Number(parts[1]) : 0;
+      this.contextMenuListener(
+        Number.isFinite(x) ? x : 0,
+        Number.isFinite(y) ? y : 0
+      );
+    }
+
+    if (this.copyRequestListener && this.native.drainPendingCopyRequest()) {
+      this.copyRequestListener();
+    }
+
+    if (this.pasteRequestListener && this.native.drainPendingPasteRequest()) {
+      this.pasteRequestListener();
+    }
+
+    // Frame-present: notify the surface so it dirties the XComponent node and
+    // ArkUI re-samples the freshly flushed native buffer.
+    if (this.framePresentListener && this.native.drainPendingFrame()) {
+      this.framePresentListener();
+    }
+
+    this.schedulePoll();
   }
 
   private bindWindowMetadata(context: common.UIAbilityContext): void {
