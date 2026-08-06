@@ -110,6 +110,19 @@ function bytesToStr(b: Uint8Array): string {
   return util.TextDecoder.create('utf-8').decodeToString(b);
 }
 
+// Deterministic Asset Store alias for a per-tab token, keyed by host:port so
+// tabs sharing one connection reuse the same encrypted credential.  FNV-1a hash
+// keeps the alias short and free of characters Asset Store may reject.
+function hostAlias(host: string, port: number): string {
+  let h: number = 2166136261;
+  const key: string = host + ':' + port;
+  for (let i: number = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return 'fish_tab_' + (h >>> 0).toString(16);
+}
+
 export class ConnectionStore {
   private readonly context: common.UIAbilityContext;
 
@@ -387,17 +400,39 @@ export class ConnectionStore {
     }
   }
 
+  // Persist the tab session.  Non-sensitive fields go to preferences as a JSON
+  // blob; per-tab tokens go to Asset Store (encrypted at rest), keyed by
+  // host:port, so no credential ever lands in plaintext preferences.
   async saveSession(session: SavedSession): Promise<void> {
+    await this.saveTabTokens(session.tabs);
+    // Strip tokens from the preferences copy — they live in Asset Store only.
+    const sanitized: SavedSession = {
+      activeIndex: session.activeIndex,
+      tabs: session.tabs.map((t: SavedTab): SavedTab => ({
+        title: t.title,
+        host: t.host,
+        port: t.port,
+        token: '',
+        tls: t.tls,
+        cwd: t.cwd,
+        shell: t.shell,
+        sessionId: t.sessionId
+      }))
+    };
     try {
       const opt: preferences.Options = { name: PREF_NAME };
       const pref: preferences.Preferences = await preferences.getPreferences(this.context, opt);
-      await pref.put(KEY_SESSION_STATE, JSON.stringify(session));
+      await pref.put(KEY_SESSION_STATE, JSON.stringify(sanitized));
       await pref.flush();
     } catch (e) {
       console.error('fish-term save session failed: ' + JSON.stringify(e));
     }
   }
 
+  // Load the persisted tab session.  Tabs are sanitized (entries with a missing
+  // host or an invalid port are dropped) and tokens are resolved from Asset
+  // Store keyed by host:port.  A legacy token still embedded in preferences is
+  // honoured as a fallback so pre-upgrade saves keep working.
   async loadSession(): Promise<SavedSession | null> {
     try {
       const opt: preferences.Options = { name: PREF_NAME };
@@ -410,7 +445,40 @@ export class ConnectionStore {
       if (!parsed.tabs || !Array.isArray(parsed.tabs)) {
         return null;
       }
-      return parsed;
+      const tabs: SavedTab[] = [];
+      for (let i: number = 0; i < parsed.tabs.length; i++) {
+        const t: SavedTab = parsed.tabs[i];
+        if (!t || typeof t.host !== 'string' || t.host.length === 0) {
+          continue;
+        }
+        const port: number = Number(t.port);
+        if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+          continue;
+        }
+        let token: string = typeof t.token === 'string' ? t.token : '';
+        if (token.length === 0) {
+          token = await this.loadTabToken(hostAlias(t.host, port));
+        }
+        tabs.push({
+          title: typeof t.title === 'string' ? t.title : '',
+          host: t.host,
+          port: port,
+          token: token,
+          tls: t.tls === true,
+          cwd: typeof t.cwd === 'string' && t.cwd.length > 0 ? t.cwd : undefined,
+          shell: typeof t.shell === 'string' && t.shell.length > 0 ? t.shell : undefined,
+          sessionId: typeof t.sessionId === 'string' && t.sessionId.length > 0 ? t.sessionId : undefined
+        });
+      }
+      if (tabs.length === 0) {
+        return null;
+      }
+      const activeIndexNum: number = Number(parsed.activeIndex);
+      let activeIndex: number = Number.isInteger(activeIndexNum) ? activeIndexNum : 0;
+      if (activeIndex < 0 || activeIndex >= tabs.length) {
+        activeIndex = 0;
+      }
+      return { activeIndex, tabs };
     } catch (e) {
       console.error('fish-term load session failed: ' + JSON.stringify(e));
       return null;
@@ -496,16 +564,74 @@ export class ConnectionStore {
   }
 
   private async clearToken(): Promise<void> {
+    await this.removeAsset(TOKEN_ALIAS);
+  }
+
+  // Remove an Asset Store entry, tolerating "not found".
+  private async removeAsset(alias: string): Promise<void> {
     try {
       const query: asset.AssetMap = new Map();
-      query.set(asset.Tag.ALIAS, strToBytes(TOKEN_ALIAS));
+      query.set(asset.Tag.ALIAS, strToBytes(alias));
       await asset.remove(query);
     } catch (e) {
       const code: number = (e as BusinessError).code;
       if (code !== ASSET_NOT_FOUND) {
-        console.error('fish-termclear token failed: ' + JSON.stringify(e));
+        console.error('fish-term remove asset failed: ' + JSON.stringify(e));
       }
     }
+  }
+
+  // Upsert one token into Asset Store under `alias`, replacing any prior value.
+  private async saveTabToken(alias: string, token: string): Promise<void> {
+    await this.removeAsset(alias);
+    try {
+      const attr: asset.AssetMap = new Map();
+      attr.set(asset.Tag.SECRET, strToBytes(token));
+      attr.set(asset.Tag.ALIAS, strToBytes(alias));
+      attr.set(asset.Tag.ACCESSIBILITY, asset.Accessibility.DEVICE_FIRST_UNLOCKED);
+      await asset.add(attr);
+    } catch (e) {
+      console.error('fish-term save tab token failed: ' + JSON.stringify(e));
+    }
+  }
+
+  // Persist every distinct tab token (deduped by host:port) to Asset Store.
+  private async saveTabTokens(tabs: SavedTab[]): Promise<void> {
+    const seen: Set<string> = new Set<string>();
+    for (let i: number = 0; i < tabs.length; i++) {
+      const t: SavedTab = tabs[i];
+      if (t.token.length === 0) {
+        continue;
+      }
+      const alias: string = hostAlias(t.host, t.port);
+      if (seen.has(alias)) {
+        continue;
+      }
+      seen.add(alias);
+      await this.saveTabToken(alias, t.token);
+    }
+  }
+
+  // Load a per-host token previously stored by saveTabTokens.
+  private async loadTabToken(alias: string): Promise<string> {
+    try {
+      const query: asset.AssetMap = new Map();
+      query.set(asset.Tag.ALIAS, strToBytes(alias));
+      query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ALL);
+      const res: Array<asset.AssetMap> = await asset.query(query);
+      if (res.length > 0) {
+        const secret: Uint8Array = res[0].get(asset.Tag.SECRET) as Uint8Array;
+        if (secret) {
+          return bytesToStr(secret);
+        }
+      }
+    } catch (e) {
+      const code: number = (e as BusinessError).code;
+      if (code !== ASSET_NOT_FOUND) {
+        console.error('fish-term load tab token failed: ' + JSON.stringify(e));
+      }
+    }
+    return '';
   }
 
   async loadNotificationPrefs(): Promise<NotificationPrefs> {

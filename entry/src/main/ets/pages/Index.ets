@@ -102,6 +102,11 @@ struct Index {
   // cached-output replay after a reconnect (per-tab flags live in replayTabs).
   @State private replayLoading: boolean = false;
   private replayTabs: Set<number> = new Set<number>();
+  // Tabs that received a live OSC title during this page lifetime.  The
+  // session-restore title re-apply skips these so a fresh title (e.g. one
+  // replayed from the server's cached output) isn't clobbered by the stale
+  // persisted one.
+  private liveTitleTabs: Set<number> = new Set<number>();
   // Bumped on Ctrl+Shift+F to open the find overlay on the active terminal.
   @State private searchSignal: number = 0;
   // First-run onboarding guide.
@@ -253,6 +258,13 @@ struct Index {
             // All tabs created — finalize.
             if (session.activeIndex >= 0 && session.activeIndex < this.tabs.length) {
               this.activeId = this.tabs[session.activeIndex].id;
+              // Sync the replay overlay for the restored active tab.  During the
+              // restore loop openTab() flips activeId through every tab, and
+              // onReplayState's replayLoading sync is activeId-gated — so a
+              // non-final tab's replay-end event can be dropped, leaving
+              // replayLoading stuck true and the "connecting…" overlay covering
+              // the UI forever after restore completes.
+              this.replayLoading = this.replayTabs.has(this.activeId);
               this.focusActiveTerminal();
             }
             // Delay revealing the tab strip so native terminal surfaces have
@@ -261,6 +273,10 @@ struct Index {
             // banners between the loading indicator and the first content.
             setTimeout(() => {
               this.restoreChecked = true;
+              // Persist the fully-restored snapshot — doSaveSession() was
+              // suppressed during the restore window so this is the first save
+              // to capture every restored tab.
+              this.saveSession();
               // Start file tree polling if sidebar is visible
               this.manageFileTreePolling();
               // Re-apply saved titles after another short delay to survive any
@@ -269,7 +285,7 @@ struct Index {
               setTimeout(() => {
                 for (let i: number = 0; i < this.tabs.length && i < session.tabs.length; i++) {
                   const savedTitle: string = session.tabs[i].title;
-                  if (savedTitle.length > 0) {
+                  if (savedTitle.length > 0 && !this.liveTitleTabs.has(this.tabs[i].id)) {
                     this.updateTabTitle(this.tabs[i].id, savedTitle);
                   }
                 }
@@ -376,6 +392,17 @@ struct Index {
         this.store.saveOnboarded(true);
       }
     }, 260);
+  }
+
+  // Persist the latest tab state the moment the app leaves the foreground.
+  // Without this, a background process kill loses anything newer than the last
+  // 250ms debounced save (e.g. a tab opened right before backgrounding).
+  onPageHide(): void {
+    if (this.saveDebounceTimer >= 0) {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = -1;
+    }
+    this.doSaveSession();
   }
 
   aboutToDisappear(): void {
@@ -777,16 +804,28 @@ struct Index {
     if (!store || !this.restoreTabsEnabled) {
       return;
     }
+    // Suppress saves while the startup restore is still opening tabs.  Each
+    // openTab() schedules a debounced save, and a background/teardown flush
+    // landing mid-restore would persist a PARTIAL snapshot (only the tabs
+    // opened so far) over the previous full one — permanently losing tabs on
+    // the next launch.  The finalize step re-enables saving once restore
+    // completes.
+    if (!this.restoreChecked) {
+      return;
+    }
     let activeIndex: number = 0;
     const savedTabs: SavedTab[] = [];
     for (let i: number = 0; i < this.tabs.length; i++) {
       const meta: TabMeta = this.tabs[i];
-      if (meta.id === this.activeId) {
-        activeIndex = i;
-      }
       const rt: TerminalRuntime | undefined = this.runtimes.get(meta.id);
       if (!rt || !rt.connectionConfig) {
         continue;
+      }
+      // Record activeIndex against the saved array — skipped tabs (no runtime)
+      // must not shift it, otherwise restore activates the wrong tab.
+      const savedIndex: number = savedTabs.length;
+      if (meta.id === this.activeId) {
+        activeIndex = savedIndex;
       }
       savedTabs.push({
         title: meta.title,
@@ -874,6 +913,8 @@ struct Index {
       this.saveSession();
     });
     session.onTitleChange((title: string): void => {
+      // Mark as live so the restore title re-apply won't clobber it later.
+      this.liveTitleTabs.add(id);
       this.updateTabTitle(id, title);
       this.saveSession();
     });

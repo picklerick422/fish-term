@@ -414,6 +414,14 @@ export class FishWebSocketDriver implements TerminalDriver {
     } else if (ctrl.type === 'session' && ctrl.id) {
       const prevId: string = this.sessionId;
       this.sessionId = ctrl.id;
+      // Keep config.session_id in sync with the server-assigned session.  The
+      // reconnect URL is built from config (not this.sessionId), so without
+      // this a manually-opened tab (no session_id at open) reconnects WITHOUT
+      // session_id on the next WS drop — the server then creates a fresh
+      // session, killing the live PTY and leaving the tab as an empty shell.
+      // config is the same object as rt.connectionConfig, so this stays
+      // consistent for persistence too.
+      this.config.sessionId = ctrl.id;
       // Detect session replacement: if the server assigned a different ID than
       // the one we expected (and we had one before), the old PTY died and a
       // fresh session was created.  Clear the terminal's screen buffer so the
