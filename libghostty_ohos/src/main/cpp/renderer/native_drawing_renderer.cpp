@@ -583,6 +583,40 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
                 continue;
             }
             if (geometryMask[static_cast<size_t>(row * cols + col)] != 0) {
+                // Pass 1 paints the builtin glyph inside the cell loop, but the
+                // background run that follows can flush OVER it: any non-default
+                // run (the selection background, or a statusline's own
+                // background) covers the glyph, blanking powerline / block
+                // characters. Repaint every builtin cell here, after all
+                // background runs have been flushed, so the glyph always sits on
+                // top. Unselected cells on default background repaint
+                // identically (their run was skipped), so pixels are unchanged.
+                const uint8_t span = cell.width == 2 ? 2 : 1;
+                CellAttributes visualAttrs = cell.attrs;
+                visualAttrs.fg = cell.attrs.inverse ? cell.attrs.bg : cell.attrs.fg;
+                visualAttrs.bg = cell.attrs.inverse ? cell.attrs.fg : cell.attrs.bg;
+                visualAttrs.inverse = false;
+                const bool cursorHere = drawCursor && row == cursorRow && col == cursorCol;
+                if (cursorHere && m_cursorStyle == 0) {
+                    visualAttrs.fg = m_cursorFgColor;
+                    visualAttrs.bg = m_cursorBgColor;
+                }
+                paintBuiltinGlyph(cell, visualAttrs, cellX(row, col), row * cellHeight,
+                                  cellW(row, col, span), cellHeight);
+                if (cursorHere && m_cursorStyle != 0) {
+                    // The pass 1 cursor line was drawn below this glyph; repaint
+                    // it on top so an underline/bar cursor stays visible.
+                    const uint32_t cursorColor = m_cursorBgColor ? m_cursorBgColor : m_defaultFgColor;
+                    const float left = cellX(row, col);
+                    const float cw = cellW(row, col, span);
+                    if (m_cursorStyle == 1) {
+                        paintCursor(left, row * cellHeight + cellHeight - std::max(2.0f, cellHeight * 0.08f),
+                                    cw, std::max(2.0f, cellHeight * 0.08f), cursorColor);
+                    } else {
+                        paintCursor(left, row * cellHeight, std::max(2.0f, cw * 0.12f),
+                                    cellHeight, cursorColor);
+                    }
+                }
                 col += (cell.width == 2 ? 2 : 1);
                 continue;
             }
@@ -1233,7 +1267,12 @@ bool NativeDrawingRenderer::paintBuiltinGlyph(
     float width,
     float height)
 {
-    if (cell.selected || cell.attrs.hidden) {
+    // Selection must NOT fall through to the font path: powerline PUA glyphs
+    // and block elements have no reliable glyph in the primary font (the
+    // symbol font's metrics do not match the cell box either, see above).
+    // Drawing them with the selection colors keeps them intact while selected;
+    // plain text cells are unaffected (they are not builtin codepoints).
+    if (cell.attrs.hidden) {
         return false;
     }
 

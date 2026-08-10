@@ -1597,6 +1597,17 @@ public:
             m_axisScrollRemainderY += vertical;
             scrollLines = static_cast<int>(m_axisScrollRemainderY / cellHeight);
             if (scrollLines == 0) {
+                // Sub-cell wheel delta: the accumulated remainder has not
+                // crossed one row, so no scroll is sent — but on the alternate
+                // screen a stale selection must still be dropped. wheelScroll()
+                // clears it on the scrolling paths; without this branch a small
+                // trackpad flick leaves the pinned highlight covering the
+                // selected text until enough remainder accumulates to trigger
+                // a scroll.
+                if (m_terminal->shouldForwardWheel()) {
+                    m_terminal->clearSelection();
+                    RequestVsyncFrame();
+                }
                 return;
             }
             m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
