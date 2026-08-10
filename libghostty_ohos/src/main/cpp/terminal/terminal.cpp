@@ -1028,6 +1028,7 @@ void Terminal::wheelScroll(int lines, int col, int row) {
     bool appCursorKeys = false;
     bool anyMouseTracking = false;
     bool sgrMouse = false;
+    bool hadSelection = false;
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         if (!m_vt) return;
@@ -1040,6 +1041,18 @@ void Terminal::wheelScroll(int lines, int col, int row) {
             scrollViewportLocked(GHOSTTY_SCROLL_VIEWPORT_DELTA, lines);
         } else {
             ghostty_terminal_mode_get(m_vt, kGhosttyModeDecckm, &appCursorKeys);
+            // Alt-screen content scrolls inside the TUI app (content reflow),
+            // not the local viewport. A local text selection is anchored to
+            // absolute scrollback coordinates, which silently stop matching
+            // the text on screen once the app redraws — the highlight would
+            // stay pinned to its pre-scroll screen position while the app's
+            // own highlight (forwarded mouse drags) scrolls away, leaving two
+            // misaligned selection layers. Drop the local selection here; it
+            // cannot follow the reflow. The primary screen keeps its selection
+            // (absolute coordinates + viewport-delta compensation stay correct
+            // there).
+            hadSelection = m_selectionActive;
+            m_selectionActive = false;
         }
 
         // Check for mouse tracking. Prefer the high-level data key
@@ -1072,6 +1085,16 @@ void Terminal::wheelScroll(int lines, int col, int row) {
     if (!altScreen) {
         notifyRenderNeeded();
         return;
+    }
+
+    // Repaint immediately: the stale pinned selection layer (cleared above)
+    // must leave the buffer now, not after the TUI app's reflow response
+    // makes the network round-trip — otherwise the misaligned highlight
+    // lingers on screen for the whole round-trip latency. Skip the repaint
+    // when there was no selection: the reflow response triggers its own
+    // render anyway.
+    if (hadSelection) {
+        notifyRenderNeeded();
     }
 
     // When mouse tracking is active the app handles wheel events via escape
@@ -1985,6 +2008,19 @@ void Terminal::notifyRenderNeeded()
 void Terminal::drawFrame() {
     if (!m_renderer) return;
 
+    // Snapshot inputs consumed after m_stateMutex is released below: the
+    // renderer runs without terminal-state protection.
+    std::vector<Cell>& cells = m_frameCells;
+    int frameCols = 0;
+    int frameRows = 0;
+    int cursorRow = 0;
+    int cursorCol = 0;
+    bool cursorVisible = false;
+    uint32_t frameBg = 0;
+    uint32_t frameFg = 0;
+    uint32_t frameCursorBg = 0;
+    uint32_t frameCursorFg = 0;
+    {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     if (!m_vt || !m_renderState || !m_rowIterator || !m_rowCells) {
         return;
@@ -1993,21 +2029,19 @@ void Terminal::drawFrame() {
         return;
     }
     const uint64_t frameId = ++g_drawFrameCounter;
+    frameCols = m_cols;
+    frameRows = m_rows;
 
     // Reuse the frame cell buffer — it only ever grows, so a dense screen
     // (~1 MB for 200×60) is allocated once instead of every frame.
     if (m_frameCells.size() < static_cast<size_t>(m_cols * m_rows)) {
         m_frameCells.resize(static_cast<size_t>(m_cols * m_rows));
     }
-    std::vector<Cell>& cells = m_frameCells;
     ghostty_render_state_colors_t colors {};
     colors.size = sizeof(colors);
     ghostty_render_state_colors_get(m_renderState, &colors);
     ghostty_render_state_get(m_renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &m_rowIterator);
 
-    int cursorRow = 0;
-    int cursorCol = 0;
-    bool cursorVisible = false;
     bool cursorHasViewport = false;
     bool cursorWideTail = false;
     int suspiciousCells = 0;
@@ -2187,10 +2221,23 @@ void Terminal::drawFrame() {
             frameId, suspiciousCells, m_cols, m_rows);
     }
 
-    m_renderer->setColors(RgbToArgb(colors.background), RgbToArgb(colors.foreground));
-    m_renderer->setCursorColors(m_theme.cursorColor, m_theme.cursorText);
+    frameBg = RgbToArgb(colors.background);
+    frameFg = RgbToArgb(colors.foreground);
+    frameCursorBg = m_theme.cursorColor;
+    frameCursorFg = m_theme.cursorText;
+    }  // m_stateMutex released — painting below needs no terminal state
+
+    // Render outside m_stateMutex: the paint pass (per-cell typography) is
+    // the slowest part of the frame, and feedOutput() on the network thread
+    // blocks on the same mutex. Holding it through renderGrid stalls network
+    // output for the whole draw — with a reflowing TUI that compounds every
+    // wheel round-trip (SGR → server response → feedOutput waiting on us).
+    // The cell snapshot is immutable by now; renderer access is guarded by
+    // m_surfaceMutex at the call site (OnVsyncTick Phase 2).
+    m_renderer->setColors(frameBg, frameFg);
+    m_renderer->setCursorColors(frameCursorBg, frameCursorFg);
     m_renderer->beginFrame();
-    m_renderer->renderGrid(cells, m_cols, m_rows, cursorRow, cursorCol, cursorVisible);
+    m_renderer->renderGrid(cells, frameCols, frameRows, cursorRow, cursorCol, cursorVisible);
     m_renderer->endFrame();
 }
 

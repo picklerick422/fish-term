@@ -69,11 +69,17 @@ type TerminalSizeListener = (size: TerminalSize) => void;
 // Adaptive polling cadence for the native event drains (link activation,
 // context menu, copy/paste requests) and the frame-present notification.
 // Instead of a fixed 16 ms interval that burns N-API crossings even while the
-// terminal is idle, poll fast (16 ms) while there's been recent activity and
-// fall back to an idle cadence (150 ms) otherwise. 150 ms still catches every
-// native cursor-blink frame (250 ms period), so blinking stays smooth without
-// running the fast loop.
-const POLL_FAST_MS: number = 16;
+// terminal is idle, poll fast while there's been recent activity and fall back
+// to an idle cadence (150 ms) otherwise. 150 ms still catches every native
+// cursor-blink frame (250 ms period), so blinking stays smooth without running
+// the fast loop.
+//
+// POLL_FAST_MS is 8 ms, not 16: the native renderer flushes one buffer per
+// OH_NativeVSync (8.3 ms at 120 Hz). A 16 ms poll presents every other buffer,
+// capping scroll smoothness at ~60 Hz; 8 ms keeps the presentation loop at the
+// display cadence. The tick itself is cheap when there is no fresh buffer (a
+// few N-API crossings), so the extra wakeups only matter during activity.
+const POLL_FAST_MS: number = 8;
 const POLL_IDLE_MS: number = 150;
 const POLL_ACTIVE_WINDOW_MS: number = 800;
 
@@ -636,7 +642,7 @@ export class TerminalController {
 
   // Adaptive polling core. One self-rescheduling timer drains the native event
   // queues (link activation / context menu / copy / paste) AND the frame-present
-  // flag. Fast (16 ms) while active, idle (150 ms) otherwise.
+  // flag. Fast (8 ms, display-cadence) while active, idle (150 ms) otherwise.
   private shouldRunPoll(): boolean {
     return this.linkListener !== null ||
       this.contextMenuListener !== null ||
