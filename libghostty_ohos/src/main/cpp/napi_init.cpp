@@ -841,6 +841,19 @@ public:
     }
 
     void OnVsyncTick(uint64_t timestampNs) {
+        // Flush coalesced alt-screen wheel events before Phase 1 so the
+        // notifyRenderNeeded they trigger is consumed by this very frame.
+        // DispatchAxisEvent accumulates on the UI thread, we drain here on the
+        // VSync thread — one network round-trip per vsync instead of one per
+        // axis event (a fast wheel burst otherwise serializes N trips and N
+        // full-screen re-renders from the TUI app, which reads as lag).
+        const int wheelLines = m_wheelAccumLines.exchange(0, std::memory_order_relaxed);
+        if (wheelLines != 0 && m_terminal) {
+            m_terminal->wheelScroll(wheelLines,
+                                    m_wheelAccumCol.load(std::memory_order_relaxed),
+                                    m_wheelAccumRow.load(std::memory_order_relaxed));
+        }
+
         // Phase 1: consume render flags under m_renderMutex.
         bool shouldRender = false;
         bool needMoreFrames = false;
@@ -1574,22 +1587,35 @@ public:
 
         const int32_t sourceType = OH_ArkUI_UIInputEvent_GetSourceType(event);
         const int32_t toolType = OH_ArkUI_UIInputEvent_GetToolType(event);
+        int scrollLines = 0;
         if (sourceType == UI_INPUT_EVENT_SOURCE_TYPE_MOUSE ||
             toolType == UI_INPUT_EVENT_TOOL_TYPE_MOUSE) {
             constexpr double kWheelStepDegrees = 15.0;
-            const int scrollLines = std::max(1, static_cast<int>(std::lround(std::abs(vertical) / kWheelStepDegrees)));
-            m_terminal->wheelScroll(vertical > 0.0 ? scrollLines : -scrollLines, eventCol, eventRow);
-            return;
+            scrollLines = std::max(1, static_cast<int>(std::lround(std::abs(vertical) / kWheelStepDegrees)));
+            scrollLines = vertical > 0.0 ? scrollLines : -scrollLines;
+        } else {
+            m_axisScrollRemainderY += vertical;
+            scrollLines = static_cast<int>(m_axisScrollRemainderY / cellHeight);
+            if (scrollLines == 0) {
+                return;
+            }
+            m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
         }
 
-        m_axisScrollRemainderY += vertical;
-        const int scrollLines = static_cast<int>(m_axisScrollRemainderY / cellHeight);
-        if (scrollLines == 0) {
+        if (m_terminal->shouldForwardWheel()) {
+            // Alternate screen: the wheel becomes network output to the TUI
+            // app. Coalesce into the next VSync tick so a fast wheel burst is
+            // one message instead of N (and the app re-renders once, not N
+            // times). Primary-screen scrolling below stays immediate — it is
+            // a local viewport scroll with no network leg.
+            m_wheelAccumLines.fetch_add(scrollLines, std::memory_order_relaxed);
+            m_wheelAccumCol.store(eventCol, std::memory_order_relaxed);
+            m_wheelAccumRow.store(eventRow, std::memory_order_relaxed);
+            RequestVsyncFrame();
             return;
         }
 
         m_terminal->wheelScroll(scrollLines, eventCol, eventRow);
-        m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
     }
 
     void SetResourceManager(napi_env env, napi_value value) {
@@ -3236,6 +3262,12 @@ private:
     float m_touchStartY = 0.0f;
     float m_touchScrollRemainderY = 0.0f;
     double m_axisScrollRemainderY = 0.0;
+    // Coalesced alt-screen wheel events: DispatchAxisEvent (UI thread)
+    // accumulates lines here, OnVsyncTick (VSync thread) drains them in one
+    // round-trip. Atomics because the two threads race.
+    std::atomic<int> m_wheelAccumLines{0};
+    std::atomic<int> m_wheelAccumCol{1};
+    std::atomic<int> m_wheelAccumRow{1};
     uint64_t m_touchStartTime = 0;
     uint64_t m_lastClickTimeMs = 0;
 

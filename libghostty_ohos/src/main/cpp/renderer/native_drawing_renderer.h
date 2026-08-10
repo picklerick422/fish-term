@@ -79,7 +79,6 @@ private:
     bool configureWindow();
     bool ensureDrawingObjects();
     void clearGlyphCache() override;
-    void trimGlyphCache();
     GlyphLayout* getGlyphLayout(const std::string& text, const CellAttributes& attrs, uint8_t span);
     float measureAverageGlyphWidth();
     void computeRowMetrics(const std::vector<Cell>& cells, int cols, int rows);

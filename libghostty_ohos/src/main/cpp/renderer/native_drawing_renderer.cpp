@@ -31,7 +31,11 @@ namespace {
 constexpr uint64_t kBufferUsage =
     NATIVEBUFFER_USAGE_CPU_READ | NATIVEBUFFER_USAGE_CPU_WRITE | NATIVEBUFFER_USAGE_MEM_DMA;
 
-constexpr size_t kMaxGlyphCacheEntries = 4096;
+// Syntax-highlighted screens (claudecode etc.) produce far more
+// char × color × style combinations than plain shell output. 4096 was
+// exhausted every frame, triggering a full-clear rebuild storm; 16384 keeps
+// the working set resident on a dense 200×60 screen.
+constexpr size_t kMaxGlyphCacheEntries = 16384;
 std::atomic<uint64_t> g_frameCounter {0};
 
 // The font collection from OH_Drawing_CreateSharedFontCollection() is a
@@ -487,6 +491,21 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
     for (int row = 0; row < rows; ++row) {
         uint32_t rowBg = m_defaultBgColor;
         bool rowBgSeen = false;
+        const float top = row * cellHeight;
+        // Background runs: consecutive cells with the same background color
+        // are merged into a single rect, so a dense highlighted screen (e.g.
+        // claudecode) does not issue one canvas draw per cell. A plain row of
+        // N same-color cells collapses from N draws to 1, and default-color
+        // runs are skipped entirely (CanvasClear already filled the buffer).
+        float runStartX = 0.0f;
+        uint32_t runBg = 0;
+        bool runActive = false;
+        const auto flushRun = [&](float endX) {
+            if (runActive && endX > runStartX && runBg != m_defaultBgColor) {
+                paintCellBackground(runStartX, top, endX - runStartX, cellHeight, runBg);
+            }
+            runActive = false;
+        };
         for (int col = 0; col < cols; ++col) {
             const Cell& cell = cells[row * cols + col];
             if (cell.width == 3 || cell.width == 4) {
@@ -504,7 +523,6 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
             }
 
             const float left = cellX(row, col);
-            const float top = row * cellHeight;
             const float width = cellW(row, col, span);
             CellAttributes visualAttrs = cell.attrs;
             visualAttrs.fg = fg;
@@ -513,7 +531,16 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
             rowBg = bg;
             rowBgSeen = true;
 
-            paintCellBackground(left, top, width, cellHeight, bg);
+            if (!runActive) {
+                runStartX = left;
+                runBg = bg;
+                runActive = true;
+            } else if (bg != runBg) {
+                flushRun(left);
+                runStartX = left;
+                runBg = bg;
+                runActive = true;
+            }
 
             if (paintBuiltinGlyph(cell, visualAttrs, left, top, width, cellHeight)) {
                 geometryMask[static_cast<size_t>(row * cols + col)] = 1;
@@ -535,13 +562,15 @@ void NativeDrawingRenderer::renderGrid(const std::vector<Cell>& cells, int cols,
         }
 
         const float paintedWidth = m_isProportionalFont ? cellX(row, cols) : cols * cellWidth;
-        if (paintedWidth < static_cast<float>(m_width)) {
+        flushRun(std::min(paintedWidth, static_cast<float>(m_width)));
+        const uint32_t fillBg = rowBgSeen ? rowBg : m_defaultBgColor;
+        if (paintedWidth < static_cast<float>(m_width) && fillBg != m_defaultBgColor) {
             paintCellBackground(
                 paintedWidth,
-                row * cellHeight,
+                top,
                 static_cast<float>(m_width) - paintedWidth,
                 cellHeight,
-                rowBgSeen ? rowBg : m_defaultBgColor);
+                fillBg);
         }
     }
 
@@ -885,14 +914,6 @@ void NativeDrawingRenderer::clearGlyphCache()
     m_glyphCache.clear();
 }
 
-void NativeDrawingRenderer::trimGlyphCache()
-{
-    if (m_glyphCache.size() <= kMaxGlyphCacheEntries) {
-        return;
-    }
-    clearGlyphCache();
-}
-
 NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     const std::string& text,
     const CellAttributes& attrs,
@@ -1031,8 +1052,25 @@ NativeDrawingRenderer::GlyphLayout* NativeDrawingRenderer::getGlyphLayout(
     layout.width = static_cast<float>(std::max(0.0, OH_Drawing_TypographyGetLongestLine(typography)));
     layout.height = static_cast<float>(std::max(0.0, OH_Drawing_TypographyGetHeight(typography)));
 
+    // Evict BEFORE inserting. Clearing after emplace would destroy the very
+    // entry we are about to return, leaving the caller a dangling typography
+    // to paint — a freed OH_Drawing_Typography* makes the paint path dispatch
+    // through garbage, which the NDK's CFI check catches as a SIGABRT
+    // (__cfi_check_fail in OH_Drawing_TypographyPaint on the VSync thread).
+    if (m_glyphCache.size() >= kMaxGlyphCacheEntries) {
+        // Evict half, not all: a full clear on a syntax-highlighted screen
+        // evicts the hot entries every frame, and the next frame rebuilds the
+        // entire cache — a per-frame typography-creation storm that turns
+        // scrolling into a slideshow. Layouts returned to the caller are
+        // painted immediately after this call, so erasing older entries here
+        // is safe.
+        size_t toEvict = m_glyphCache.size() / 2;
+        auto it = m_glyphCache.begin();
+        while (toEvict-- > 0 && it != m_glyphCache.end()) {
+            it = m_glyphCache.erase(it);
+        }
+    }
     auto [inserted, _] = m_glyphCache.emplace(key, layout);
-    trimGlyphCache();
     return &inserted->second;
 }
 

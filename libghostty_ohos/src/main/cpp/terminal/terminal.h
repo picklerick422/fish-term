@@ -45,6 +45,11 @@ public:
     // pointer cell position so that mouse-tracking-aware TUIs (opencode, vim, …)
     // can route wheel events to the correct pane.
     void wheelScroll(int lines, int col = 1, int row = 1);
+    // True when wheel events are forwarded to the running application (alternate
+    // screen active). On the primary screen wheel scrolls the local viewport and
+    // must stay immediate; on the alt screen the wheel produces network output,
+    // so the caller may coalesce multiple axis events into one round-trip.
+    bool shouldForwardWheel();
     void resetViewScroll();
     // Report a mouse event to the terminal application when mouse tracking is
     // active (DEC private modes 1000/1002/1003). col/row are 1-based cell
@@ -153,6 +158,10 @@ private:
     ghostty_row_cells_t m_rowCells;
     TerminalTheme m_theme;
     mutable std::mutex m_stateMutex;
+
+    // Reused drawFrame cell buffer (only accessed under m_stateMutex on the
+    // render thread); avoids a multi-MB allocation per frame.
+    std::vector<Cell> m_frameCells;
 
     Renderer* m_renderer;
     std::function<void(const std::string&)> m_inputCallback;

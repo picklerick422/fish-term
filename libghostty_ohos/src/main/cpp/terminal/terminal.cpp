@@ -1013,6 +1013,14 @@ void Terminal::scrollView(int delta) {
     notifyRenderNeeded();
 }
 
+bool Terminal::shouldForwardWheel() {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_vt) return false;
+    ghostty_terminal_screen_t screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    ghostty_terminal_get(m_vt, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
+    return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE;
+}
+
 void Terminal::wheelScroll(int lines, int col, int row) {
     if (lines == 0) return;
 
@@ -1986,7 +1994,12 @@ void Terminal::drawFrame() {
     }
     const uint64_t frameId = ++g_drawFrameCounter;
 
-    std::vector<Cell> cells(m_cols * m_rows);
+    // Reuse the frame cell buffer — it only ever grows, so a dense screen
+    // (~1 MB for 200×60) is allocated once instead of every frame.
+    if (m_frameCells.size() < static_cast<size_t>(m_cols * m_rows)) {
+        m_frameCells.resize(static_cast<size_t>(m_cols * m_rows));
+    }
+    std::vector<Cell>& cells = m_frameCells;
     ghostty_render_state_colors_t colors {};
     colors.size = sizeof(colors);
     ghostty_render_state_colors_get(m_renderState, &colors);
@@ -2027,12 +2040,21 @@ void Terminal::drawFrame() {
         }
     }
 
+    // Search highlighting is the only consumer of per-row text/byte-offset
+    // tables; skip building them entirely when no search is active (the common
+    // case) instead of allocating vectors and appending every cell per frame.
+    const bool needRowText = searchActive && !searchQuery.empty();
+
     for (int row = 0; row < m_rows && ghostty_render_state_row_iterator_next(m_rowIterator); ++row) {
         ghostty_render_state_row_get(m_rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &m_rowCells);
         std::string rowText;
-        std::vector<size_t> rowByteStart(static_cast<size_t>(m_cols), 0);
-        std::vector<size_t> rowByteEnd(static_cast<size_t>(m_cols), 0);
-        rowText.reserve(static_cast<size_t>(m_cols));
+        std::vector<size_t> rowByteStart;
+        std::vector<size_t> rowByteEnd;
+        if (needRowText) {
+            rowByteStart.resize(static_cast<size_t>(m_cols), 0);
+            rowByteEnd.resize(static_cast<size_t>(m_cols), 0);
+            rowText.reserve(static_cast<size_t>(m_cols));
+        }
         for (int col = 0; col < m_cols && ghostty_render_state_row_cells_next(m_rowCells); ++col) {
             Cell& dst = cells[row * m_cols + col];
             ghostty_cell_t raw = 0;
@@ -2050,13 +2072,15 @@ void Terminal::drawFrame() {
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
 
-            rowByteStart[static_cast<size_t>(col)] = rowText.size();
-            if (!hasText || wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD || codepoint == 0) {
-                rowText.push_back(' ');
-            } else {
-                AppendCodepointUtf8(rowText, codepoint);
+            if (needRowText) {
+                rowByteStart[static_cast<size_t>(col)] = rowText.size();
+                if (!hasText || wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD || codepoint == 0) {
+                    rowText.push_back(' ');
+                } else {
+                    AppendCodepointUtf8(rowText, codepoint);
+                }
+                rowByteEnd[static_cast<size_t>(col)] = rowText.size();
             }
-            rowByteEnd[static_cast<size_t>(col)] = rowText.size();
 
             dst.codepoint = codepoint;
             dst.width = CellWidthFromGhostty(wide);
@@ -2111,7 +2135,7 @@ void Terminal::drawFrame() {
                     static_cast<int>(wide));
             }
 
-            if (searchActive && !searchQuery.empty()) {
+            if (needRowText) {
                 const size_t logicalRow = viewportTopRow + static_cast<size_t>(row);
                 const size_t cellStartByte = rowByteStart[static_cast<size_t>(col)];
                 const size_t cellEndByte = rowByteEnd[static_cast<size_t>(col)];

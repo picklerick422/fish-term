@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fish-ai Chat</title>
+  <link rel="stylesheet" href="lib/highlight.min.css">
+  <link rel="stylesheet" href="lib/diff2html.min.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="lib/marked.min.js"></script>
+  <script src="lib/highlight.min.js"></script>
+  <script src="lib/diff2html.min.js"></script>
+  <script src="lib/diff2html-ui.min.js"></script>
+  <script src="lib/purify.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- 左侧文件树 -->
+    <aside id="filetree" class="collapsed"></aside>
+
+    <!-- 主聊天区 -->
+    <main id="chat-main">
+      <!-- 对话消息列表 -->
+      <section id="messages"></section>
+
+      <!-- 输入区域 -->
+      <footer id="input-area">
+        <div class="input-row">
+          <textarea
+            id="user-input"
+            rows="1"
+            placeholder="Ask Claude..."
+            autofocus
+          ></textarea>
+          <button id="btn-send" title="Send (Enter)">▶</button>
+          <button id="btn-cancel" title="Cancel (Escape)" class="hidden">■</button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <script src="chat.js"></script>
+  <script src="diff-renderer.js"></script>
+  <script src="filetree.js"></script>
+</body>
+</html>
