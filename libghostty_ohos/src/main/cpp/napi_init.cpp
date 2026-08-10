@@ -1207,6 +1207,18 @@ public:
             return;
         }
 
+        // On 2in1 devices the framework synthesizes touch events from left-mouse
+        // presses, so one physical click drives BOTH this handler and
+        // DispatchMouseEvent. Touch-only gestures (drag-to-scroll, tap link
+        // activation, long-press cell selection) must be skipped for
+        // synthesized mouse touches or they fire twice per gesture. Selection
+        // itself stays here — on the alternate screen with mouse tracking the
+        // Mouse stream is forwarded to the app, so this is the only path that
+        // can select text locally.
+        OH_NativeXComponent_EventSourceType sourceType = OH_NATIVEXCOMPONENT_SOURCE_TYPE_UNKNOWN;
+        OH_NativeXComponent_GetTouchEventSourceType(component, touchEvent.id, &sourceType);
+        const bool isMouseSynthesized = (sourceType == OH_NATIVEXCOMPONENT_SOURCE_TYPE_MOUSE);
+
         float windowX = 0.0f;
         float windowY = 0.0f;
         if (OH_NativeXComponent_GetTouchPointWindowX(component, 0, &windowX) ==
@@ -1246,6 +1258,20 @@ public:
                 m_touchStartX = touchEvent.x;
                 m_touchStartY = touchEvent.y;
                 m_touchStartTime = getCurrentTimeMs();
+                // Click outside an active selection dismisses it — symmetric
+                // with the mouse PRESS path. HarmonyOS converts left-mouse
+                // presses into touch events too, and on the alternate screen
+                // with mouse tracking the Mouse stream is forwarded to the app,
+                // so this Touch path is the only place the local selection can
+                // reliably be cleared on click.
+                if (m_terminal->hasSelection()) {
+                    int downRow = 0;
+                    int downCol = 0;
+                    MapPointToCell(touchEvent.x, touchEvent.y, downRow, downCol);
+                    if (!m_terminal->isSelectionAt(downRow, downCol)) {
+                        m_terminal->clearSelection();
+                    }
+                }
                 break;
             }
 
@@ -1272,7 +1298,12 @@ public:
                     int col = 0;
                     MapPointToCell(touchEvent.x, touchEvent.y, row, col);
                     m_terminal->updateSelection(row, col);
-                } else if (moveDistance >= MOVE_THRESHOLD) {
+                } else if (!isMouseSynthesized && moveDistance >= MOVE_THRESHOLD) {
+                    // Drag-to-scroll is a real-touch gesture only. A mouse drag
+                    // must not scroll — its wheel already handles scrolling and
+                    // a synthesized-touch scroll would shift the viewport while
+                    // the user is trying to select text (or, on the alternate
+                    // screen, emit stray wheel sequences into the TUI app).
                     ScrollViewportByPointerDelta(m_lastTouchY - touchEvent.y, m_renderer->getCellHeight());
                 }
 
@@ -1288,7 +1319,11 @@ public:
                     const float moveDistance = std::sqrt(dx * dx + dy * dy);
                     const uint64_t elapsed = getCurrentTimeMs() - m_touchStartTime;
 
-                    if (elapsed >= LONG_PRESS_MS && moveDistance < MOVE_THRESHOLD) {
+                    if (!isMouseSynthesized && elapsed >= LONG_PRESS_MS && moveDistance < MOVE_THRESHOLD) {
+                        // Long-press cell selection is a real-touch gesture. For
+                        // a synthesized mouse touch this is just a slow click —
+                        // selecting a cell on release would surprise the user
+                        // trying to dismiss an existing selection.
                         int row = 0;
                         int col = 0;
                         MapPointToCell(touchEvent.x, touchEvent.y, row, col);
@@ -1297,7 +1332,13 @@ public:
                     } else if (touchEvent.type == OH_NATIVEXCOMPONENT_UP && moveDistance < MOVE_THRESHOLD) {
                         ShowImeLocked(IME_REQUEST_REASON_TOUCH);
                         NotifyImeStateLocked();
-                        QueueLinkActivationAtPoint(touchEvent.x, touchEvent.y);
+                        // Link activation for mouse clicks is handled by
+                        // DispatchMouseEvent (and by the TUI app itself when
+                        // mouse tracking forwards the click), so skip it here.
+                        // Real touch taps have no Mouse stream — activate here.
+                        if (!isMouseSynthesized) {
+                            QueueLinkActivationAtPoint(touchEvent.x, touchEvent.y);
+                        }
                     }
                 }
 
@@ -1366,7 +1407,15 @@ public:
 
                 if (m_terminal->reportMouse(col + 1, row + 1, btn, true)) {
                     // Event was forwarded to the app — skip local selection logic
-                    // for this press. The app owns mouse handling now.
+                    // for this press. The app owns mouse handling now. The local
+                    // selection state is independent of mouse tracking though: a
+                    // click outside an active selection still dismisses it, even
+                    // when the same event is forwarded to the TUI app.
+                    if (mouseEvent.button == OH_NATIVEXCOMPONENT_LEFT_BUTTON) {
+                        if (m_mouseHadSelectionOnPress && !m_mousePressOnSelection) {
+                            m_terminal->clearSelection();
+                        }
+                    }
                     break;
                 }
 
