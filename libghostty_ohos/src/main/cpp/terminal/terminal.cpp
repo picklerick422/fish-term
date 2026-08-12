@@ -182,6 +182,19 @@ bool IsCellSelected(
     return col >= colStart && col <= colEnd;
 }
 
+// True when the cell carries real content (text other than a plain space).
+// Wide glyph lead cells count; spacer cells and never-written cells do not.
+// This defines the stream-selection boundary: trailing whitespace — whether
+// explicitly printed (e.g. TUI padding) or never written — is never selected
+// or copied, while interior whitespace (indentation, alignment) is preserved.
+bool IsCellContent(bool hasText, ghostty_cell_wide_t wide, uint32_t codepoint)
+{
+    if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
+        return false;
+    }
+    return hasText && codepoint != ' ';
+}
+
 int ClampIndex(int value, int limit)
 {
     if (limit <= 0) {
@@ -873,11 +886,23 @@ std::string Terminal::getScreenContent() const {
     ghostty_row_cells_t rowCells = m_rowCells;
     ghostty_render_state_get(m_renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator);
 
-    std::string result;
-    result.reserve(static_cast<size_t>(m_rows) * static_cast<size_t>(m_cols + 1));
+    // Collect per-row text trimmed to the last content cell, then drop
+    // trailing blank rows, so copying the whole screen yields the text that
+    // is actually visible (TUI padding whitespace, empty lower screen, ...).
+    std::vector<std::string> lines;
+    std::vector<size_t> colOffsets;
+    lines.reserve(static_cast<size_t>(m_rows));
+    colOffsets.resize(static_cast<size_t>(m_cols) + 1, 0);
+    int lastNonBlankRow = -1;
     for (int row = 0; row < m_rows && ghostty_render_state_row_iterator_next(rowIterator); ++row) {
         ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
-        for (int col = 0; col < m_cols && ghostty_render_state_row_cells_next(rowCells); ++col) {
+        std::string lineText;
+        lineText.reserve(static_cast<size_t>(m_cols));
+        int lastContentCol = -1;
+        int col = 0;
+        for (col = 0; col < m_cols && ghostty_render_state_row_cells_next(rowCells); ++col) {
+            colOffsets[static_cast<size_t>(col)] = lineText.size();
+
             ghostty_cell_t raw = 0;
             bool hasText = false;
             ghostty_cell_wide_t wide = GHOSTTY_CELL_WIDE_NARROW;
@@ -886,19 +911,96 @@ std::string Terminal::getScreenContent() const {
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_HAS_TEXT, &hasText);
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
-            if (!hasText || wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
-                result.push_back(' ');
+
+            if (IsCellContent(hasText, wide, codepoint)) {
+                lastContentCol = col;
+            }
+            // Wide glyphs: the lead cell carries the codepoint; the spacer
+            // cell must not emit a blank after every wide glyph.
+            if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
                 continue;
             }
-            if (codepoint == 0) {
-                result.push_back(' ');
-                continue;
+            if (!hasText || codepoint == 0) {
+                lineText.push_back(' ');
+            } else {
+                AppendCodepointUtf8(lineText, codepoint);
             }
-            AppendCodepointUtf8(result, codepoint);
         }
-        result.push_back('\n');
+        // Seal the offset table in case the row ended early (fewer cells than
+        // m_cols), so the trim cut below never reads a stale entry.
+        colOffsets[static_cast<size_t>(col)] = lineText.size();
+        if (lastContentCol >= 0) {
+            lastNonBlankRow = row;
+        }
+        // Trim trailing whitespace (cut at the end of the last content cell).
+        lines.push_back(lineText.substr(0, colOffsets[static_cast<size_t>(lastContentCol) + 1]));
+    }
+
+    std::string result;
+    for (int row = 0; row <= lastNonBlankRow; row++) {
+        result.append(lines[static_cast<size_t>(row)]);
+        if (row < lastNonBlankRow) {
+            result.push_back('\n');
+        }
     }
     return result;
+}
+
+// Single viewport row with trailing whitespace trimmed, addressed by row
+// number so consumers that map a cursor position to a line (IME surrounding
+// text) never get their row index shifted by blank-line trimming.
+std::string Terminal::getScreenLine(int viewportRow) const {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (!m_renderState || !m_vt || viewportRow < 0 || viewportRow >= m_rows) {
+        return {};
+    }
+    if (ghostty_render_state_update(m_renderState, m_vt) != GHOSTTY_SUCCESS) {
+        return {};
+    }
+
+    ghostty_row_iterator_t rowIterator = m_rowIterator;
+    ghostty_row_cells_t rowCells = m_rowCells;
+    ghostty_render_state_get(m_renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator);
+    for (int row = 0; row <= viewportRow; ++row) {
+        if (!ghostty_render_state_row_iterator_next(rowIterator)) {
+            return {};
+        }
+    }
+    ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
+
+    std::string lineText;
+    lineText.reserve(static_cast<size_t>(m_cols));
+    std::vector<size_t> colOffsets(static_cast<size_t>(m_cols) + 1, 0);
+    int lastContentCol = -1;
+    int col = 0;
+    for (col = 0; col < m_cols && ghostty_render_state_row_cells_next(rowCells); ++col) {
+        colOffsets[static_cast<size_t>(col)] = lineText.size();
+
+        ghostty_cell_t raw = 0;
+        bool hasText = false;
+        ghostty_cell_wide_t wide = GHOSTTY_CELL_WIDE_NARROW;
+        uint32_t codepoint = 0;
+        ghostty_render_state_row_cells_get(rowCells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_HAS_TEXT, &hasText);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
+
+        if (IsCellContent(hasText, wide, codepoint)) {
+            lastContentCol = col;
+        }
+        if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
+            continue;
+        }
+        if (!hasText || codepoint == 0) {
+            lineText.push_back(' ');
+        } else {
+            AppendCodepointUtf8(lineText, codepoint);
+        }
+    }
+    // Seal the offset table in case the row ended early (fewer cells than
+    // m_cols), so the trim cut below never reads an uninitialized entry.
+    colOffsets[static_cast<size_t>(col)] = lineText.size();
+    return lineText.substr(0, colOffsets[static_cast<size_t>(lastContentCol) + 1]);
 }
 
 void Terminal::getCursorPosition(int& row, int& col) const {
@@ -1599,11 +1701,14 @@ size_t Terminal::getSelectionCharCount(bool excludeEnd) const {
     ghostty_render_state_row_get(rowIterator,
         GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
 
-    size_t count = 0;
+    // Collect content columns first: the stream boundary (last content cell)
+    // is only known after a full pass, and the row cells iterator advances in
+    // one direction only. Only cells carrying content count, matching what a
+    // stream copy of the same range would produce.
+    std::vector<uint8_t> contentFlags(static_cast<size_t>(m_cols), 0);
+    int lastContentCol = -1;
     for (int col = 0; col < m_cols; ++col) {
         if (!ghostty_render_state_row_cells_next(rowCells)) break;
-        if (col < startCol || col > endCol) continue;
-        if (excludeEnd && col == endCol) continue;
 
         ghostty_cell_t raw = 0;
         bool hasText = false;
@@ -1616,13 +1721,18 @@ size_t Terminal::getSelectionCharCount(bool excludeEnd) const {
         ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
         ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
 
-        // Skip CJK spacer cells — the lead cell already represents the glyph.
-        if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL ||
-            wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) continue;
-        // Skip empty cells.
-        if (!hasText || codepoint == 0) continue;
+        if (IsCellContent(hasText, wide, codepoint)) {
+            lastContentCol = col;
+            contentFlags[static_cast<size_t>(col)] = 1;
+        }
+    }
 
-        ++count;
+    size_t count = 0;
+    const int colCap = std::min(endCol, lastContentCol);
+    for (int col = startCol; col <= colCap; ++col) {
+        if (excludeEnd && col == endCol) continue;
+        if (col < 0 || col >= m_cols) continue;
+        count += contentFlags[static_cast<size_t>(col)];
     }
     return count;
 }
@@ -1639,18 +1749,56 @@ bool Terminal::isAlternateScreen() const {
 
 bool Terminal::isSelectionAt(int row, int col) const {
     std::lock_guard<std::mutex> lock(m_stateMutex);
-    if (!m_selectionActive) {
+    if (!m_selectionActive || !m_renderState || !m_vt) {
+        return false;
+    }
+    if (ghostty_render_state_update(m_renderState, m_vt) != GHOSTTY_SUCCESS) {
         return false;
     }
 
-    const int absRow = static_cast<int>(getViewportTopRowLocked()) + ClampIndex(row, m_rows);
+    const int viewportTop = static_cast<int>(getViewportTopRowLocked());
+    const int absRow = viewportTop + ClampIndex(row, m_rows);
     const int clampedCol = ClampIndex(col, m_cols);
     int startRow = 0;
     int startCol = 0;
     int endRow = 0;
     int endCol = 0;
     normalizeSelectionBounds(startRow, startCol, endRow, endCol);
-    return IsCellSelected(true, startRow, startCol, endRow, endCol, absRow, clampedCol);
+    if (!IsCellSelected(true, startRow, startCol, endRow, endCol, absRow, clampedCol)) {
+        return false;
+    }
+
+    // Stream semantics: a point past the row's last content cell is not on
+    // the selection even when it lies within the rectangular bounds, so that
+    // clicking/dragging on unselected whitespace starts a new selection.
+    const int viewportRow = absRow - viewportTop;
+    if (viewportRow < 0 || viewportRow >= m_rows) {
+        return false;
+    }
+    ghostty_row_iterator_t rowIterator = m_rowIterator;
+    ghostty_row_cells_t rowCells = m_rowCells;
+    ghostty_render_state_get(m_renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator);
+    for (int r = 0; r <= viewportRow; ++r) {
+        if (!ghostty_render_state_row_iterator_next(rowIterator)) {
+            return false;
+        }
+    }
+    ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
+    int lastContentCol = -1;
+    for (int c = 0; c < m_cols && ghostty_render_state_row_cells_next(rowCells); ++c) {
+        ghostty_cell_t raw = 0;
+        bool hasText = false;
+        ghostty_cell_wide_t wide = GHOSTTY_CELL_WIDE_NARROW;
+        uint32_t codepoint = 0;
+        ghostty_render_state_row_cells_get(rowCells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_HAS_TEXT, &hasText);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
+        if (IsCellContent(hasText, wide, codepoint)) {
+            lastContentCol = c;
+        }
+    }
+    return clampedCol <= lastContentCol;
 }
 
 void Terminal::startSelection(int row, int col) {
@@ -1930,6 +2078,17 @@ std::string Terminal::getSelectedText() const {
     normalizeSelectionBounds(startRow, startCol, endRow, endCol);
     const int viewportTopRowGST = static_cast<int>(getViewportTopRowLocked());
 
+    // Per-row cell payloads: the stream boundary (last content column) is
+    // only known after a full row pass, but the row cells iterator advances
+    // in one direction only, so each row is collected before emitting it.
+    struct RowCellInfo {
+        uint32_t codepoint;
+        ghostty_cell_wide_t wide;
+        bool hasText;
+    };
+    std::vector<RowCellInfo> infos;
+    infos.reserve(static_cast<size_t>(m_cols));
+
     std::string result;
     for (int row = 0; row < m_rows && ghostty_render_state_row_iterator_next(rowIterator); ++row) {
         ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
@@ -1938,7 +2097,13 @@ std::string Terminal::getSelectedText() const {
             continue;
         }
 
-        bool rowHasSelection = false;
+        // Stream semantics: each row is selected/copied up to its last content
+        // cell (trailing whitespace — TUI padding, empty line ends — is
+        // dropped), interior whitespace is preserved verbatim, and blank rows
+        // between anchor and focus still emit a newline so multi-line ranges
+        // keep their line structure.
+        infos.clear();
+        int lastContentCol = -1;
         for (int col = 0; col < m_cols && ghostty_render_state_row_cells_next(rowCells); ++col) {
             ghostty_cell_t raw = 0;
             bool hasText = false;
@@ -1950,26 +2115,35 @@ std::string Terminal::getSelectedText() const {
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint);
 
-            if (!IsCellSelected(true, startRow, startCol, endRow, endCol, absRow, col)) {
-                continue;
-            }
-
-            rowHasSelection = true;
-            if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
-                // Wide characters (e.g. CJK) occupy two cells: the lead cell holds
-                // the codepoint and the trailing cell is a spacer. Emitting a space
-                // for the spacer would insert a blank after every wide glyph, so we
-                // skip spacers entirely when extracting selected text.
-                continue;
-            }
-            if (!hasText || codepoint == 0) {
-                result.push_back(' ');
-            } else {
-                AppendCodepointUtf8(result, codepoint);
+            infos.push_back({codepoint, wide, hasText});
+            if (IsCellContent(hasText, wide, codepoint)) {
+                lastContentCol = col;
             }
         }
 
-        if (rowHasSelection && absRow < endRow) {
+        const int colStart = (absRow == startRow) ? startCol : 0;
+        if (lastContentCol >= colStart) {
+            int colEnd = lastContentCol;
+            if (absRow == endRow && endCol < colEnd) {
+                colEnd = endCol;
+            }
+            for (int col = colStart; col <= colEnd; col++) {
+                const RowCellInfo& info = infos[static_cast<size_t>(col)];
+                if (info.wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || info.wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) {
+                    // Wide characters (e.g. CJK) occupy two cells: the lead cell holds
+                    // the codepoint and the trailing cell is a spacer. Emitting a space
+                    // for the spacer would insert a blank after every wide glyph, so we
+                    // skip spacers entirely when extracting selected text.
+                    continue;
+                }
+                if (!info.hasText || info.codepoint == 0) {
+                    result.push_back(' ');
+                } else {
+                    AppendCodepointUtf8(result, info.codepoint);
+                }
+            }
+        }
+        if (absRow < endRow) {
             result.push_back('\n');
         }
     }
@@ -2084,6 +2258,7 @@ void Terminal::drawFrame() {
         std::string rowText;
         std::vector<size_t> rowByteStart;
         std::vector<size_t> rowByteEnd;
+        int rowLastContentCol = -1; // stream boundary: last cell with real content
         if (needRowText) {
             rowByteStart.resize(static_cast<size_t>(m_cols), 0);
             rowByteEnd.resize(static_cast<size_t>(m_cols), 0);
@@ -2156,6 +2331,10 @@ void Terminal::drawFrame() {
                 }
             }
 
+            if (IsCellContent(hasText, wide, codepoint)) {
+                rowLastContentCol = col;
+            }
+
             if (IsSuspiciousCodepoint(codepoint) && suspiciousCells < 8) {
                 ++suspiciousCells;
                 OH_LOG_ERROR(LOG_APP,
@@ -2196,21 +2375,35 @@ void Terminal::drawFrame() {
                 }
             }
 
-            if (selectionActive) {
-                const int absRow = static_cast<int>(viewportTopRow) + row;
-                bool cellSel = IsCellSelected(true, selectionStartRow, selectionStartCol,
-                                              selectionEndRow, selectionEndCol, absRow, col);
-                // When a wide char's spacer tail is selected but the wide char itself
-                // falls outside the selection boundary, extend selection to the wide
-                // char so the renderer paints both cells with selection color.
-                if (!cellSel && dst.width == 2 && col + 1 < m_cols) {
-                    cellSel = IsCellSelected(true, selectionStartRow, selectionStartCol,
-                                             selectionEndRow, selectionEndCol, absRow, col + 1);
-                }
-                if (cellSel) {
-                    dst.selected = true;
-                    dst.attrs.bg = m_theme.selectionBackground;
-                    dst.attrs.fg = m_theme.selectionForeground;
+        }
+
+        // Stream-shaped selection highlight: mark each row only up to its
+        // last content cell, so trailing whitespace (TUI padding, empty line
+        // ends) is never highlighted.
+        if (selectionActive) {
+            const int absRow = static_cast<int>(viewportTopRow) + row;
+            if (absRow >= selectionStartRow && absRow <= selectionEndRow) {
+                const int colStart = (absRow == selectionStartRow) ? selectionStartCol : 0;
+                if (rowLastContentCol >= colStart) {
+                    int colEnd = rowLastContentCol;
+                    if (absRow == selectionEndRow && selectionEndCol < colEnd) {
+                        colEnd = selectionEndCol;
+                    }
+                    for (int c = colStart; c <= colEnd; c++) {
+                        Cell& selDst = cells[row * m_cols + c];
+                        selDst.selected = true;
+                        selDst.attrs.bg = m_theme.selectionBackground;
+                        selDst.attrs.fg = m_theme.selectionForeground;
+                        // A wide glyph's lead cell is content; its spacer tail
+                        // sits just past the stream boundary. Extend selection
+                        // to the tail so both cells paint with selection color.
+                        if (selDst.width == 2 && c + 1 < m_cols) {
+                            Cell& tailDst = cells[row * m_cols + c + 1];
+                            tailDst.selected = true;
+                            tailDst.attrs.bg = m_theme.selectionBackground;
+                            tailDst.attrs.fg = m_theme.selectionForeground;
+                        }
+                    }
                 }
             }
         }

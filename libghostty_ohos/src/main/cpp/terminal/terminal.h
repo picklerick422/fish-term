@@ -33,6 +33,7 @@ public:
     void feedOutput(const char* data, size_t len);
 
     std::string getScreenContent() const;
+    std::string getScreenLine(int viewportRow) const;
     void getCursorPosition(int& row, int& col) const;
     std::string getLinkAt(int row, int col) const;
 
