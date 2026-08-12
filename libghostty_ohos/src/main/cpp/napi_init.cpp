@@ -1442,6 +1442,33 @@ public:
             }
 
             case OH_NATIVEXCOMPONENT_MOUSE_MOVE: {
+                // Once local selection owns the gesture, keep it local: never
+                // forward drag moves to the app after the takeover below.
+                if (m_isMouseSelecting) {
+                    m_terminal->updateSelection(row, col);
+                    break;
+                }
+
+                // Local text-selection takes priority over forwarding to the
+                // TUI app: once the left button drags across a cell boundary,
+                // own the gesture locally so the app's own selection highlight
+                // never overlays ours (the stream-shaped highlight stays the
+                // only one visible). Single clicks still forward normally.
+                if (m_isMousePressed && !m_isMouseSelecting &&
+                    mouseEvent.button != OH_NATIVEXCOMPONENT_MIDDLE_BUTTON &&
+                    mouseEvent.button != OH_NATIVEXCOMPONENT_RIGHT_BUTTON &&
+                    (row != m_mousePressRow || col != m_mousePressCol)) {
+                    // The press was already forwarded to the app; send a
+                    // release so the app doesn't pair press+release and paint
+                    // its own selection rectangle over ours.
+                    m_terminal->reportMouse(m_mousePressCol + 1, m_mousePressRow + 1, 3, false);
+                    m_terminal->startSelection(m_mousePressRow, m_mousePressCol);
+                    m_isMouseSelecting = true;
+                    m_mouseDragged = true;
+                    m_terminal->updateSelection(row, col);
+                    break;
+                }
+
                 // Forward move to app when mouse tracking is active and the app
                 // wants move events (mode 1002 with button held, or mode 1003 for
                 // all moves). The terminal's reportMouse will silently drop moves
@@ -1479,6 +1506,15 @@ public:
             case OH_NATIVEXCOMPONENT_MOUSE_RELEASE: {
                 if (m_isMouseSelecting) {
                     m_terminal->updateSelection(row, col);
+                    // Local selection owns the gesture end: do not forward the
+                    // release — the app already received the cancel-release when
+                    // the drag started, so it never pairs press+release.
+                    m_isMousePressed = false;
+                    m_isMouseSelecting = false;
+                    m_mouseDragged = false;
+                    m_mouseHadSelectionOnPress = false;
+                    m_mousePressOnSelection = false;
+                    break;
                 }
 
                 // Forward release to app when mouse tracking is active.
@@ -3051,28 +3087,18 @@ private:
             return;
         }
 
-        std::string screen = m_terminal->getScreenContent();
-        std::vector<std::string> lines;
-        size_t start = 0;
-        while (start <= screen.size()) {
-            size_t end = screen.find('\n', start);
-            if (end == std::string::npos) {
-                lines.push_back(screen.substr(start));
-                break;
-            }
-            lines.push_back(screen.substr(start, end - start));
-            start = end + 1;
-        }
-
+        // Read the exact cursor row by row number so the surrounding-text row
+        // index never drifts when screen text is trimmed elsewhere (stream
+        // selection drops trailing whitespace and trailing blank rows).
         int row = 0;
         int col = 0;
         m_terminal->getCursorPosition(row, col);
-        if (lines.empty()) {
+        std::string line = m_terminal->getScreenLine(row);
+        if (line.empty()) {
             return;
         }
 
-        const size_t lineIndex = static_cast<size_t>(std::clamp(row, 0, static_cast<int>(lines.size() - 1)));
-        text = Utf8ToUtf16(lines[lineIndex]);
+        text = Utf8ToUtf16(line);
         cursorIndex = std::clamp(col, 0, static_cast<int32_t>(text.size()));
     }
 
