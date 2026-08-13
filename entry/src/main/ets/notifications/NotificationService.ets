@@ -57,6 +57,30 @@ export class NotificationService {
     this.prefs = prefs;
   }
 
+  // Prompt the user once to enable system-level notifications, if disabled.
+  // The system dialog can only be raised after the UI has loaded, hence the
+  // delay. If the user declines, the dialog cannot be re-raised — they must
+  // re-enable notifications from system settings.
+  requestEnable(): void {
+    setTimeout((): void => {
+      notificationManager.isNotificationEnabled().then((enabled: boolean): void => {
+        if (enabled) {
+          return;
+        }
+        if (!this.context) {
+          return;
+        }
+        notificationManager.requestEnableNotification(this.context).then((): void => {
+          console.info('[NotificationService] notification permission granted');
+        }).catch((err: Error): void => {
+          console.warn(`[NotificationService] requestEnableNotification declined: ${err.message}`);
+        });
+      }).catch((_err: Error): void => {
+        // Best-effort diagnostic, ignore errors
+      });
+    }, 1000);
+  }
+
   // Handle a task event. Checks preferences and foreground state.
   // Returns true if a system notification was actually published.
   handle(event: TaskEvent, isForeground: boolean): boolean {
@@ -80,7 +104,7 @@ export class NotificationService {
       return false;
     }
     this.markNotified(event);
-    this.publish(event);
+    this.publishAsync(event);
     return true;
   }
 
@@ -88,62 +112,62 @@ export class NotificationService {
   // title and text — bypasses prefs and dedup. Returns the notification id.
   publishTest(opts: TestNotifyOptions): number {
     const slotType: number = opts.slotType;
-    this.ensureSlot(slotType);
+    this.ensureSlotAsync(slotType).then((): void => {
+      const id: number = NOTIFICATION_BASE_ID;
+      let content: notificationManager.NotificationContent;
 
-    const id: number = NOTIFICATION_BASE_ID;
-    let content: notificationManager.NotificationContent;
+      if (opts.contentType === 1) {
+        // Long text
+        content = {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_LONG_TEXT,
+          longText: {
+            title: opts.title,
+            text: opts.text,
+            longText: opts.text,
+            additionalText: '',
+            briefText: opts.title,
+            expandedTitle: opts.title
+          }
+        };
+      } else if (opts.contentType === 2) {
+        // Multi-line
+        const lines: string[] = opts.text.split('\n');
+        content = {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_MULTILINE,
+          multiLine: {
+            title: opts.title,
+            text: opts.text,
+            additionalText: '',
+            briefText: opts.title,
+            longTitle: opts.title,
+            lines: lines
+          }
+        };
+      } else {
+        // Basic text (default)
+        content = {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+          normal: {
+            title: opts.title,
+            text: opts.text,
+            additionalText: ''
+          }
+        };
+      }
 
-    if (opts.contentType === 1) {
-      // Long text
-      content = {
-        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_LONG_TEXT,
-        longText: {
-          title: opts.title,
-          text: opts.text,
-          longText: opts.text,
-          additionalText: '',
-          briefText: opts.title,
-          expandedTitle: opts.title
-        }
+      const notificationRequest: notificationManager.NotificationRequest = {
+        id: id,
+        content: content,
+        notificationSlotType: slotType as notificationManager.SlotType
       };
-    } else if (opts.contentType === 2) {
-      // Multi-line
-      const lines: string[] = opts.text.split('\n');
-      content = {
-        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_MULTILINE,
-        multiLine: {
-          title: opts.title,
-          text: opts.text,
-          additionalText: '',
-          briefText: opts.title,
-          longTitle: opts.title,
-          lines: lines
-        }
-      };
-    } else {
-      // Basic text (default)
-      content = {
-        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
-        normal: {
-          title: opts.title,
-          text: opts.text,
-          additionalText: ''
-        }
-      };
-    }
 
-    const notificationRequest: notificationManager.NotificationRequest = {
-      id: id,
-      content: content,
-      notificationSlotType: slotType as notificationManager.SlotType
-    };
-
-    notificationManager.publish(notificationRequest).then((): void => {
-      console.info(`[NotificationService] Test published: slot=${slotType} content=${opts.contentType}`);
-    }).catch((err: Error): void => {
-      console.error(`[NotificationService] Test publish failed: ${err.message}`);
+      notificationManager.publish(notificationRequest).then((): void => {
+        console.info(`[NotificationService] Test published: slot=${slotType} content=${opts.contentType}`);
+      }).catch((err: Error): void => {
+        console.error(`[NotificationService] Test publish failed: ${err.message}`);
+      });
     });
-    return id;
+    return NOTIFICATION_BASE_ID;
   }
 
   // Dismiss notification for a specific tab (called when user switches to tab).
@@ -185,9 +209,11 @@ export class NotificationService {
 
   private createdSlots: Set<number> = new Set();
 
-  // Ensure a notification slot of the given type exists.
-  // HarmonyOS requires a slot (channel) — without it publish fails with 1600005.
-  private ensureSlot(slotType: number): void {
+  // Ensure a notification slot of the given type exists before publishing.
+  // HarmonyOS requires a slot (channel) — without it publish fails with
+  // 1600005. Awaiting completion closes the race where the first publish
+  // after a cold start fired while addSlot was still in flight.
+  private async ensureSlotAsync(slotType: number): Promise<void> {
     if (this.createdSlots.has(slotType)) {
       return;
     }
@@ -195,19 +221,29 @@ export class NotificationService {
 
     // ArkTS strict mode requires the enum value, not a bare number.
     const st: notificationManager.SlotType = slotType as notificationManager.SlotType;
-    notificationManager.addSlot(st).then((): void => {
+    try {
+      await notificationManager.addSlot(st);
       console.info(`[NotificationService] Slot created (type=${slotType})`);
-    }).catch((err: Error): void => {
-      console.error(`[NotificationService] addSlot(type=${slotType}) failed: ${err.message}`);
-    });
+    } catch (err) {
+      // The slot may already exist from a previous run — publish will retry.
+      console.error(`[NotificationService] addSlot(type=${slotType}) failed: ${(err as Error).message}`);
+    }
   }
 
-  private publish(event: TaskEvent): void {
-    this.ensureSlot(2); // SERVICE_INFORMATION for task notifications
+  private async publishAsync(event: TaskEvent): Promise<void> {
+    await this.ensureSlotAsync(2); // SERVICE_INFORMATION for task notifications
 
     const title: string = event.type === TaskEventType.TASK_COMPLETED
       ? `「${event.tabTitle}」执行完成`
-      : `「${event.tabTitle}」需要输入`;
+      : `「${event.tabTitle}」等待批准`;
+
+    // detail carries the claude-side message (last reply / permission prompt).
+    // Truncate — claude's last_assistant_message can be very long.
+    const detail: string = event.detail ?? '';
+    let text: string = detail.length > 200 ? detail.substring(0, 200) + '…' : detail;
+    if (text.length === 0) {
+      text = event.type === TaskEventType.TASK_COMPLETED ? 'claude 已完成回复' : 'claude 等待批准';
+    }
 
     const notificationRequest: notificationManager.NotificationRequest = {
       id: NOTIFICATION_BASE_ID + event.tabId,
@@ -216,24 +252,26 @@ export class NotificationService {
         notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
         normal: {
           title: title,
-          text: event.detail ?? '',
+          text: text,
           additionalText: ''
         }
       }
     };
 
-    // Log notification enable status (one-time) to aid debugging.
-    notificationManager.isNotificationEnabled().then((enabled: boolean): void => {
-      console.info(`[NotificationService] isNotificationEnabled = ${enabled}`);
-    }).catch((_err: Error): void => {
-      // Best-effort diagnostic, ignore errors
-    });
-
-    notificationManager.publish(notificationRequest).then((): void => {
+    try {
+      await notificationManager.publish(notificationRequest);
       console.info(`[NotificationService] Published: tab=${event.tabId} type=${event.type}`);
       this.activeTabIds.add(event.tabId);
-    }).catch((err: Error): void => {
-      console.error(`[NotificationService] Publish failed: ${err.message} (code may be in err)`);
-    });
+    } catch (err) {
+      // Retry once — covers transient failures and slot-creation races.
+      console.warn(`[NotificationService] Publish failed, retrying: ${(err as Error).message}`);
+      try {
+        await notificationManager.publish(notificationRequest);
+        console.info(`[NotificationService] Published (retry): tab=${event.tabId} type=${event.type}`);
+        this.activeTabIds.add(event.tabId);
+      } catch (err2) {
+        console.error(`[NotificationService] Publish failed twice: ${(err2 as Error).message}`);
+      }
+    }
   }
 }

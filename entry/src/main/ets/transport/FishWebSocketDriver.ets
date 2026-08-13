@@ -41,7 +41,8 @@ export interface ServerCtrl {
   dir?: string;
   error?: string;
   id?: string;  // session id from server on first connect
-  state?: boolean; // awaiting_input state
+  event?: string;   // task_event: "completed" | "awaiting"
+  message?: string; // task_event payload (claude's message / last reply)
   path?: string;   // list_dir_result path
   entries?: ServerDirEntry[];
   truncated?: boolean;
@@ -58,7 +59,7 @@ export class FishWebSocketDriver implements TerminalDriver {
   private cwdCb: ((dir: string) => void) | null = null;
   private sessionIdCb: ((id: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
-  private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
+  private taskEventCb: ((event: string, message: string) => void) | null = null;
   private sessionResetCb: (() => void) | null = null;
   private listDirResultCb: ((result: ServerCtrl) => void) | null = null;
 
@@ -127,11 +128,11 @@ export class FishWebSocketDriver implements TerminalDriver {
     this.sessionResetCb = cb;
   }
 
-  // Backend-driven awaiting-input signal.  Fires when the fish-agent detects
-  // the child process is idle and blocked on terminal input (3 s output
-  // silence + process in S state).  Fires with `false` once output resumes.
-  onAwaitingInput(cb: (awaiting: boolean) => void): void {
-    this.awaitingInputCb = cb;
+  // Task events pushed by fish-agent, sourced from claude-code hooks:
+  // "completed" (Stop hook — a reply finished) or "awaiting"
+  // (Notification/permission_prompt hook — claude waits for approval).
+  onTaskEvent(cb: (event: string, message: string) => void): void {
+    this.taskEventCb = cb;
   }
 
   // File tree: receives directory listing results from the server.
@@ -434,9 +435,9 @@ export class FishWebSocketDriver implements TerminalDriver {
       if (this.sessionIdCb) {
         this.sessionIdCb(ctrl.id);
       }
-    } else if (ctrl.type === 'awaiting_input') {
-      if (this.awaitingInputCb) {
-        this.awaitingInputCb(ctrl.state ?? false);
+    } else if (ctrl.type === 'task_event') {
+      if (this.taskEventCb) {
+        this.taskEventCb(ctrl.event ?? '', ctrl.message ?? '');
       }
     } else if (ctrl.type === 'list_dir_result' && this.listDirResultCb) {
       this.listDirResultCb(ctrl);

@@ -8,12 +8,10 @@ export struct NotificationSettings {
   @Prop notifyCompleted: boolean = true;
   @Prop notifyAwaiting: boolean = true;
   @Prop notifyBackgroundOnly: boolean = true;
-  @Prop notifyBell: boolean = false;
   onNotifyEnabledChange: (v: boolean) => void = (_v: boolean) => {};
   onNotifyCompletedChange: (v: boolean) => void = (_v: boolean) => {};
   onNotifyAwaitingChange: (v: boolean) => void = (_v: boolean) => {};
   onNotifyBackgroundOnlyChange: (v: boolean) => void = (_v: boolean) => {};
-  onNotifyBellChange: (v: boolean) => void = (_v: boolean) => {};
   onTestNotification: (slotType: number, contentType: number, title: string, text: string) => void = (_s: number, _c: number, _t: string, _x: string) => {};
 
   @State private hoverTestNotify: boolean = false;
@@ -131,33 +129,6 @@ export struct NotificationSettings {
               .onChange((on: boolean) => {
                 this.notifyBackgroundOnly = on;
                 this.onNotifyBackgroundOnlyChange(on);
-              })
-          }
-          .width('100%')
-          .padding(12)
-          .backgroundColor(this.uiTheme.bgSurface)
-          .borderRadius(RADIUS_CARD)
-          .border({ width: 1, color: this.uiTheme.border })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-
-        // Bell detection switch — bell (\x07) is a common terminal signal but too
-        // noisy by default (vim, backspace, tab failures, etc. also ring it).
-        Column({ space: 0 }) {
-          this.buildSectionHeader('通知信号')
-          Row({ space: 12 }) {
-            Text('检测终端响铃 (BEL)')
-              .fontSize(14)
-              .fontColor(this.notifyEnabled ? this.uiTheme.textPrimary : this.uiTheme.textDim)
-              .layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.notifyBell })
-              .selectedColor(this.uiTheme.accent)
-              .focusable(false)
-              .enabled(this.notifyEnabled)
-              .onChange((on: boolean) => {
-                this.notifyBell = on;
-                this.onNotifyBellChange(on);
               })
           }
           .width('100%')

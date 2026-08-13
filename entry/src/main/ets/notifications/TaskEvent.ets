@@ -1,5 +1,6 @@
 // entry/src/main/ets/notifications/TaskEvent.ets
-// Task event types emitted by TaskDetector from terminal output analysis.
+// Task event types emitted by claude-code hook events relayed through
+// fish-agent (Stop -> completed, Notification/permission_prompt -> awaiting).
 
 export enum TaskEventType {
   TASK_COMPLETED = 'completed',

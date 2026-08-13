@@ -45,10 +45,9 @@ function extractOscTitle(data: string): string | null {
 
 // Decode bounds for the auxiliary string analysis done per output batch.
 // The terminal itself is fed raw bytes — strings are only needed for OSC
-// title extraction and task-pattern detection, so we decode small slices
-// instead of the whole batch (which can be hundreds of KB during replay).
+// title extraction, so we decode a small slice instead of the whole batch
+// (which can be hundreds of KB during replay).
 const TITLE_SCAN_BYTES: number = 65536; // first 64 KB of a batch
-const TASK_SCAN_BYTES: number = 4096;   // last 4 KB of a batch
 
 export class TerminalSession {
   private readonly controller: TerminalController;
@@ -57,9 +56,8 @@ export class TerminalSession {
   private titleCb: ((title: string) => void) | null = null;
   private cwdCb: ((cwd: string) => void) | null = null;
   private sessionIdCb: ((id: string) => void) | null = null;
-  private taskDataCb: ((data: string) => void) | null = null;
   private replayStateCb: ((replaying: boolean) => void) | null = null;
-  private awaitingInputCb: ((awaiting: boolean) => void) | null = null;
+  private taskEventCb: ((event: string, message: string) => void) | null = null;
   private listDirResultCb: ((result: ServerCtrl) => void) | null = null;
 
   private started: boolean = false;
@@ -69,8 +67,6 @@ export class TerminalSession {
   private lastCols: number = 0;
   private lastRows: number = 0;
   // True while the driver is receiving the server's cached-output replay.
-  // Task detection is muted during replay — historical output must not fire
-  // "task completed / awaiting input" notifications.
   private replaying: boolean = false;
   // True when the server assigned a new session ID during this reconnect cycle
   // (meaning the old PTY died and was replaced).  Used to gate clearMouseTracking
@@ -102,11 +98,6 @@ export class TerminalSession {
         } else {
           console.warn('[TerminalSession] titleCb is null, callback not registered');
         }
-      }
-      // Task detection: recent output only, and never during replay.
-      if (this.taskDataCb && !this.replaying) {
-        const tailStart: number = Math.max(0, data.byteLength - TASK_SCAN_BYTES);
-        this.taskDataCb(this.decodeSlice(data, tailStart, data.byteLength - tailStart));
       }
     });
     this.driver.onStatus((s: DriverStatus): void => {
@@ -176,14 +167,11 @@ export class TerminalSession {
           }
         }
       });
-      (this.driver as FishWebSocketDriver).onAwaitingInput((awaiting: boolean): void => {
-        // Suppress backend awaiting signal during replay — historical output
-        // silence must not fire "awaiting input" notifications.
-        if (this.replaying) {
-          return;
-        }
-        if (this.awaitingInputCb) {
-          this.awaitingInputCb(awaiting);
+      (this.driver as FishWebSocketDriver).onTaskEvent((event: string, message: string): void => {
+        // Task events come from live claude-code hooks on the server, so they
+        // are never part of the replay — no replay gating needed.
+        if (this.taskEventCb) {
+          this.taskEventCb(event, message);
         }
       });
       (this.driver as FishWebSocketDriver).onListDirResult((result: ServerCtrl): void => {
@@ -210,24 +198,16 @@ export class TerminalSession {
     this.sessionIdCb = cb;
   }
 
-  // Register a callback that receives the raw terminal output chunks.
-  // TaskDetector hooks into this to analyze output for task state changes.
-  onTaskData(cb: (data: string) => void): void {
-    this.taskDataCb = cb;
-  }
-
   // Fires when the driver starts/finishes receiving the server's cached-output
   // replay after a reconnect. The page uses this to drive the loading overlay.
   onReplayState(cb: (replaying: boolean) => void): void {
     this.replayStateCb = cb;
   }
 
-  // Backend-driven awaiting-input signal from fish-agent.  Fires when the
-  // server detects the child process is blocked waiting for stdin (3 s output
-  // silence + process sleeping).  The page wires this to TaskEvent-based
-  // notifications.
-  onAwaitingInput(cb: (awaiting: boolean) => void): void {
-    this.awaitingInputCb = cb;
+  // Task events pushed by fish-agent via claude-code hooks ("completed" /
+  // "awaiting").  The page wires these to TaskEvent-based notifications.
+  onTaskEvent(cb: (event: string, message: string) => void): void {
+    this.taskEventCb = cb;
   }
 
   // File tree: receives directory listing results from the server.

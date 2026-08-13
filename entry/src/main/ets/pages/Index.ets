@@ -26,7 +26,6 @@ import { CrashHandler } from '../crash/CrashHandler';
 import { CrashType, CrashLogEntry } from '../crash/CrashTypes';
 import { CrashStore } from '../crash/CrashStore';
 import { TaskEvent, TaskEventType } from '../notifications/TaskEvent';
-import { TaskDetector } from '../notifications/TaskDetector';
 import { NotificationService } from '../notifications/NotificationService';
 import { NotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '../store/ConnectionStore';
 import { ListDirResult, FileEntry } from '../filetree/FileTreeTypes';
@@ -126,7 +125,6 @@ struct Index {
   private tabScroller: Scroller = new Scroller();
   @State private showOverflow: boolean = false;
   private saveDebounceTimer: number = -1;
-  private detector: TaskDetector = new TaskDetector();
   private notifyService: NotificationService = new NotificationService();
   @State private notifyPrefs: NotificationPrefs = DEFAULT_NOTIFICATION_PREFS;
   @State private isForeground: boolean = true;
@@ -153,9 +151,12 @@ struct Index {
       this.store.loadNotificationPrefs().then((prefs: NotificationPrefs): void => {
         this.notifyPrefs = prefs;
         this.notifyService.updatePrefs(prefs);
-        this.detector.bellEnabled = prefs.bellEnabled;
       });
     }
+
+    // Notifications need system-level permission. If the user disabled them
+    // (or first launch left them off), prompt once via the system dialog.
+    this.notifyService.requestEnable();
 
     // Register bundled custom fonts in the active UI context.
     // font.registerFont() was deprecated from API 18 — must use UIContext.getFont().
@@ -726,8 +727,9 @@ struct Index {
     this.tabs = this.tabs.slice();
   }
 
-  // Called when TaskDetector detects a task state change.
-  // Delegates to NotificationService for system notification (background only via prefs).
+  // Called when a claude-code hook event (completed / awaiting) arrives via
+  // fish-agent. Delegates to NotificationService for system notification
+  // (background only via prefs).
   private handleTaskEvent(event: TaskEvent): void {
     console.info(`[Index] TaskEvent: tab=${event.tabId} type=${event.type} detail=${event.detail}`);
     this.notifyService.handle(event, this.isForeground);
@@ -943,35 +945,29 @@ struct Index {
         this.replayLoading = replaying;
       }
     });
-    // Backend-driven awaiting-input signal (fish-agent detects process blocked
-    // on stdin).  Convert to a TaskEvent so it flows through the same
-    // notification pipeline as the regex-based TaskDetector.
+    // Task events pushed by fish-agent via claude-code hooks.  Convert to a
+    // TaskEvent so they flow through the notification pipeline.
     const tabId: number = id;
     const tabTitleRef: string = tabTitle;
-    session.onAwaitingInput((awaiting: boolean): void => {
-      if (!awaiting) {
-        return; // only fire on the rising edge — notifications are one-shot
-      }
+    session.onTaskEvent((event: string, message: string): void => {
       const t: TabMeta | undefined = this.tabs.find((x: TabMeta) => x.id === tabId);
       const title: string = t ? t.title : tabTitleRef;
-      this.handleTaskEvent({
-        type: TaskEventType.TASK_AWAITING_INPUT,
-        tabId: tabId,
-        tabTitle: title,
-        detail: '等待用户输入',
-        timestamp: Date.now(),
-      });
-    });
-    // Wire task detector to session output for notification analysis
-    session.onTaskData((data: string): void => {
-      const event: TaskEvent | null = this.detector.detect(data, tabId, tabTitleRef);
-      if (event !== null) {
-        // Update the event with the current tab title (may have changed via OSC)
-        const t: TabMeta | undefined = this.tabs.find((x: TabMeta) => x.id === tabId);
-        if (t) {
-          event.tabTitle = t.title;
-        }
-        this.handleTaskEvent(event);
+      if (event === 'completed') {
+        this.handleTaskEvent({
+          type: TaskEventType.TASK_COMPLETED,
+          tabId: tabId,
+          tabTitle: title,
+          detail: message,
+          timestamp: Date.now(),
+        });
+      } else if (event === 'awaiting') {
+        this.handleTaskEvent({
+          type: TaskEventType.TASK_AWAITING_INPUT,
+          tabId: tabId,
+          tabTitle: title,
+          detail: message,
+          timestamp: Date.now(),
+        });
       }
     });
     // File tree: receive directory listings from the server
@@ -1741,7 +1737,6 @@ struct Index {
       notifyCompleted: this.notifyPrefs.taskCompleted,
       notifyAwaiting: this.notifyPrefs.taskAwaitingInput,
       notifyBackgroundOnly: this.notifyPrefs.onlyWhenBackground,
-      notifyBell: this.notifyPrefs.bellEnabled,
       onNotifyEnabledChange: (v: boolean) => {
         this.notifyPrefs.enabled = v;
         this.notifyService.updatePrefs(this.notifyPrefs);
@@ -1766,13 +1761,6 @@ struct Index {
       onNotifyBackgroundOnlyChange: (v: boolean) => {
         this.notifyPrefs.onlyWhenBackground = v;
         this.notifyService.updatePrefs(this.notifyPrefs);
-        if (this.store) {
-          this.store.saveNotificationPrefs(this.notifyPrefs);
-        }
-      },
-      onNotifyBellChange: (v: boolean) => {
-        this.notifyPrefs.bellEnabled = v;
-        this.detector.bellEnabled = v;
         if (this.store) {
           this.store.saveNotificationPrefs(this.notifyPrefs);
         }

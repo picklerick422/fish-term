@@ -52,12 +52,10 @@ export struct SettingsPanel {
   @Prop notifyCompleted: boolean = true;
   @Prop notifyAwaiting: boolean = true;
   @Prop notifyBackgroundOnly: boolean = true;
-  @Prop notifyBell: boolean = false;
   onNotifyEnabledChange: (v: boolean) => void = (_v: boolean) => {};
   onNotifyCompletedChange: (v: boolean) => void = (_v: boolean) => {};
   onNotifyAwaitingChange: (v: boolean) => void = (_v: boolean) => {};
   onNotifyBackgroundOnlyChange: (v: boolean) => void = (_v: boolean) => {};
-  onNotifyBellChange: (v: boolean) => void = (_v: boolean) => {};
   onTestNotification: (slotType: number, contentType: number, title: string, text: string) => void = (_s: number, _c: number, _t: string, _x: string) => {};
   onReplayGuide: () => void = () => {};
   onClose: () => void = () => {};
@@ -316,12 +314,10 @@ export struct SettingsPanel {
             notifyCompleted: this.notifyCompleted,
             notifyAwaiting: this.notifyAwaiting,
             notifyBackgroundOnly: this.notifyBackgroundOnly,
-            notifyBell: this.notifyBell,
             onNotifyEnabledChange: (v: boolean): void => { this.onNotifyEnabledChange(v); },
             onNotifyCompletedChange: (v: boolean): void => { this.onNotifyCompletedChange(v); },
             onNotifyAwaitingChange: (v: boolean): void => { this.onNotifyAwaitingChange(v); },
             onNotifyBackgroundOnlyChange: (v: boolean): void => { this.onNotifyBackgroundOnlyChange(v); },
-            onNotifyBellChange: (v: boolean): void => { this.onNotifyBellChange(v); },
             onTestNotification: (s: number, c: number, title: string, text: string): void => {
               this.onTestNotification(s, c, title, text);
             }
