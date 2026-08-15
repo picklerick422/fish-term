@@ -1298,7 +1298,12 @@ public:
                 const float moveDistance = std::sqrt(dx * dx + dy * dy);
                 const uint64_t elapsed = getCurrentTimeMs() - m_touchStartTime;
 
-                if (!m_isSelecting && elapsed >= LONG_PRESS_MS) {
+                // Long-press selection is a real-touch gesture. A synthesized
+                // mouse touch is just the mouse path (DispatchMouseEvent) with
+                // the app already owning the drag when mouse tracking is on —
+                // letting it also start a selection here would fight the mouse
+                // path's local copy tracking and reset its anchor mid-drag.
+                if (!isMouseSynthesized && !m_isSelecting && elapsed >= LONG_PRESS_MS) {
                     int startRow = 0;
                     int startCol = 0;
                     MapPointToCell(m_touchStartX, m_touchStartY, startRow, startCol);
@@ -1418,9 +1423,11 @@ public:
                 if (mouseEvent.button == OH_NATIVEXCOMPONENT_MIDDLE_BUTTON) btn = 1;
                 else if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) btn = 2;
 
-                if (m_terminal->reportMouse(col + 1, row + 1, btn, true)) {
+                m_mouseForwardedToApp = m_terminal->reportMouse(col + 1, row + 1, btn, true);
+                if (m_mouseForwardedToApp) {
                     // Event was forwarded to the app — skip local selection logic
-                    // for this press. The app owns mouse handling now. The local
+                    // for this press. The app owns mouse handling now (claude
+                    // code paints its own drag-selection highlight). The local
                     // selection state is independent of mouse tracking though: a
                     // click outside an active selection still dismisses it, even
                     // when the same event is forwarded to the TUI app.
@@ -1442,25 +1449,45 @@ public:
             }
 
             case OH_NATIVEXCOMPONENT_MOUSE_MOVE: {
-                // Once local selection owns the gesture, keep it local: never
-                // forward drag moves to the app after the takeover below.
+                // Once the drag is being tracked, keep updating the local copy
+                // source and keep forwarding moves to the app so the app's own
+                // highlight (claude code) covers the whole drag rather than just
+                // the press point.
                 if (m_isMouseSelecting) {
                     m_terminal->updateSelection(row, col);
+                    if (m_mouseForwardedToApp) {
+                        int btn = 0;
+                        if (mouseEvent.button == OH_NATIVEXCOMPONENT_MIDDLE_BUTTON) btn = 1;
+                        else if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) btn = 2;
+                        m_terminal->reportMouse(col + 1, row + 1, 32 + btn, true);
+                    }
                     break;
                 }
 
-                // Local text-selection takes priority over forwarding to the
-                // TUI app: once the left button drags across a cell boundary,
-                // own the gesture locally so the app's own selection highlight
-                // never overlays ours (the stream-shaped highlight stays the
-                // only one visible). Single clicks still forward normally.
                 if (m_isMousePressed && !m_isMouseSelecting &&
                     mouseEvent.button != OH_NATIVEXCOMPONENT_MIDDLE_BUTTON &&
                     mouseEvent.button != OH_NATIVEXCOMPONENT_RIGHT_BUTTON &&
                     (row != m_mousePressRow || col != m_mousePressCol)) {
-                    // The press was already forwarded to the app; send a
-                    // release so the app doesn't pair press+release and paint
-                    // its own selection rectangle over ours.
+                    if (m_mouseForwardedToApp) {
+                        // The alt-screen app (claude code) owns the drag and
+                        // paints its own selection highlight, which follows
+                        // reflows precisely — a local coordinate overlay cannot
+                        // match that. Track the same rectangle locally,
+                        // unpainted, purely as the clipboard-copy source, and
+                        // forward the move so the app's highlight grows with
+                        // the whole drag. No cancel-release: the app keeps the
+                        // gesture.
+                        m_terminal->startSelection(m_mousePressRow, m_mousePressCol, true);
+                        m_isMouseSelecting = true;
+                        m_mouseDragged = true;
+                        m_terminal->updateSelection(row, col);
+                        m_terminal->reportMouse(col + 1, row + 1, 32, true);
+                        break;
+                    }
+                    // Mouse tracking not active: local selection owns the
+                    // gesture. Send a cancel release (a harmless no-op when
+                    // nothing was forwarded) so the app never pairs press and
+                    // release and paints a rectangle of its own over ours.
                     m_terminal->reportMouse(m_mousePressCol + 1, m_mousePressRow + 1, 3, false);
                     m_terminal->startSelection(m_mousePressRow, m_mousePressCol);
                     m_isMouseSelecting = true;
@@ -1481,11 +1508,13 @@ public:
                     else if (mouseEvent.button == OH_NATIVEXCOMPONENT_RIGHT_BUTTON) btn = 2;
                     const int moveBtn = 32 + btn;
                     if (m_terminal->reportMouse(col + 1, row + 1, moveBtn, true)) {
+                        m_mouseForwardedToApp = true;
                         break;
                     }
                 } else {
                     // Move without button pressed — only reported in mode 1003.
                     if (m_terminal->reportMouse(col + 1, row + 1, 35, true)) {
+                        m_mouseForwardedToApp = true;
                         break;
                     }
                 }
@@ -1506,14 +1535,19 @@ public:
             case OH_NATIVEXCOMPONENT_MOUSE_RELEASE: {
                 if (m_isMouseSelecting) {
                     m_terminal->updateSelection(row, col);
-                    // Local selection owns the gesture end: do not forward the
-                    // release — the app already received the cancel-release when
-                    // the drag started, so it never pairs press+release.
+                    if (m_mouseForwardedToApp) {
+                        // Forward the release so the app finalizes its drag
+                        // selection and keeps it painted for copying. The local
+                        // selection tracked the same rectangle all along as the
+                        // clipboard-copy source.
+                        m_terminal->reportMouse(col + 1, row + 1, 3, false);
+                    }
                     m_isMousePressed = false;
                     m_isMouseSelecting = false;
                     m_mouseDragged = false;
                     m_mouseHadSelectionOnPress = false;
                     m_mousePressOnSelection = false;
+                    m_mouseForwardedToApp = false;
                     break;
                 }
 
@@ -1524,6 +1558,7 @@ public:
                     m_mouseDragged = false;
                     m_mouseHadSelectionOnPress = false;
                     m_mousePressOnSelection = false;
+                    m_mouseForwardedToApp = false;
                     break;
                 }
 
@@ -1562,6 +1597,7 @@ public:
                 m_mouseDragged = false;
                 m_mouseHadSelectionOnPress = false;
                 m_mousePressOnSelection = false;
+                m_mouseForwardedToApp = false;
                 break;
             }
 
@@ -1571,6 +1607,7 @@ public:
                 m_mouseDragged = false;
                 m_mouseHadSelectionOnPress = false;
                 m_mousePressOnSelection = false;
+                m_mouseForwardedToApp = false;
                 break;
 
             case OH_NATIVEXCOMPONENT_MOUSE_NONE:
@@ -1634,16 +1671,9 @@ public:
             scrollLines = static_cast<int>(m_axisScrollRemainderY / cellHeight);
             if (scrollLines == 0) {
                 // Sub-cell wheel delta: the accumulated remainder has not
-                // crossed one row, so no scroll is sent — but on the alternate
-                // screen a stale selection must still be dropped. wheelScroll()
-                // clears it on the scrolling paths; without this branch a small
-                // trackpad flick leaves the pinned highlight covering the
-                // selected text until enough remainder accumulates to trigger
-                // a scroll.
-                if (m_terminal->shouldForwardWheel()) {
-                    m_terminal->clearSelection();
-                    RequestVsyncFrame();
-                }
+                // crossed one row, so no scroll is sent. The selection is left
+                // untouched — clearing it on tiny trackpad flicks cancelled the
+                // user's multi-select (see wheelScroll in terminal.cpp).
                 return;
             }
             m_axisScrollRemainderY -= static_cast<double>(scrollLines) * cellHeight;
@@ -3286,6 +3316,11 @@ private:
     bool m_mouseDragged = false;
     bool m_mouseHadSelectionOnPress = false;
     bool m_mousePressOnSelection = false;
+    // True while the current mouse gesture is being forwarded to an alt-screen
+    // app with mouse tracking. The app paints its own selection highlight, so
+    // drags are forwarded in full (no local takeover) and the local selection
+    // tracks the same rectangle only as the clipboard-copy source.
+    bool m_mouseForwardedToApp = false;
     int m_mousePressRow = 0;
     int m_mousePressCol = 0;
     int m_lastClickRow = -1;

@@ -435,6 +435,7 @@ void Terminal::feedOutput(const char* data, size_t len) {
             const int64_t minValidRow = std::max<int64_t>(0, totalRows - maxSb);
             if (m_selEndRow < static_cast<int>(minValidRow) || m_selStartRow >= static_cast<int>(totalRows)) {
                 m_selectionActive = false;
+                m_selAppOwned = false;
             }
         }
     }
@@ -968,6 +969,8 @@ std::string Terminal::getScreenLine(int viewportRow) const {
     }
     ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells);
 
+    // Build the row text trimmed to its last content cell (trailing TUI
+    // padding / never-written cells are dropped).
     std::string lineText;
     lineText.reserve(static_cast<size_t>(m_cols));
     std::vector<size_t> colOffsets(static_cast<size_t>(m_cols) + 1, 0);
@@ -1130,7 +1133,6 @@ void Terminal::wheelScroll(int lines, int col, int row) {
     bool appCursorKeys = false;
     bool anyMouseTracking = false;
     bool sgrMouse = false;
-    bool hadSelection = false;
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         if (!m_vt) return;
@@ -1144,17 +1146,11 @@ void Terminal::wheelScroll(int lines, int col, int row) {
         } else {
             ghostty_terminal_mode_get(m_vt, kGhosttyModeDecckm, &appCursorKeys);
             // Alt-screen content scrolls inside the TUI app (content reflow),
-            // not the local viewport. A local text selection is anchored to
-            // absolute scrollback coordinates, which silently stop matching
-            // the text on screen once the app redraws — the highlight would
-            // stay pinned to its pre-scroll screen position while the app's
-            // own highlight (forwarded mouse drags) scrolls away, leaving two
-            // misaligned selection layers. Drop the local selection here; it
-            // cannot follow the reflow. The primary screen keeps its selection
-            // (absolute coordinates + viewport-delta compensation stay correct
-            // there).
-            hadSelection = m_selectionActive;
-            m_selectionActive = false;
+            // not the local viewport. The local selection is left alone here:
+            // on the alt screen the wheel scrolls the app's own content, and
+            // canceling the user's multi-select on wheel would discard a
+            // selection the app itself keeps painted (its own highlight tracks
+            // the reflow). Keep the selection intact on both screens.
         }
 
         // Check for mouse tracking. Prefer the high-level data key
@@ -1187,16 +1183,6 @@ void Terminal::wheelScroll(int lines, int col, int row) {
     if (!altScreen) {
         notifyRenderNeeded();
         return;
-    }
-
-    // Repaint immediately: the stale pinned selection layer (cleared above)
-    // must leave the buffer now, not after the TUI app's reflow response
-    // makes the network round-trip — otherwise the misaligned highlight
-    // lingers on screen for the whole round-trip latency. Skip the repaint
-    // when there was no selection: the reflow response triggers its own
-    // render anyway.
-    if (hadSelection) {
-        notifyRenderNeeded();
     }
 
     // When mouse tracking is active the app handles wheel events via escape
@@ -1333,6 +1319,7 @@ void Terminal::resetState() {
             "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
         ghostty_terminal_vt_write(m_vt, reinterpret_cast<const uint8_t*>(kMouseOff), sizeof(kMouseOff) - 1);
         m_selectionActive = false;
+        m_selAppOwned = false;
     }
     notifyRenderNeeded();
 }
@@ -1801,11 +1788,16 @@ bool Terminal::isSelectionAt(int row, int col) const {
     return clampedCol <= lastContentCol;
 }
 
-void Terminal::startSelection(int row, int col) {
+void Terminal::startSelection(int row, int col, bool appOwned) {
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         const int absRow = static_cast<int>(getViewportTopRowLocked()) + ClampIndex(row, m_rows);
         m_selectionActive = true;
+        // appOwned marks a selection created from a drag forwarded to an
+        // alt-screen app with mouse tracking (claude code). The app paints its
+        // own highlight for it, so drawFrame skips the local overlay; the
+        // selection stays active purely as the clipboard-copy source.
+        m_selAppOwned = appOwned;
         m_selStartRow = absRow;
         m_selStartCol = ClampIndex(col, m_cols);
         m_selEndRow = absRow;
@@ -1970,6 +1962,7 @@ void Terminal::selectWordAt(int row, int col) {
             m_selStartRow != absRow || m_selEndRow != absRow ||
             m_selStartCol != startCol || m_selEndCol != endCol;
         m_selectionActive = true;
+        m_selAppOwned = false;
         m_selStartRow = absRow;
         m_selEndRow = absRow;
         m_selStartCol = startCol;
@@ -2033,6 +2026,7 @@ void Terminal::selectLineAt(int row) {
             m_selStartRow != absRow || m_selEndRow != absRow ||
             m_selStartCol != 0 || m_selEndCol != endCol;
         m_selectionActive = true;
+        m_selAppOwned = false;
         m_selStartRow = absRow;
         m_selEndRow = absRow;
         m_selStartCol = 0;
@@ -2051,6 +2045,7 @@ void Terminal::clearSelection() {
             return;
         }
         m_selectionActive = false;
+        m_selAppOwned = false;
         hadSelection = true;
     }
     if (hadSelection) {
@@ -2224,6 +2219,7 @@ void Terminal::drawFrame() {
     int selectionEndRow = 0;
     int selectionEndCol = 0;
     const bool selectionActive = m_selectionActive;
+    const bool selAppOwned = m_selAppOwned;
     const bool searchActive = m_searchActive;
     const std::string searchQuery = m_searchQuery;
     const std::vector<SearchMatch> searchMatches = m_searchMatches;
@@ -2380,7 +2376,14 @@ void Terminal::drawFrame() {
         // Stream-shaped selection highlight: mark each row only up to its
         // last content cell, so trailing whitespace (TUI padding, empty line
         // ends) is never highlighted.
-        if (selectionActive) {
+        //
+        // When the selection is app-owned (a drag inside an alt-screen app with
+        // mouse tracking, e.g. claude code), the app paints its own highlight
+        // as terminal content — it follows reflows precisely, which a local
+        // coordinate overlay cannot. Skipping the local paint keeps that app
+        // highlight as the only one visible; the selection stays active so
+        // clipboard copy reads the same text.
+        if (selectionActive && !selAppOwned) {
             const int absRow = static_cast<int>(viewportTopRow) + row;
             if (absRow >= selectionStartRow && absRow <= selectionEndRow) {
                 const int colStart = (absRow == selectionStartRow) ? selectionStartCol : 0;

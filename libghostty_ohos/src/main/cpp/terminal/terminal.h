@@ -77,7 +77,11 @@ public:
     bool hasSelection() const;
     bool isAlternateScreen() const;
     bool isSelectionAt(int row, int col) const;
-    void startSelection(int row, int col);
+    // appOwned=true marks a selection created from a drag forwarded to an
+    // alt-screen app with mouse tracking (claude code). The app paints its own
+    // highlight for it, so drawFrame skips the local overlay; the selection
+    // stays active purely as the clipboard-copy source.
+    void startSelection(int row, int col, bool appOwned = false);
     void updateSelection(int row, int col);
     void extendSelection(int dRow, int dCol);
     void selectWordAt(int row, int col);
@@ -173,6 +177,13 @@ private:
     int m_selEndRow = 0;
     int m_selEndCol = 0;
     int m_maxScrollback = 10000;
+
+    // True when the active selection was created from a drag forwarded to an
+    // alt-screen app with mouse tracking (see startSelection(appOwned=true)).
+    // drawFrame then skips the local highlight overlay — the app paints its
+    // own highlight as terminal content, which follows reflows precisely. The
+    // selection coordinates remain authoritative for clipboard copy.
+    bool m_selAppOwned = false;
 
     struct SearchMatch {
         size_t row = 0;
